@@ -1,9 +1,13 @@
 # PDF parser migration — 2026-10-27
 
 ## Table fixes and causal ablation — owner authorized
-- [in_progress] Fix UI false admission, first-data-row header inference and nonempty corrupted cell OCR. Preserve raw OCR/provenance and add regressions plus a table master switch.
-- [pending] Verify Windows and isolated ECS parsing on samePDFs; freeze identical-v2 table off/on outputs and unchanged12questions/Gold, models/prompt/retrieval/captions.
-- [pending] Execute bounded24fresh paired answers, score original8/table4 separately, retain failures, no service switch.
+- [complete] Fix UI false admission, first-data-row header inference and nonempty corrupted cell OCR. Preserve raw OCR/provenance and add regressions plus a table master switch. Commitca65fa0;21Windows/21LinuxPASS.
+- [complete] Freeze same-v2 off413/on438chunks,134pagebaseOCRhashes equal,89captionsidentical,old12questions/Gold byte-identical;455uniqueembeddinginputs. InputSHA557d80a52c532ac2140c316a22501ef181ff652058deff63c95c57ec7f677882. Preflightzero-call exit0.
+- [complete] Execute24fresh paired answers:exit0/1222.167s,455embeddinginputs/58rerank/24generation,122HTTPsuccess,UNKNOWN0. Table4core4/4both/Recall1both;original8core6/8both/Recall.8333both;all12core10/12both/pageRecall.9both. TablepromptTokens51401->37250(-27.5%),all172268->156730(-9.0%);parse114.607s->154.108s.
+
+Parser audit:source16normalizedcharerrors345/742->4/742,exactcells11/20->17/20;source transcription preserves printedaves/300m/s. Linuxallsource/languagehashes match;strictrowcomparisonexit1 atonein/In capitalization;casefoldallrowsPASS, bothresultsretained. No product/source changes afterfrozenrunstart.
+
+Finalevidence:docs/pdf-table-ablation-20261027.md;privatevar/pdf-table-ablation-20261027.Productionpostcheckallsource/PDF/model/countsunchanged6/11779/37271;isolatedcustom_models0. BundleSHA2da061d8708b575f43180d5d5d848094f650fa4a88660ac3a11a36cd9f4e8739. No service switch/push/tag; no furthermodelcalls planned. Next:deliver result; independentmissing/misalignedtableholdouts would be new evaluation work.
 
 Scope: D:/RAG knowledge only; E:/RAG quention remains read-only and paused. Target repo lacks root AGENTS.md/progress.md/docs/adr; existing selected .planning and parser/eval docs are current records. Old journals/results are immutable.
 

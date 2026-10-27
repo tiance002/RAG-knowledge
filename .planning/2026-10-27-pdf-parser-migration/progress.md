@@ -1,9 +1,13 @@
 # Progress
 
-## Table-fix ablation — active
+## Table-fix ablation — completed
 - Added enhanced PDF_TABLES_ENABLED master switch (legacy production mode unchanged), conservative >=3scanrows admission, compact-label scan header inference (unknown => numbered columns, no lost rows), and bounded all-cell padded/high-contrast300dpi local OCR. Original page OCR and crop outputs retained; no lexical guessing or cloud OCR.
 - Real pages:catdog41table2->0;physics16C1/C2 firstrow retained and major corruptMicrowaves/Aerial/Interference cells recovered;physics13retains5rows/headers. Minor character ambiguities remain flaggedSCAN_TABLE_OCR_UNVERIFIED.
-- Windows21PASS exit0(final24.98s),ECSisolated21PASS exit0(14.36s),including actual3PDFregressions. Full134page same-version off/on parsing inprogress. No paid model calls yet in this ablation; historical journals unchanged.
+- Windows21PASS exit0(final24.98s),ECSisolated21PASS exit0(14.36s),including actual3PDFregressions. Full134page same-version off/on parsing completed exit0;pageOCRhashesexactlyequal andimagecaptionsidentical. Historical journals unchanged.
+- AblationCOMPLETED:24freshanswers,455embeddinginputs/58rerank,122HTTPsuccess,UNKNOWN0,exit0,1222.167s. Original8core6/8both,pageRecall.8333both;table4core4/4both,Recall1both;all12core10/12both,pageRecall.9both. Emptylength2both(111/114off,113/114on), no retuning/replay.
+- Source16OCRnormalizedediterrors345/742->4/742(46.50%->.54%),exactcells11/20->17/20. Linuxsource/languagehashesmatch;strictrealrowcheckexit1 due onein/In capitalization;casefoldallrowsPASS. Strictfailure retained rather than relabelled.
+- TablepromptTokens51401->37250(-27.5%),all172268->156730(-9.0%). Parsing114.607s->154.108s(+39.501s),chunks413->438. BetterOCR/compactevidence, no measured accuracy/recall gain. Reportdocs/pdf-table-ablation-20261027.md.
+- Productionafterexactsource/PDF/model/countmatch6/11779/37271;isolatedcustom_models0. RawbundleSHA2da061d8708b575f43180d5d5d848094f650fa4a88660ac3a11a36cd9f4e8739. No service switch/push/tag, no morepaidcalls planned.
 
 ## V2 retrieval/answer run completed
 - Frozen parser b681671, same3rawECS PDFs, original8plus4source-reviewedtableprobes.277legacy/441v2chunks;636uniqueembeddinginputs.24freshpairedanswers, no historical answer reuse.
