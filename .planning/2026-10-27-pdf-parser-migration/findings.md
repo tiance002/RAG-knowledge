@@ -1,4 +1,7 @@
 # Findings
+
+## Follow-up correction
+Real table samples existed in the original three sources:reportPDF45(printed43) has a four-column semi-bordered survey table;physicsPDF13 has a two-column colored raster table. V1 omitted structure, not sources. Broad read-only scan38386magic candidates/65archives found only3uniquePDFs. V2 restores native10rows and scanned5rows including headers; page/cell coordinates retained. Local and Linux17testsPASS, real ECS paired parsePASS,0modelcalls. Old v1 Recall/QA scores remain historical only.
 - Upstream PDF parser reads sorted text/image blocks; lacks page classification/OCR.
 - Old OCR uses PyMuPDF/Tesseract eng+chi_sim, 150 dpi, full=True; traineddata exists locally. New project must not import old business code.
 - Target DocumentChunk lacks metadata column. Provenance must survive preview/confirmation and reach BM25/Chroma/citations. Prefer source-hashed sidecars without production schema change.

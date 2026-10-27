@@ -1,5 +1,11 @@
 # Progress
 
+## Owner follow-up completed
+- Discovered3uniquePDFs/43copies after38386magic checks plus65archives; no extra originals. Rendered report45 and physics13 to confirm genuine tables. Corrected prior claim of missing real samples.
+- V2 narrow native ruled-borderless path and colored-grid/local empty-cell OCR path added. Real native0->10rows/4cols;scan0->5rows/2cols. OCR character uncertainty remains explicitly marked.
+- Windows17passed(exit0),Linux17passed(exit0),ECS real-file paired comparisonexit0. Production source/PDF hashes and6KB/11779files/37271chunks unchanged.0newprovidercalls.
+- Preserved failures:old skill-path miss corrected;temporary debug expression SyntaxError replaced by file script;first colored-grid test failed at equal-color intersections, then bridging fix passed. Historical v1 model results not relabelled as v2.
+
 ## Latest checkpoint
 - Final-r2 COMPLETED:8fresh candidate answers,604embedding inputs,22rerank calls;8baseline answers reused exactly. SourceRecall@10=1.0both/pageRecall@10=.833333both(n6). Core correctness8/8before,7/8after;114empty/length2000,context contains Kaggle/Cat vs Dog. No claim that parser alone caused this generation failure.
 - Production postcheck PASS: same6KB/11779files/37271chunks, identical backend source hashes and PDF source hashes. Isolated custom_models count0; model secrets not persisted there.

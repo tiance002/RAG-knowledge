@@ -239,3 +239,52 @@ def test_ocr_sqlite_bm25_and_provenance_round_trip(tmp_path, parser):
         metadata=source_metadata(path,record.content,record.page_number,record.content_type,
                                  root=parser_module.settings.PDF_AUDIT_DIR)
         assert metadata['source_locators'][0]['page']==1
+
+
+def make_semi_bordered_table(path, bold=True):
+    doc=fitz.open();page=doc.new_page(width=600,height=700)
+    page.insert_text((40,40),'Preamble outside the table.',fontsize=10)
+    page.draw_line((40,70),(560,70),width=.5)
+    page.draw_line((40,310),(560,310),width=.5)
+    page.insert_text((40,82),'Survey caption must remain.',fontsize=10)
+    font='hebo' if bold else 'helv'
+    for x,y,text in [(40,105,'Group'),(250,95,'Weighted'),(250,105,'share'),
+                     (350,105,'Sample size'),(450,105,'Error')]:
+        page.insert_text((x,y),text,fontname=font,fontsize=10)
+    for row in range(9):
+        for x,text in [(40,'Group '+str(row)),(250,str(40+row)+'%'),
+                       (350,str(500+row)),(450,str(3+row/10)+' points')]:
+            page.insert_text((x,130+row*20),text,fontsize=10)
+    page.insert_text((40,360),'Footer outside the table.',fontsize=10)
+    doc.save(path);doc.close()
+
+
+def test_semi_bordered_native_table_preserves_headers_and_caption(tmp_path, parser):
+    path=tmp_path/'semi-bordered.pdf'
+    make_semi_bordered_table(path)
+    chunks=parser.parse(str(path))
+    rows=[c for c in chunks if c.content_type=='table']
+    assert len(rows)==10
+    assert any('Group=Group 0' in c.content and 'Sample size=500' in c.content for c in rows)
+    assert rows[0].metadata['source_locator']['method']=='native-ruled-aligned-text'
+    text='\n'.join(c.content for c in chunks)
+    assert 'Survey caption must remain.' in text
+    assert 'Preamble outside' in text and 'Footer outside' in text
+
+
+def test_borderless_guess_without_reliable_header_retains_text(tmp_path, parser):
+    path=tmp_path/'unconfirmed-alignment.pdf'
+    make_semi_bordered_table(path,bold=False)
+    chunks=parser.parse(str(path))
+    assert not any(c.content_type=='table' for c in chunks)
+    assert any('Group 0' in c.content for c in chunks)
+
+
+def test_colored_scan_grid_uses_edges_without_black_lines():
+    import numpy as np
+    from app.services.pdf_pipeline import _raster_grid
+    image=np.full((400,800),220,dtype=np.uint8)
+    for x in (280,530,780):image[60:361,x:x+2]=130
+    for y in (60,120,180,240,300,360):image[y:y+2,280:782]=130
+    xs,ys=_raster_grid(image)
+    assert len(xs)==3 and len(ys)==6

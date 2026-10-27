@@ -14,7 +14,7 @@ Implement per-page routing/audit, local OCR with coordinates, native tables, the
 Baseline b5ceb463a433193a908e1d814b221c855f8717d0; branch codex/pdf-parser-migration. Target has no AGENTS.md, progress.md, docs/adr or automated tests at baseline. Raw data and secrets stay ignored. No production replacement needed for isolated A/B; no model calls before corpus/privacy/config checks. Do not resend unknown requests automatically.
 
 ## Next Step
-Deliver candidate and evidence. Next implementation requires a separate decision on OCR noise/context interaction and real table samples; do not tune this frozen eight-question set.
+Deliver v2 parse evidence and correction. Keep legacy default; v2 retrieval/answer quality NOT RUN. Do not tune or relabel the frozen v1 eight-question results.
 
 ## Errors
 - Combined skill reads truncated; relevant sections read separately.
@@ -23,3 +23,10 @@ Deliver candidate and evidence. Next implementation requires a separate decision
 - First pytest2pass8setup errors due absent basetemp parent; fixed and subsequent11pass.
 - First parse A/B r1 invalid baseline because GBK cannot print legacy emojis. Preserved r1; r2 UTF8 completed.
 - Frozen-input preparation first failed GBK decode; explicit UTF8 fixed before output creation.
+
+## Owner follow-up — 2026-10-27
+- [complete] Discover PDFs:38386magic candidates and65archives,3unique documents/43physical copies, no extra original PDFs.
+- [complete] Visual review found native table in existing report PDFpage45 and scanned colored table in physics PDFpage13. Prior sample-absence statement corrected.
+- [complete] Fix limited ruled-borderless native admission, colored raster grids and local empty-cell OCR recovery. Windows17PASS/Linux17PASS; real ECS two-page paired parse PASS(0->10rows/4cols and0->5rows/2cols). No new provider requests.
+
+Next action: deliver v2 parse evidence and correction; keep legacy default. Retrieval/answer quality for v2 remains NOT RUN, previous v1 scores are not reused as v2 proof.
