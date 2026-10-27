@@ -33,3 +33,7 @@ frontend/.vite/
 
 # Local-only diagrams and reports
 架构图.png
+
+# Local development and private evaluation artifacts
+.venv/
+var/

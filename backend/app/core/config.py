@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 50
 
+    PDF_PARSER_MODE: str = "legacy"  # enhanced is opt-in until the quality gate passes
+    PDF_TESSDATA_DIR: str = "./storage/tessdata"
+    PDF_OCR_DPI: int = 150
+    PDF_SCANNED_TABLES_ENABLED: bool = False
+    PDF_AUDIT_DIR: str = "./storage/pdf_manifests"
+
     # VLM 提示词
     VLM_PROMPT: str = "请详细描述这张图片的内容，包括图表中的数据趋势、关键文字信息。"
 

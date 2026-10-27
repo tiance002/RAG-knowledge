@@ -154,6 +154,7 @@ async def search_knowledge_base(
             
             citations.append({
                 "fileName": source,
+                "source_metadata": r.get("source_metadata", {}),
                 "kb_name": kb_name,
                 "score": score,
                 "content": content,

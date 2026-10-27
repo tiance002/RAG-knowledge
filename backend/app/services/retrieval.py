@@ -559,6 +559,10 @@ class RetrievalService:
             
             location_info = " | ".join(loc_parts) if loc_parts else "未知位置"
 
+            from app.services.pdf_provenance import source_metadata
+            provenance = (source_metadata(file_doc.local_path, chunk.content, chunk.page_number,
+                                         chunk.content_type) if file_doc else {})
+
             enriched.append({
                 "id": chunk_id,
                 "content": chunk.content,
@@ -571,6 +575,7 @@ class RetrievalService:
                 "file_id": chunk.file_id,
                 "file_name": file_name,
                 "page_number": chunk.page_number,
+                "source_metadata": provenance,
                 "content_type": chunk.content_type,
                 "image_path": chunk.image_path,
                 "original_index": chunk.original_index,

@@ -2,12 +2,17 @@
 服务模块导出
 """
 
-from app.services.parser import FileParser, TextSplitter, ParsedChunk
-from app.services.vlm import VLMService
-from app.services.embedding import EmbeddingService
-from app.services.vector_store import VectorStoreService
-from app.services.llm import LLMService
-from app.services.chat import ChatService
+from importlib import import_module
+
+_EXPORTS = {'FileParser': 'parser', 'TextSplitter': 'parser', 'ParsedChunk': 'parser',
+            'VLMService': 'vlm', 'EmbeddingService': 'embedding',
+            'VectorStoreService': 'vector_store', 'LLMService': 'llm', 'ChatService': 'chat'}
+
+
+def __getattr__(name):
+    if name in _EXPORTS:
+        return getattr(import_module('app.services.' + _EXPORTS[name]), name)
+    raise AttributeError(name)
 
 __all__ = [
     "FileParser",

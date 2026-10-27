@@ -90,6 +90,42 @@ class RerankService:
             return []
 
     def _rerank_via_api(self, query: str, candidates: List[str], model: CustomModel) -> List[Dict[str, Any]]:
+        """调用远程 /rerank 端点；端点不可用时回退到用 chat 接口打分。"""
+        if not candidates:
+            return []
+        try:
+            url = model.base_url.rstrip("/") + "/rerank"
+            resp = httpx.post(
+                url,
+                headers={"Authorization": f"Bearer {model.api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": model.model_name, "query": query, "documents": candidates,
+                      "top_n": len(candidates), "return_documents": False},
+                timeout=120.0,
+                trust_env=False,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            results = []
+            for row in payload.get("results") or []:
+                idx = row.get("index")
+                if idx is None or not (0 <= int(idx) < len(candidates)):
+                    continue
+                score = row.get("relevance_score", row.get("score", 0.0))
+                results.append({
+                    "index": int(idx),
+                    "score": float(score),
+                    "text": candidates[int(idx)],
+                })
+            if results:
+                results.sort(key=lambda x: x["score"], reverse=True)
+                return results
+            print("API Rerank (/rerank) returned empty results, falling back to chat scoring")
+        except Exception as exc:
+            print(f"API Rerank (/rerank) failed: {exc}; falling back to chat scoring")
+        return self._rerank_via_chat(query, candidates, model)
+
+    def _rerank_via_chat(self, query: str, candidates: List[str], model: CustomModel) -> List[Dict[str, Any]]:
         """通过 API 调用 Rerank"""
         client = OpenAI(
             base_url=model.base_url,
@@ -477,6 +513,7 @@ def expand_context(
             "id": chunk_id,
             "content": full_context,
             "original_content": chunk.get("content", db_chunk.content),  # 保留原始内容
+            "source_metadata": chunk.get("source_metadata", {}),
             "score": chunk.get("score", 0),
             "rerank_score": chunk.get("rerank_score", 0),
             "kb_id": chunk.get("kb_id", ""),

@@ -217,6 +217,8 @@ def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str 
                         "heading_text": chunk.heading_text or "",
                         "chunk_type": chunk.chunk_type or "content",
                     }
+                    from app.services.pdf_provenance import index_provenance
+                    metadata.update(index_provenance(file_doc.local_path, chunk))
                     
                     documents_for_chroma.append({
                         "id": chunk.id,

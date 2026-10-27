@@ -84,6 +84,8 @@ def vectorize_file_task(self, file_id: str):
             contents = []
 
             for chunk in chunks:
+                from app.services.pdf_provenance import index_provenance
+                provenance = index_provenance(file_doc.local_path, chunk)
                 documents.append({
                     "id": chunk.id,
                     "content": chunk.content,
@@ -93,6 +95,7 @@ def vectorize_file_task(self, file_id: str):
                         "page_number": chunk.page_number,
                         "content_type": chunk.content_type.value,
                         "location_info": f"第 {chunk.page_number} 页" if chunk.page_number else "",
+                        **provenance,
                     },
                 })
                 contents.append(chunk.content)

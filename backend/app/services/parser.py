@@ -124,6 +124,25 @@ class TextSplitter:
             except Exception as e:
                 print(f"⚠️ [TextSplitter] 初始化 LangChain Splitter 失败: {e}，回退到基于字符的切分", flush=True)
 
+    def count_tokens(self, text: str) -> int:
+        if not text:
+            return 0
+        splitter = getattr(self, 'langchain_splitter', None)
+        if splitter is not None:
+            length_fn = getattr(splitter, '_length_function', None)
+            if callable(length_fn):
+                try:
+                    return length_fn(text)
+                except Exception:
+                    pass
+            tokenizer = getattr(splitter, '_tokenizer', None)
+            if tokenizer is not None:
+                try:
+                    return len(tokenizer.encode(text))
+                except Exception:
+                    pass
+        return len(text)
+
     def _find_sentence_boundary(self, text: str, start: int, end: int, forward: bool = True) -> int:
 
         """
@@ -946,6 +965,92 @@ class FileParser:
         return chunks
 
     def _parse_pdf(self, file_path: str) -> List[ParsedChunk]:
+        if settings.PDF_PARSER_MODE == "legacy":
+            return self._parse_pdf_legacy(file_path)
+        if settings.PDF_PARSER_MODE != "enhanced":
+            raise ValueError("PDF_PARSER_MODE_INVALID")
+        from pathlib import Path
+        from app.services.pdf_pipeline import parse_page
+        from app.services.pdf_provenance import digest_bytes, write_manifest
+
+        source_sha = digest_bytes(Path(file_path).read_bytes())
+        chunks, pages, aggregate = [], [], []
+        self.pdf_page_records = pages
+        self.pdf_manifest_path = None
+
+        def emit_text(parts):
+            if not parts:
+                return
+            text = "\n".join(piece.content for piece in parts)
+            regions, position = [], 0
+            for piece in parts:
+                regions.append({**piece.locator, "start": position,
+                                "end": position + len(piece.content)})
+                position += len(piece.content) + 1
+            cursor = 0
+            for chunk in self._process_text_content(text, parts[0].locator['page']):
+                start = text.find(chunk.content, cursor)
+                if start < 0:
+                    raise ValueError('PDF_CHUNK_SOURCE_ALIGNMENT_FAILED')
+                end = start + len(chunk.content)
+                selected = [r for r in regions if r['start'] < end and r['end'] > start]
+                chunk.metadata = {**(chunk.metadata or {}), "source_locator": {
+                    "source_sha256": source_sha, "kind": "pdf-text", "regions": selected,
+                    "start": start, "end": end, "page": selected[0]['page'],
+                    "pages": sorted({r['page'] for r in selected})}}
+                chunk.page_number = selected[0]['page']
+                chunks.append(chunk)
+                cursor = start + 1
+
+        with fitz.open(file_path) as doc:
+            if doc.needs_pass:
+                raise ValueError('PDF_PASSWORD_REQUIRED')
+            for page in doc:
+                result = parse_page(page, source_sha256=source_sha,
+                    tessdata=settings.PDF_TESSDATA_DIR, dpi=settings.PDF_OCR_DPI,
+                    scan_tables=settings.PDF_SCANNED_TABLES_ENABLED)
+                pages.append(result.record)
+                pending = []
+                events = [(p.locator.get('bbox', p.locator.get('table_bbox'))[1],
+                           p.locator.get('bbox', p.locator.get('table_bbox'))[0], 0, p)
+                          for p in result.pieces]
+                events.extend((b['bbox'][1], b['bbox'][0], 1, b) for b in result.images)
+                for _, _, image, piece in sorted(events, key=lambda item: item[:3]):
+                    if image:
+                        raw = piece['image']
+                        bbox = fitz.Rect(piece['bbox'])
+                        if len(raw) < 3072 or bbox.width <= 0 or bbox.height <= 0 or not .02 <= bbox.width/bbox.height <= 50:
+                            continue
+                        if self.chunk_mode not in ('no_split', 'no_chunk'):
+                            emit_text(pending)
+                            pending = []
+                        path = self._save_image(raw, source_sha[:16], page.number+1,
+                                                piece['_source_block_index'], piece.get('ext', 'png'))
+                        chunks.append(ParsedChunk(content=f'[图片: {path}]', page_number=page.number+1,
+                            content_type='image', image_path=path, metadata={"source_locator": {
+                                "source_sha256": source_sha, "page": page.number+1,
+                                "bbox": list(bbox), "kind": "pdf-image"}}))
+                    elif self.chunk_mode in ('no_split', 'no_chunk'):
+                        aggregate.append(piece)
+                    elif piece.kind == 'table':
+                        emit_text(pending)
+                        pending = []
+                        chunks.append(ParsedChunk(content=piece.content, page_number=page.number+1,
+                            content_type='table', token_count=self.structured_splitter._count_tokens(piece.content),
+                            metadata={"source_locator": {**piece.locator, "source_sha256": source_sha,
+                                                        "kind": "pdf-table-row"}}))
+                    else:
+                        pending.append(piece)
+                emit_text(pending)
+        emit_text(aggregate)
+        self.pdf_manifest_path = write_manifest(settings.PDF_AUDIT_DIR, source_sha, pages, chunks)
+        if not chunks or all(p['status'] == 'failed' for p in pages):
+            raise ValueError('PDF_NO_SEARCHABLE_CONTENT: see page diagnostics')
+        if any(p['status'] in ('failed', 'partial') for p in pages):
+            raise ValueError('PDF_PARTIAL_PARSE: see page diagnostics')
+        return chunks
+
+    def _parse_pdf_legacy(self, file_path: str) -> List[ParsedChunk]:
         """解析 PDF 文件 (包含图片提取和顺序保持)"""
         chunks = []
         doc = fitz.open(file_path)

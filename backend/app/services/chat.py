@@ -27,6 +27,36 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+# 图片处理策略：caption = 先用 VLM 转文字再参与回答；off = 完全不使用图片
+IMAGE_MODE = os.environ.get("AMRAG_IMAGE_MODE", "caption").lower()
+# 单次回答最多消费几张图片，防止图表题把整页图都塞进来导致超长与高延迟
+MAX_IMAGES = int(os.environ.get("AMRAG_MAX_IMAGES", "4"))
+# 图片描述缓存目录，避免同一张图在多题、多次实验中重复调用 VLM（省时省钱）
+_CAPTION_DIR = os.path.join(settings.IMAGE_DIR, "_captions")
+
+
+async def _load_or_caption(vlm, image_key: str, full_path: str) -> str:
+    """优先读磁盘缓存，未命中时调用 VLM 生成描述并落盘。"""
+    import hashlib
+
+    digest = hashlib.md5(image_key.encode("utf-8")).hexdigest()
+    cache_path = os.path.join(_CAPTION_DIR, f"{digest}.txt")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as fh:
+                cached = fh.read().strip()
+            if cached:
+                return cached
+        except OSError:
+            pass
+    text = await vlm.describe_image(full_path)
+    if text and text != "图片解析失败":
+        os.makedirs(_CAPTION_DIR, exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return text.strip()
+    return ""
+
 
 class ChatService:
     """对话服务"""
@@ -369,6 +399,7 @@ class ChatService:
                 "vector_score": r.get("vector_score"),
                 "bm25_score": r.get("bm25_score"),
                 "content": r.get("content", ""),
+                "source_metadata": r.get("source_metadata", {}),
                 "fileName": r.get("file_name", "未知"),
                 "kb_name": r.get("kb_name", ""),
                 "kb_id": r.get("kb_id"),
@@ -410,33 +441,33 @@ class ChatService:
 
         chat_messages = [{"role": msg.role.value, "content": msg.content} for msg in messages]
 
-        # Multimodal (Images)
-        retrieved_images = []
-        for r in final_results:
-            img_path = r.get("image_path")
-            if img_path:
-                full_image_path = os.path.join(settings.IMAGE_DIR, img_path)
-                if os.path.exists(full_image_path):
-                    try:
-                        with open(full_image_path, "rb") as img_file:
-                            encoded_string = base64.b64encode(img_file.read()).decode('utf-8')
-                            ext = os.path.splitext(img_path)[1].lower().replace('.', '')
-                            if not ext:
-                                ext = 'jpeg'
-                            if ext == 'jpg':
-                                ext = 'jpeg'
-                            retrieved_images.append(f"data:image/{ext};base64,{encoded_string}")
-                    except:
-                        pass
+        # 图片处理：生成模型是纯文本模型，不能直接接收 image_url。
+        # 改为先用 VLM 把图片转成文字描述，再拼进系统提示，等效于“图片以文字形式参与推理”。
+        image_notes = []
+        if IMAGE_MODE != "off":
+            from app.services.vlm import VLMService
 
-        if retrieved_images and chat_messages:
-            last_msg = chat_messages[-1]
-            if last_msg['role'] == 'user':
-                original_text = last_msg['content']
-                new_content = [{"type": "text", "text": original_text}]
-                for img_data in retrieved_images:
-                    new_content.append({"type": "image_url", "image_url": {"url": img_data}})
-                last_msg['content'] = new_content
+            vlm = VLMService()
+            seen_images = set()
+            for r in final_results:
+                img_path = r.get("image_path")
+                if not img_path or img_path in seen_images:
+                    continue
+                seen_images.add(img_path)
+                full_image_path = os.path.join(settings.IMAGE_DIR, img_path)
+                if not os.path.exists(full_image_path):
+                    continue
+                caption = await _load_or_caption(vlm, img_path, full_image_path)
+                if caption:
+                    image_notes.append(
+                        f"[图 {len(image_notes) + 1}] 来源: {r.get('file_name', '未知')} "
+                        f"第 {r.get('page_number', 1)} 页\n{caption}"
+                    )
+                if len(image_notes) >= MAX_IMAGES:
+                    break
+
+        if image_notes:
+            system_prompt += "\n\n【检索到的图片内容描述】\n" + "\n\n".join(image_notes)
 
         try:
             async for chunk in current_llm_service.generate_stream(
