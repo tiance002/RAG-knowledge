@@ -30,3 +30,12 @@ Deliver v2 parse evidence and correction. Keep legacy default; v2 retrieval/answ
 - [complete] Fix limited ruled-borderless native admission, colored raster grids and local empty-cell OCR recovery. Windows17PASS/Linux17PASS; real ECS two-page paired parse PASS(0->10rows/4cols and0->5rows/2cols). No new provider requests.
 
 Next action: deliver v2 parse evidence and correction; keep legacy default. Retrieval/answer quality for v2 remains NOT RUN, previous v1 scores are not reused as v2 proof.
+
+## V2 retrieval and answer evaluation — owner authorized
+- [complete] Freeze b681671 v2 parse output on same3ECS PDFs, models, prompt, retrieval config and captions; retain original8regression items and add4source-verified table probes before inference. Before277/after441 chunks;636 unique embedding inputs including12questions.
+- [complete] Validate actual production source, model identity, endpoint hashes and unchanged prompt AST; PREPARED_ZERO_CALLS exit0. Use24fresh paired answers, no baseline answer reuse.
+- [complete] Execute bounded evaluation, score regression/table strata separately, retain failures and report Recall@10 + correctness without overwriting prior metrics.24fresh answers/636embedding inputs/62rerank,137HTTPsuccess,exit0.
+
+Outcome: original8 pageRecall.8333->.8333/core6/8->4/8; table4 pageRecall1->1/core4/4->4/4; all12 pageRecall.9->.9/core10/12->8/12. Ambiguous115 loose scoring yields9/12after, still no gain. Table promptTokens86324->39038. Production source/PDF/models/counts unchanged; isolatedcustom_models0. No production switch. Preserve b681671 unchanged despite false-positive UI screenshot41 and damaged scan-table16 found in full-corpus audit.
+
+Next action: deliver report docs/pdf-v2-evaluation-20261027.md; no additional model calls planned. Fixing table admission/OCR and a table-on/off causal ablation are follow-up work, not silently included in this frozen run.

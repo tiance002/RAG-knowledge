@@ -1,5 +1,11 @@
 # Findings
 
+## V2 frozen retrieval/answer evidence
+- Fresh24answerECS run exit0. Same models/prompt/retrieval/captions,12questions stratified8regression+4table. Full report docs/pdf-v2-evaluation-20261027.md and ignored raw var/pdf-v2-eval-20261027/.
+- Table4 core4/4->4/4/pageRecall1->1; original8core6/8->4/8/pageRecall.8333both; overall10/12->8/12/pageRecall.9both. No accuracy/recall gain demonstrated. Table4promptTokens86324->39038, efficiency benefit under this frozen whole-parser comparison; no table-only causal ablation.
+- Baseline already has correctnative table rowtext and completephysics13VLMcaption. Improved table structure alone does not create new answerable information for selected probes.
+- Full-corpus checks exposecatdog41UI false table andphysics16damagedOCR/firstrow-as-header. Preserve frozen candidate and failed answers, keep legacy production. All production identities/counts unchanged afterrun.
+
 ## Follow-up correction
 Real table samples existed in the original three sources:reportPDF45(printed43) has a four-column semi-bordered survey table;physicsPDF13 has a two-column colored raster table. V1 omitted structure, not sources. Broad read-only scan38386magic candidates/65archives found only3uniquePDFs. V2 restores native10rows and scanned5rows including headers; page/cell coordinates retained. Local and Linux17testsPASS, real ECS paired parsePASS,0modelcalls. Old v1 Recall/QA scores remain historical only.
 - Upstream PDF parser reads sorted text/image blocks; lacks page classification/OCR.

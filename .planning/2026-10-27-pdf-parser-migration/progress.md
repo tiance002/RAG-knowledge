@@ -1,5 +1,13 @@
 # Progress
 
+## V2 retrieval/answer run completed
+- Frozen parser b681671, same3rawECS PDFs, original8plus4source-reviewedtableprobes.277legacy/441v2chunks;636uniqueembeddinginputs.24freshpairedanswers, no historical answer reuse.
+- Zero-call preflight exit0; frozen modelIDs/endpoint hashes/production source/prompt AST verified. Runtime exit0,756.706seconds;137HTTPsuccess(51embeddingrequests,62rerank,24generation),UNKNOWN0,no replay.
+- Original8:pageRecall@10 .8333both;core6/8before,4/8after. Table4:Recall1both,core4/4both. Combined10eligibleRecall .9both;core10/12->8/12.115after contradictory no-tiger/unknown count markedwrong; loose scorer9/12 still no gain. Candidate113/114empty-length;baseline115empty-length.
+- Table rows reach correct retrieved top10, but baseline flattened native text and frozen VLMcaption already contain all4answers. Table4generationpromptTokens86324->39038(-54.8%); total276874->156216(-43.6%). Efficiency signal, no proven accuracy improvement or table-only causality.
+- Full-corpus audit foundUI screenshotcatdog41 wrongly admitted2rows;physics16true table firstdata rowusedasheader and OCRdamaged. Frozen product code unchanged, failures retained; no assertion these caused particular answer errors.
+- Production postcheck exact source/PDF/model/count equality(6/11779/37271);isolatedcustom_models0. Evidence bundleSHA c72f6d45180c9810a478a7061ec05d6abc8a84d9c2cb1d06b10848a22abe7d02. Report docs/pdf-v2-evaluation-20261027.md. No production switch/push/tag. Parser17tests NOT RUN this round; previouscommit evidence remains historical.
+
 ## Owner follow-up completed
 - Discovered3uniquePDFs/43copies after38386magic checks plus65archives; no extra originals. Rendered report45 and physics13 to confirm genuine tables. Corrected prior claim of missing real samples.
 - V2 narrow native ruled-borderless path and colored-grid/local empty-cell OCR path added. Real native0->10rows/4cols;scan0->5rows/2cols. OCR character uncertainty remains explicitly marked.
