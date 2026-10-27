@@ -288,3 +288,63 @@ def test_colored_scan_grid_uses_edges_without_black_lines():
     for y in (60,120,180,240,300,360):image[y:y+2,280:782]=130
     xs,ys=_raster_grid(image)
     assert len(xs)==3 and len(ys)==6
+
+
+def test_scan_header_requires_labels_not_any_first_row_text():
+    from app.services.pdf_pipeline import _scan_has_header
+    assert _scan_has_header([['Infrared Radiation','Microwaves'],
+        ['Heats the surface of food','Energy is given to water or fat molecules']])
+    assert not _scan_has_header([['Radiowave','part of the electromagnetic spectrum mainly used for communication'],
+        ['Refraction','the change in direction when a wave enters another medium']])
+
+
+def test_tables_disabled_keeps_native_raw_evidence(tmp_path,parser,monkeypatch):
+    path=tmp_path/'disabled-native.pdf'
+    make_pdf(path,table=True)
+    monkeypatch.setattr(parser_module.settings,'PDF_TABLES_ENABLED',False)
+    chunks=parser.parse(str(path))
+    assert not any(c.content_type=='table' for c in chunks)
+    assert any('12345' in c.content for c in chunks)
+    assert 'PDF_TABLE_STRUCTURE_DISABLED' in parser.pdf_page_records[0]['warnings']
+
+
+def test_two_row_scan_grid_is_not_admitted(tmp_path,parser,monkeypatch):
+    require_ocr()
+    doc=fitz.open();page=doc.new_page(width=500,height=650)
+    for x in (40,250,460):page.draw_line((x,60),(x,260),width=2)
+    for y in (60,160,260):page.draw_line((40,y),(460,y),width=2)
+    for x,y,text in [(60,110,'File'),(270,110,'Edit View'),(60,210,'4219'),(270,210,'Code panel')]:
+        page.insert_text((x,y),text,fontsize=20)
+    raw=page.get_pixmap(matrix=fitz.Matrix(2,2)).tobytes('png');doc.close()
+    doc=fitz.open();page=doc.new_page(width=500,height=650);page.insert_image(page.rect,stream=raw)
+    path=tmp_path/'ui-grid.pdf';doc.save(path);doc.close()
+    monkeypatch.setattr(parser_module.settings,'PDF_SCANNED_TABLES_ENABLED',True)
+    chunks=parser.parse(str(path))
+    assert not any(c.content_type=='table' for c in chunks)
+    assert any('4219' in c.content for c in chunks)
+
+
+def test_real_ecs_scan_table_regressions():
+    """Source-hashed private corpus is optional locally, required in ECS validation."""
+    root=Path(__file__).resolve().parents[2]/'var/corpus'
+    physics=root/'43be9592854c7da10bf011335faec017b726ff2e23bb4ccae7e8fe88d7801f22.pdf'
+    cat=root/'40a74d3fc5e73c81465206a4043c19b850daf66fc5617756f5894d25ad054b4b.pdf'
+    if not physics.exists() or not cat.exists():pytest.skip('Private source-hashed ECS PDFs unavailable')
+    require_ocr()
+    with fitz.open(physics) as doc:
+        result=parse_page(doc[15],source_sha256=physics.stem,tessdata=TESSDATA,scan_tables=True)
+        rows=[p for p in result.pieces if p.kind=='table']
+        assert len(rows)==10
+        assert all(p.locator['header_status']=='NONE' for p in rows)
+        assert any('C1=Microwaves' in p.content and 'shortest wavelength' in p.content for p in rows)
+        assert any('C1=Aerial' in p.content and 'receiving and transmitting' in p.content for p in rows)
+        assert any('C1=Interference' in p.content and 'overlapping waves' in p.content for p in rows)
+        assert all(p.locator['cell_page_ocr_raw'] and p.locator['cell_crop_raw'] for p in rows)
+        result=parse_page(doc[12],source_sha256=physics.stem,tessdata=TESSDATA,scan_tables=True)
+        rows=[p for p in result.pieces if p.kind=='table']
+        assert len(rows)==5 and rows[0].locator['header_status']=='FIRST_ROW_INFERRED'
+        assert any('water or' in p.content and 'molecules' in p.content for p in rows)
+    with fitz.open(cat) as doc:
+        result=parse_page(doc[40],source_sha256=cat.stem,tessdata=TESSDATA,scan_tables=True)
+        assert not any(p.kind=='table' for p in result.pieces)
+        assert any('CaffeNet' in p.content for p in result.pieces)

@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     PDF_TESSDATA_DIR: str = "./storage/tessdata"
     PDF_OCR_DPI: int = 150
     PDF_SCANNED_TABLES_ENABLED: bool = False
+    PDF_TABLES_ENABLED: bool = True  # enhanced PDF structure; raw text/OCR survives when disabled
     PDF_AUDIT_DIR: str = "./storage/pdf_manifests"
 
     # VLM 提示词

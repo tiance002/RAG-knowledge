@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import logging
+import hashlib
 import math
 import re
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 import fitz
 
 LOGGER = logging.getLogger(__name__)
-PARSER_VERSION = 'pdf-page-router/v2'
+PARSER_VERSION = 'pdf-page-router/v2.1'
 COORDINATES = 'PDF points; unrotated page; top-left; page 1-based'
 
 
@@ -78,13 +79,14 @@ def local_ocr(page, tessdata, *, dpi=150, full=True):
         return None, 'OCR_FAILED'
 
 
-def _table_rows(rows, boxes, bbox, page_no, table_id, *, method):
+def _table_rows(rows, boxes, bbox, page_no, table_id, *, method, has_header=None):
     """A whole source row is one evidence unit; coordinates are never invented."""
     pieces = []
     if not rows or len(rows) > 1000 or max(map(len, rows), default=0) > 200:
         raise ValueError('PDF_TABLE_LIMIT')
     first_row = [str(v or '').strip() for v in rows[0]]
-    has_header = any(re.search(r'[A-Za-z\u3400-\u9fff]', v) for v in first_row)
+    if has_header is None:
+        has_header = any(re.search(r'[A-Za-z\u3400-\u9fff]', v) for v in first_row)
     headers = first_row if has_header else ['C'+str(i+1) for i in range(len(first_row))]
     for r, row in enumerate(rows):
         values = [str(v or '').strip() for v in row]
@@ -330,6 +332,41 @@ def _raster_grid(gray):
     return max(candidates,key=lambda xy:(len(xy[0])-1)*(len(xy[1])-1),default=([],[]))
 
 
+def _cell_ocr(page, box, tessdata, dpi):
+    """OCR a border-free, padded cell; retain output without lexical correction."""
+    import numpy as np
+    clip=fitz.Rect(box)+fitz.Rect(2,2,-2,-2)
+    if clip.width<8 or clip.height<8:return '', 'CELL_TOO_SMALL'
+    pix=page.get_pixmap(matrix=fitz.Matrix(dpi/72,dpi/72),clip=clip,
+                        colorspace=fitz.csGRAY,alpha=False)
+    values=np.frombuffer(pix.samples,dtype=np.uint8).reshape(pix.height,pix.width)
+    # Flat colored table fills and rules interfere with OCR on whole-page scans.
+    # Use local background contrast, retaining original pixels on ambiguous fills.
+    ink=np.abs(values.astype(np.int16)-np.median(values))>50
+    if .005<ink.mean()<.4:
+        pixels=np.where(ink,0,255).astype(np.uint8)
+        pix=fitz.Pixmap(fitz.csGRAY,pix.width,pix.height,pixels.tobytes(),False)
+    with fitz.open() as crop:
+        target=crop.new_page(width=clip.width+12,height=clip.height+12)
+        target.insert_image(fitz.Rect(6,6,clip.width+6,clip.height+6),pixmap=pix)
+        tp,error=local_ocr(target,tessdata,dpi=dpi)
+        raw=target.get_text(textpage=tp).strip() if tp else ''
+    return raw,error
+
+
+def _scan_has_header(rows):
+    """Infer only compact column labels over longer data, otherwise use C1/C2.
+
+    Text in the first row alone is not evidence of a header (e.g. glossaries).
+    No row is discarded, regardless of the decision.
+    """
+    first=rows[0]
+    if not all(re.search(r'[A-Za-z\u3400-\u9fff]',v) and len(v.split())<=6
+               and len(v)<=60 for v in first):return False
+    return any(max((len(row[c].split()) for row in rows[1:]),default=0)
+               >max(3,len(value.split())*1.5) for c,value in enumerate(first))
+
+
 def scanned_tables(page, textpage, page_no, *, tessdata=None, dpi=150):
     """Separate bounded raster-grid path. Never infer borderless/merged cells.
 
@@ -344,7 +381,7 @@ def scanned_tables(page, textpage, page_no, *, tessdata=None, dpi=150):
     pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), colorspace=fitz.csGRAY, alpha=False)
     gray = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
     xs,ys = _raster_grid(gray)
-    if not (3 <= len(xs) <= 31 and 3 <= len(ys) <= 101):
+    if not (3 <= len(xs) <= 31 and 4 <= len(ys) <= 101):
         return [], [], ['SCAN_TABLE_GRID_UNCONFIRMED']
     sx, sy = page.rect.width/pix.width, page.rect.height/pix.height
     xs = [page.rect.x0+x*sx for x in xs]
@@ -364,33 +401,31 @@ def scanned_tables(page, textpage, page_no, *, tessdata=None, dpi=150):
                     rows[r][c] += (' ' if rows[r][c] else '') + word[4]
     recovered=0
     crop_raw={}
-    # Page OCR can omit isolated headers/short cells. Retry only empty, bounded
-    # cells as local crops, never inventing values or calling a cloud model.
-    empty=[(r,c) for r,row in enumerate(rows) for c,value in enumerate(row) if not value]
-    if tessdata is not None and len(empty)<=32:
-        for r,c in empty:
-            clip=fitz.Rect(boxes[r][c])+fitz.Rect(2,2,-2,-2)
-            if clip.width<8 or clip.height<8:continue
-            with fitz.open() as crop:
-                target=crop.new_page(width=clip.width,height=clip.height)
-                target.show_pdf_page(target.rect,page.parent,page.number,clip=clip)
-                cell_tp,error=local_ocr(target,tessdata,dpi=dpi)
-                if not error:
-                    raw=target.get_text(textpage=cell_tp).strip()
-                    crop_raw[f'R{r+1}C{c+1}']=raw
-                    rows[r][c]=' '.join(line.strip() for line in raw.splitlines() if line.strip() not in {'|','_'})
-                    recovered+=1
+    original_rows=[list(row) for row in rows]
+    # An all-cells pass fixes nonempty but corrupted page-OCR text too. Bound
+    # work and fail closed to raw page text instead of emitting partial tables.
+    if tessdata is None or sum(map(len,rows))>64:
+        return [],[],['SCAN_TABLE_CELL_OCR_UNAVAILABLE']
+    for r,row in enumerate(rows):
+        for c in range(len(row)):
+            raw,error=_cell_ocr(page,boxes[r][c],tessdata,max(dpi,300))
+            crop_raw[f'R{r+1}C{c+1}']=raw
+            if error:return [],[],['SCAN_TABLE_CELL_OCR_FAILED']
+            rows[r][c]=' '.join(line.strip() for line in raw.splitlines() if line.strip() not in {'|','_'})
+            recovered+=int(rows[r][c]!=original_rows[r][c])
     if sum(bool(v) for row in rows for v in row) < 3:
         return [], [], ['SCAN_TABLE_OCR_CELLS_EMPTY']
     box = [xs[0], ys[0], xs[-1], ys[-1]]
-    pieces=_table_rows(rows, boxes, box, page_no, f'p{page_no}-scan-t0',method='raster-grid+local-ocr')
+    pieces=_table_rows(rows, boxes, box, page_no, f'p{page_no}-scan-t0',
+                       method='raster-grid+local-ocr',has_header=_scan_has_header(rows))
     for piece in pieces:
         piece.locator.update(cell_crop_ocr_recovered=recovered,cell_crop_raw=crop_raw,
+                             cell_page_ocr_raw=original_rows,cell_ocr_dpi=max(dpi,300),
                              excluded_grid_tokens=grid_tokens)
     return pieces, [fitz.Rect(box)], ['SCAN_TABLE_OCR_UNVERIFIED']
 
 
-def parse_page(page, *, source_sha256, tessdata, dpi=150, scan_tables=False):
+def parse_page(page, *, source_sha256, tessdata, dpi=150, scan_tables=False, tables_enabled=True):
     native = page.get_text('text').strip()
     coverage = image_coverage(page)
     route = classify_page(len(native), coverage)
@@ -404,9 +439,14 @@ def parse_page(page, *, source_sha256, tessdata, dpi=150, scan_tables=False):
         if error:
             record.update(status='partial' if native else 'failed', route='native_fallback' if native else 'ocr_failed')
             record['warnings'].append(error)
+    record['tables_enabled']=tables_enabled
+    record['page_text_sha256']=hashlib.sha256(
+        (page.get_text(textpage=tp) if tp else native).encode()).hexdigest()
     result = PageResult(record)
     tables, table_boxes, warnings = ([], [], [])
-    if tp is not None and route == 'ocr':
+    if not tables_enabled:
+        warnings=['PDF_TABLE_STRUCTURE_DISABLED']
+    elif tp is not None and route == 'ocr':
         if scan_tables:
             tables, table_boxes, warnings = scanned_tables(page, tp, page.number+1,tessdata=tessdata,dpi=dpi)
         else:

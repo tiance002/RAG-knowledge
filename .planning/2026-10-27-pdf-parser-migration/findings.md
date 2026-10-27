@@ -1,5 +1,10 @@
 # Findings
 
+## Table repair mechanisms
+- UI screenshot false admission had only2gridrows; require>=3with fallback raw OCR. Firsttextrow is not automatically header for scans; compact labels over longer data required, otherwise C1/C2 and every row retained.
+- Empty-only cell retry failed to repair nonempty garbage; replace with bounded<=64cells localcropOCR300dpi, border inset/padding/background contrast. Preserve page/rawcropoutputs and explicit unverified warning. RealMicrowaves/Aerial/Interference rows now complete, some spelling/spacing still ambiguous rather than silently dictionary-corrected.
+- Sameparser table master toggle controls bothnative/scannedstructure. A page_text_sha256 audit permits exact same base native/pageOCR verification acrossarms; table-localcropOCR is partof the enabled table pipeline.
+
 ## V2 frozen retrieval/answer evidence
 - Fresh24answerECS run exit0. Same models/prompt/retrieval/captions,12questions stratified8regression+4table. Full report docs/pdf-v2-evaluation-20261027.md and ignored raw var/pdf-v2-eval-20261027/.
 - Table4 core4/4->4/4/pageRecall1->1; original8core6/8->4/8/pageRecall.8333both; overall10/12->8/12/pageRecall.9both. No accuracy/recall gain demonstrated. Table4promptTokens86324->39038, efficiency benefit under this frozen whole-parser comparison; no table-only causal ablation.

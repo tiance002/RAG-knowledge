@@ -1008,7 +1008,8 @@ class FileParser:
             for page in doc:
                 result = parse_page(page, source_sha256=source_sha,
                     tessdata=settings.PDF_TESSDATA_DIR, dpi=settings.PDF_OCR_DPI,
-                    scan_tables=settings.PDF_SCANNED_TABLES_ENABLED)
+                    scan_tables=settings.PDF_SCANNED_TABLES_ENABLED,
+                    tables_enabled=settings.PDF_TABLES_ENABLED)
                 pages.append(result.record)
                 pending = []
                 events = [(p.locator.get('bbox', p.locator.get('table_bbox'))[1],

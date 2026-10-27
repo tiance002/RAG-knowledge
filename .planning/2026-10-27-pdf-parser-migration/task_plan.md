@@ -1,5 +1,12 @@
 # PDF parser migration — 2026-10-27
 
+## Table fixes and causal ablation — owner authorized
+- [in_progress] Fix UI false admission, first-data-row header inference and nonempty corrupted cell OCR. Preserve raw OCR/provenance and add regressions plus a table master switch.
+- [pending] Verify Windows and isolated ECS parsing on samePDFs; freeze identical-v2 table off/on outputs and unchanged12questions/Gold, models/prompt/retrieval/captions.
+- [pending] Execute bounded24fresh paired answers, score original8/table4 separately, retain failures, no service switch.
+
+Scope: D:/RAG knowledge only; E:/RAG quention remains read-only and paused. Target repo lacks root AGENTS.md/progress.md/docs/adr; existing selected .planning and parser/eval docs are current records. Old journals/results are immutable.
+
 ## Goal and scope
 Implement per-page routing/audit, local OCR with coordinates, native tables, then separate scanned-table handling. Compare the same ECS PDFs before/after with frozen models/retrieval configuration. Old project is read-only reference; no old business writes or overwritten indexes.
 

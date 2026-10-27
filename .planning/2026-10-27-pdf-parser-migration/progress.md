@@ -1,5 +1,10 @@
 # Progress
 
+## Table-fix ablation — active
+- Added enhanced PDF_TABLES_ENABLED master switch (legacy production mode unchanged), conservative >=3scanrows admission, compact-label scan header inference (unknown => numbered columns, no lost rows), and bounded all-cell padded/high-contrast300dpi local OCR. Original page OCR and crop outputs retained; no lexical guessing or cloud OCR.
+- Real pages:catdog41table2->0;physics16C1/C2 firstrow retained and major corruptMicrowaves/Aerial/Interference cells recovered;physics13retains5rows/headers. Minor character ambiguities remain flaggedSCAN_TABLE_OCR_UNVERIFIED.
+- Windows21PASS exit0(final24.98s),ECSisolated21PASS exit0(14.36s),including actual3PDFregressions. Full134page same-version off/on parsing inprogress. No paid model calls yet in this ablation; historical journals unchanged.
+
 ## V2 retrieval/answer run completed
 - Frozen parser b681671, same3rawECS PDFs, original8plus4source-reviewedtableprobes.277legacy/441v2chunks;636uniqueembeddinginputs.24freshpairedanswers, no historical answer reuse.
 - Zero-call preflight exit0; frozen modelIDs/endpoint hashes/production source/prompt AST verified. Runtime exit0,756.706seconds;137HTTPsuccess(51embeddingrequests,62rerank,24generation),UNKNOWN0,no replay.
