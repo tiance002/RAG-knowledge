@@ -110,6 +110,7 @@ class LLMService:
                 messages=request_messages,
                 stream=True,
                 temperature=temperature,
+                max_tokens=settings.LLM_ANSWER_MAX_TOKENS,
             )
 
             async for chunk in response:
@@ -146,7 +147,7 @@ class LLMService:
             response = await client.chat.completions.create(
                 model=target_model,
                 messages=request_messages,
-                max_tokens=2000,
+                max_tokens=settings.LLM_ANSWER_MAX_TOKENS,
                 temperature=0.7,
             )
             return response.choices[0].message.content
@@ -162,5 +163,5 @@ class LLMService:
             openai_api_base=self.base_url,
             temperature=temperature,
             streaming=streaming,
-            max_tokens=max_tokens
+            max_tokens=settings.LLM_ANSWER_MAX_TOKENS if max_tokens is None else max_tokens
         )

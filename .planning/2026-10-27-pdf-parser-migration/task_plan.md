@@ -1,5 +1,18 @@
 # PDF parser migration — 2026-10-27
 
+## ECS-only real table hardcase expansion — owner authorized
+- Dataset200 FROZEN onECS at /opt/amrag/experiments/pdf-table-hardcases-20261027/dataset200/freeze.json before modelcalls. Gold100 SHA6b8d795ac6920893b3d5488c55b6891bde1de9358d90a7d54d6b994e4a90a286;qrel100 SHA769d7bc1fda48aaec37e6f4087e827a019a078f7caebbf1bab7fea84bf1d90d8.200unique/disjoint,118reused+82new(16CNQA+16CNqrel+25MMLQA+25MMLqrel),90ZH/110EN,94PDFqueries/106textqueries.11newPDFsources+3regressionPDFs.12regressions exactlypreserved.
+- Owner explicitly chose immediate full200AB thisturn:400retrievals,200generatedanswers(onlyGold100hasgeneration),sameXing/BGE models,prompt/hybrid50/rerank20/window1/temp.7/max2000. No production switch. Needscalableisolatedrunner;do notrunearlier20-24caseprototype.
+- SourceQC:CNstatsbasicqrelcorrectedPDF15/16->16 after公开tableIDs audit;unchecked draft kept.10upstreamMMLcorrections applied;manualadditionalfixes305printed3.80notformula3.79,676Annex1PDF22+ascendingmodulecodes,1006explicitEBITDAdefinition.Original118unchanged. Near duplicates1013/1038/229excluded. NewgraphRAPTORfigures1/3/4 visuallyverifiedvia smallremote crops, noPDFdownloadtoWindows.
+- Owner expanded target and confirmed two distinct sets:100GoldQA+100qrel queries=200uniquequestions. Reuse existingECS118cases(40SciFact/23MIRACLzh/39Longbenchzh/8HotpotQA/8MMLongDoc) plus4later tableprobes=122unique. Gold59(existing55+4) needs41new; retrieval63needs37new. The12PDFregressions are included, not countedagain. Supersedes initial4-6PDF/8-12case pilot size below; no smallpilot model calls dispatched.
+- Owner requested Aliyun mirror. ECS Aliyunpublic/VPC directoryreachable but onlyQingyiSi/TigerResearch/cache/wikitext listed, no requestedbenchmarkthere. ModelScopeMIRACL repositoryreachable; probedMMLongDoc/Longbench exactIDs returnnotfound. No localhost PDF transport.
+- Canonical auditcorrects preliminaryrawcounts:118oldrecords contain4duplicate aliases(twoMIRACL questions). With4newtableprobes,122rawrecords=118uniquequestions. Gold59unique+retrieval59unique;need41newGold+41newqrel=82new. Mergepositiveqrels foridenticalquestion/scope andkeepallsourceqids;old118/oldmetrics untouched. Initialbuilder uniquenessassert failed before writingoutputs, retainedlog; correctedcanonicalization preservesassert andall69rawpositive labels.
+- [in_progress] Download source metadata/PDFs directly on ECS into a new isolated stage; target4-6newPDFs/8-12newsource-verified cases selected by legacy extraction defects, not enhanced results. No rawPDF/largeparse download to Windows.
+- [pending] Freeze provenance, baseline defect evidence, questions/Gold/qrels before generation; retain unchanged12regression cases. Sameca65fa0parser, models/prompt/retrieval; identicalcaptionsbotharms.
+- [pending] Execute bounded fresh off/on paired inference, score existing12/newhardcases separately, preserve failures and productionidentity. No service switch.
+
+New raw sources/parses/Gold/contexts stay on ECS. Local receives only scripts, hashes and compact evaluation evidence; previous all-results bundles remain untouched. No change to paused oldproject/UNKNOWN ledgers. No live Langfuse dataset mutation.
+
 ## Table fixes and causal ablation — owner authorized
 - [complete] Fix UI false admission, first-data-row header inference and nonempty corrupted cell OCR. Preserve raw OCR/provenance and add regressions plus a table master switch. Commitca65fa0;21Windows/21LinuxPASS.
 - [complete] Freeze same-v2 off413/on438chunks,134pagebaseOCRhashes equal,89captionsidentical,old12questions/Gold byte-identical;455uniqueembeddinginputs. InputSHA557d80a52c532ac2140c316a22501ef181ff652058deff63c95c57ec7f677882. Preflightzero-call exit0.
