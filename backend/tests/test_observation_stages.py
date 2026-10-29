@@ -39,4 +39,3 @@ def test_rerank_observes_batches_and_filter(monkeypatch, tmp_path):
     assert 'rerank.batch_input' in text and 'rerank.filtered' in text
     assert 'secret body' not in text and 'secret query' not in text
 
-\n

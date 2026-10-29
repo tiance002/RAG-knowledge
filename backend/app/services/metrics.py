@@ -103,9 +103,8 @@ def sse_event(event_type: str, payload: Any = None) -> None:
         if name in ("error", "done"):
             if name == "done":
                 state["terminal"] = "DONE"
-                answer_mode = payload.get("answer_mode") if isinstance(payload, dict) else None
                 explicit_delivery = payload.get("response_delivery") if isinstance(payload, dict) else None
-                state["response_delivery"] = "buffered_validated" if answer_mode == "GROUNDED_GENERATION" else _limited(str(explicit_delivery), {"streaming", "buffered_validated"}, "unknown")
+                state["response_delivery"] = _limited(str(explicit_delivery), {"streaming", "buffered_validated"}, "unknown")
             else:
                 status = payload.get("status") if isinstance(payload, dict) else None
                 state["terminal"] = _limited(str(status), {"FAILED", "UNKNOWN", "TRUNCATED", "PRE_CONNECT_FAILED", "CANCELLED"}, "FAILED")

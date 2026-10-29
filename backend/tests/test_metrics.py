@@ -127,12 +127,12 @@ def test_context_reaches_handler_through_starlette_base_http_middleware(monkeypa
     assert next(row for row in rows if row[0] == "_sse_requests")[1]["outcome"] == "DONE"
 
 
-def test_validated_buffered_candidate_delivery_is_labeled_only_when_explicit(monkeypatch):
+def test_grounded_generation_does_not_imply_validated_delivery(monkeypatch):
     rows = install_fake_metrics(monkeypatch)
     async def app(scope, receive, send):
         scope["route"] = SimpleNamespace(path="/api/v1/chat/completions")
         await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/event-stream")]})
-        metrics.sse_event("answer_chunk", {"content": "validated"})
+        metrics.sse_event("answer_chunk", {"content": "candidate"})
         metrics.sse_event("done", {"answer_mode": "GROUNDED_GENERATION"})
         await send({"type": "http.response.body", "body": b"", "more_body": False})
     async def run():
@@ -140,7 +140,7 @@ def test_validated_buffered_candidate_delivery_is_labeled_only_when_explicit(mon
         await metrics.HTTPMetricsMiddleware(app)({"type": "http", "method": "POST", "path": "/", "headers": []}, None, send)
     asyncio.run(run())
     ttft = next(row for row in rows if row[0] == "_sse_ttft")
-    assert ttft[1]["response_delivery"] == "buffered_validated"
+    assert ttft[1]["response_delivery"] == "unknown"
 
 
 def test_sse_errors_preserve_unknown_and_truncated_outcomes(monkeypatch):

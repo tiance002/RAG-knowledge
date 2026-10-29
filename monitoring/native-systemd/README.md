@@ -7,3 +7,19 @@ Docker Hub 在本次 ECS 上不可用；实际运行的是隔离解包的 Ubuntu
 采集的应用目标 `127.0.0.1:18200` 只用于临时隔离应用。正式 RAG 仍在 8200，未启用 `/metrics`，不能将隔离测试数据视为正式服务指标。临时应用停止后该目标会显示 `down`。数据库、Redis、任务等待队列、Agent 正确补救率及价格等没有可靠数据的指标不能推定为零。
 
 本次隔离测试的 Prometheus 查询曾返回约 0.089 QPS、P95 0.0475 秒、HTTP 4xx/5xx 比例 12.5%，以及 SSE DONE=2、FAILED=2。这是少量受控请求（含人为制造的 404 和模拟检索故障），不是性能基线。P95 为直方图桶插值。服务顺序重启后配置和已有 SSE 计数保留；主机重启恢复尚未验证。当前 systemd 单元以 root 运行，应在后续收紧运行用户与文件权限。
+
+## 在 Windows 上查看
+
+在本机 PowerShell 建立 SSH 隧道，并保持窗口打开：
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\study-plan-dev.pem" -N -L 13000:127.0.0.1:13000 -L 19090:127.0.0.1:19090 root@120.55.115.162
+```
+
+浏览器访问 `http://127.0.0.1:13000` 查看 Grafana，或访问 `http://127.0.0.1:19090` 查看 Prometheus。Grafana 管理员用户名为 `admin`。初始密码文件在 ECS `/opt/amrag/experiments/p1-monitoring-20261028/secrets/grafana_admin_password`，可在另一个 PowerShell 窗口通过 SSH 查看；若已在 Grafana 修改密码，以修改后的密码为准。不要将密码文件提交到 Git。
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\study-plan-dev.pem" root@120.55.115.162 'cat /opt/amrag/experiments/p1-monitoring-20261028/secrets/grafana_admin_password'
+```
+
+应用抓取目标只指向隔离服务；未启用时显示 `down`，不表示正式服务故障。正式服务尚未提供本监控栈可抓取的指标。隔离实验各自保存的 `metrics.prom` 也不会自动出现在 Grafana。

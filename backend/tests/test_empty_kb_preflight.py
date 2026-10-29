@@ -161,4 +161,3 @@ def test_pending_confirmation_with_index_is_uncertain(db):
         session.commit()
     assert chat._scope_preflight(['empty']) is None
 
-\n

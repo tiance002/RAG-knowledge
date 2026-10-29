@@ -61,6 +61,23 @@ def test_multiple_success_rounds_are_allowed_but_unknown_is_not(monkeypatch):
     assert mode == "EXTRACTIVE_FALLBACK"
 
 
+def test_empty_search_then_success_can_generate(monkeypatch):
+    monkeypatch.setenv("RAG_GROUNDED_GENERATION", "true")
+    empty = ToolMessage(name="search_knowledge_base", tool_call_id="empty", content=json.dumps({
+        "retrieval_status": "NO_RESULTS", "citations": []
+    }))
+    source = state()
+    source["messages"].insert(0, empty)
+    response = answer()
+    citations, mode = agent_workflow._finalize_knowledge_answer(source, response, include_mode=True)
+    assert mode == "GROUNDED_GENERATION"
+    assert response.content == "收入为 42 元。[1]"
+    assert citations[0]["chunk_id"] == "a"
+    source["messages"].append(empty)
+    _, mode = agent_workflow._finalize_knowledge_answer(source, answer(), include_mode=True)
+    assert mode == "EXTRACTIVE_FALLBACK"
+
+
 def test_mixed_image_preserves_unverified_disclosure(monkeypatch):
     monkeypatch.setenv("RAG_GROUNDED_GENERATION", "true")
     response = answer("基于文字资料的回答。")

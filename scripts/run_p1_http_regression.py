@@ -127,6 +127,7 @@ def parse_args(argv=None):
     parser.add_argument('--rewrite-only', action='store_true', help='one rewrite send for one reused fulltext case, without answer generation')
     parser.add_argument('--scratch-fulltext', action='store_true', help='use empty private Chroma directories with fulltext-only guards')
     parser.add_argument('--capture-metrics', action='store_true', help='capture sanitized metrics from the isolated API after each case')
+    parser.add_argument('--require-observability', action='store_true', help='on execution require Langfuse and Prometheus imports, cloud credentials, and metrics capture')
     parser.add_argument('--private-candidate-snapshots', action='store_true', help='store local-only snapshots in each private case directory')
     parser.add_argument('--empty-only', action='store_true', help='run only empty-KB cases with all provider traffic disabled')
     parser.add_argument('--port', type=int, default=0, help='loopback port; 0 chooses an ephemeral port')
@@ -178,6 +179,41 @@ def build_http_request(case, model_id, rewrite_only):
             'context_window': 0, 'use_rewrite': rewrite_only}
 
 
+def selected_corpus_qids(selected, pdf_gold, registry, office_gold):
+    """Extend defaults only with explicitly selected frozen, registered cases."""
+    selected = tuple(selected or ())
+    pdf_allowed = set(pdf_gold) & set(registry)
+    office_allowed = set(office_gold)
+    if any(qid not in pdf_allowed and qid not in office_allowed for qid in selected):
+        raise ValueError('unknown case filter')
+    if any(qid in pdf_allowed and qid in office_allowed for qid in selected):
+        raise ValueError('ambiguous case filter')
+    pdf_qids = tuple(dict.fromkeys(PDF + tuple(qid for qid in selected if qid in pdf_allowed)))
+    office_qids = tuple(dict.fromkeys(OFFICE + tuple(qid for qid in selected if qid in office_allowed)))
+    return pdf_qids, office_qids
+
+
+def observability_preflight(credentials, capture_metrics):
+    """Check local prerequisites only; this cannot prove Cloud delivery."""
+    import importlib
+    checks = {}
+    for name in ('langfuse', 'opentelemetry.sdk.trace', 'prometheus_client'):
+        try:
+            importlib.import_module(name)
+            checks[name] = 'AVAILABLE'
+        except Exception:
+            checks[name] = 'IMPORT_FAILED'
+    checks['cloud_config'] = ('CONFIGURED' if credentials.get('LANGFUSE_PUBLIC_KEY')
+                              and credentials.get('LANGFUSE_SECRET_KEY')
+                              and credentials.get('LANGFUSE_BASE_URL', '').rstrip('/') == 'https://us.cloud.langfuse.com'
+                              else 'INVALID_OR_MISSING')
+    checks['metrics_capture'] = 'ENABLED' if capture_metrics else 'DISABLED'
+    checks['cloud_delivery'] = 'NOT_VERIFIED'
+    checks['status'] = ('PASS' if all(checks[name] == 'AVAILABLE' for name in ('langfuse', 'opentelemetry.sdk.trace', 'prometheus_client'))
+                        and checks['cloud_config'] == 'CONFIGURED' and capture_metrics else 'FAIL')
+    return checks
+
+
 def main():
     args = parse_args()
     backend = args.backend.resolve()
@@ -197,11 +233,8 @@ def main():
     pdf_gold = {r['qid']: r for r in rows(data / 'gold100.jsonl')}
     registry = {r['qid']: r for r in rows(data / 'registry200.jsonl')}
     office_gold = {r['qid']: r for r in rows(office / 'office50.jsonl')}
-    # Additional cases are accepted only when explicitly selected from the
-    # frozen Office dataset; the default regression set remains unchanged.
-    office_qids = tuple(dict.fromkeys(OFFICE + tuple(
-        qid for qid in (args.selected_cases or ()) if qid in office_gold
-    )))
+    # Explicit additions must be frozen gold cases with a PDF registry entry.
+    pdf_qids, office_qids = selected_corpus_qids(args.selected_cases, pdf_gold, registry, office_gold)
     controls = rows(prior / 'control-sql.jsonl')
     known = {r['value']['name'].removeprefix('prod-'): r['value']['id'] for r in controls if r['kind'] == 'kb'}
     ids = json.loads(Path('/opt/amrag/ids.json').read_text(encoding='utf-8'))['models']
@@ -218,7 +251,7 @@ def main():
     finally:
         model_db.close()
     cases = []
-    for corpus, qids, gold, runtime in [('pdf', PDF, pdf_gold, prior), ('office', office_qids, office_gold, office_runtime)]:
+    for corpus, qids, gold, runtime in [('pdf', pdf_qids, pdf_gold, prior), ('office', office_qids, office_gold, office_runtime)]:
         for required in (('isolated.db',) if args.scratch_fulltext else ('isolated.db', 'chroma')):
             if not (runtime / required).exists():
                 raise ValueError('missing corpus runtime')
@@ -251,15 +284,15 @@ def main():
         if not selected.issubset({case['qid'] for case in cases}):
             raise ValueError('unknown case filter')
         cases = [case for case in cases if case['qid'] in selected]
-    print(json.dumps({'status': 'PREFLIGHT_PASS', 'provider_calls': 0, 'code_sha256': code, 'runner_sha256': sha(Path(__file__)), 'pdf_freeze_sha256': sha(data / 'freeze.json'), 'office_freeze_sha256': sha(office / 'freeze250.json'), 'models': {'credential_model': args.llm_model, 'provider_role': args.provider_role, 'wire_model': args.provider_model or args.llm_model, 'embedding': args.embedding_model}, 'cases': cases, 'planned_bounds': planned_bounds(args), 'grounded_generation': args.grounded_generation, 'rewrite_only': args.rewrite_only, 'compare_grounded': args.compare_grounded, 'scratch_fulltext': args.scratch_fulltext, 'capture_metrics': args.capture_metrics, 'empty_only': args.empty_only, 'port': args.port, 'execution': 'READY' if args.execute else 'NOT_RUN'}, ensure_ascii=False), flush=True)
+    print(json.dumps({'status': 'PREFLIGHT_PARTIAL' if args.require_observability else 'PREFLIGHT_PASS', **({'observability_preflight': 'NOT_CHECKED'} if args.require_observability else {}), 'provider_calls': 0, 'code_sha256': code, 'runner_sha256': sha(Path(__file__)), 'pdf_freeze_sha256': sha(data / 'freeze.json'), 'office_freeze_sha256': sha(office / 'freeze250.json'), 'models': {'credential_model': args.llm_model, 'provider_role': args.provider_role, 'wire_model': args.provider_model or args.llm_model, 'embedding': args.embedding_model}, 'cases': cases, 'planned_bounds': planned_bounds(args), 'grounded_generation': args.grounded_generation, 'rewrite_only': args.rewrite_only, 'compare_grounded': args.compare_grounded, 'scratch_fulltext': args.scratch_fulltext, 'capture_metrics': args.capture_metrics, 'empty_only': args.empty_only, 'port': args.port, 'execution': 'READY' if args.execute else 'NOT_RUN'}, ensure_ascii=False), flush=True)
     if args.execute:
         import sys
         credentials = {} if args.empty_only else json.load(sys.stdin)
-        execute(backend, cases, pdf_gold, office_gold, ids, args.llm_model, llm_url, credentials, args.grounded_generation, args.empty_only, args.port, args.metrics_hold_seconds, args.compare_grounded, args.scratch_fulltext, args.capture_metrics, args.reuse_runtime, args.private_candidate_snapshots, args.rewrite_only, args.provider_model or args.llm_model, args.reuse_empty_kb)
+        execute(backend, cases, pdf_gold, office_gold, ids, args.llm_model, llm_url, credentials, args.grounded_generation, args.empty_only, args.port, args.metrics_hold_seconds, args.compare_grounded, args.scratch_fulltext, args.capture_metrics, args.reuse_runtime, args.private_candidate_snapshots, args.rewrite_only, args.provider_model or args.llm_model, args.reuse_empty_kb, args.require_observability)
 
 
 
-def execute(backend, cases, pdf_gold, office_gold, ids, llm_model, llm_url, credentials, grounded_generation='on', empty_only=False, port=0, metrics_hold_seconds=0, compare_grounded=False, scratch_fulltext=False, capture_metrics=False, reuse_runtime=None, private_candidate_snapshots=False, rewrite_only=False, provider_model=None, reuse_empty_kb=None):
+def execute(backend, cases, pdf_gold, office_gold, ids, llm_model, llm_url, credentials, grounded_generation='on', empty_only=False, port=0, metrics_hold_seconds=0, compare_grounded=False, scratch_fulltext=False, capture_metrics=False, reuse_runtime=None, private_candidate_snapshots=False, rewrite_only=False, provider_model=None, reuse_empty_kb=None, require_observability=False):
     """Run serial isolated requests; unresolved dispatch blocks subsequent runs."""
     import multiprocessing as mp
     import os
@@ -268,6 +301,12 @@ def execute(backend, cases, pdf_gold, office_gold, ids, llm_model, llm_url, cred
     import time
     import uuid
     from urllib.parse import urlsplit
+    observability = None
+    if require_observability:
+        observability = observability_preflight(credentials, capture_metrics)
+        print(json.dumps({'observability_preflight': observability}), flush=True)
+        if observability['status'] != 'PASS':
+            raise RuntimeError('required observability preflight failed')
     if rewrite_only and (not reuse_runtime or not scratch_fulltext or grounded_generation != 'off'
                          or compare_grounded or empty_only or len(cases) != 1):
         raise ValueError('invalid rewrite-only execution scope')
@@ -585,6 +624,9 @@ def execute(backend, cases, pdf_gold, office_gold, ids, llm_model, llm_url, cred
                 obs = rows(run / 'events.jsonl') if (run / 'events.jsonl').exists() else []
                 trace_ids = sorted({r['trace_id'] for r in obs if r.get('stage') == 'qa.request' and r.get('event') == 'start'})
                 result = {'case': case['case_name'], 'qid': case['qid'], 'kb_id': case['kb_id'], 'mode': case['mode'], 'grounded_generation': case['grounded_generation'], 'request_config': request_config(case, rewrite_only), 'elapsed_seconds': round(time.monotonic() - started, 3), 'http_terminal_state': terminal_state, 'http_status': status, 'sse_complete': ok, 'events': [k for k, _ in events], 'citations': checks, 'trace_ids': trace_ids, 'provider_calls': counts.value - before, 'answer_mode': next((d.get('answer_mode') for k, d in events if k == 'done'), None)}
+                if require_observability:
+                    result['metrics_capture'] = 'NOT_VERIFIED'
+                    result['cloud_delivery'] = 'NOT_VERIFIED'
                 results.append(result)
                 result_recorded = True
                 source_reads = []
@@ -610,6 +652,8 @@ def execute(backend, cases, pdf_gold, office_gold, ids, llm_model, llm_url, cred
                     safe = sanitized_metrics(metric_response.text)
                     (run / 'metrics.prom').write_text(safe, encoding='utf-8')
                     result['metrics_capture'] = 'SAVED' if safe else 'EMPTY'
+                    if require_observability and not safe:
+                        raise RuntimeError('required isolated metrics capture is empty')
                 if metrics_hold_seconds:
                     time.sleep(metrics_hold_seconds)
                 if not ok or unknown.value:
@@ -627,7 +671,10 @@ def execute(backend, cases, pdf_gold, office_gold, ids, llm_model, llm_url, cred
     finally:
         if not reuse_runtime:
             for runtime in runtimes.values(): scrub(runtime / 'isolated.db')
-        (out / 'result.json').write_text(json.dumps({'cases': results, 'provider_calls': counts.value, 'unresolved_marker': marker.exists(), 'rewrite_only': rewrite_only}, ensure_ascii=False, indent=2), encoding='utf-8')
+        summary = {'cases': results, 'provider_calls': counts.value, 'unresolved_marker': marker.exists(), 'rewrite_only': rewrite_only}
+        if require_observability:
+            summary['observability_preflight'] = observability
+        (out / 'result.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
         print(json.dumps({'output': str(out), 'cases_completed': len(results), 'provider_calls': counts.value, 'unresolved_marker': marker.exists()}, ensure_ascii=False), flush=True)
 
 

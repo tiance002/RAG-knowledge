@@ -168,4 +168,3 @@ finally:
     print(json.dumps({'output':str(out),**result},ensure_ascii=False),flush=True)
 sys.exit(0 if result['status']=='COMPLETED' else 1)
 
-\n

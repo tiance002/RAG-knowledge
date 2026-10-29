@@ -70,4 +70,3 @@ def test_empty_scope_is_not_expanded_to_all_knowledge_bases(monkeypatch):
     assert asyncio.run(collect())[-1][0] == 'done'
     assert seen == [[]]
 
-\n

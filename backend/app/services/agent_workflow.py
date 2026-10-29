@@ -170,11 +170,13 @@ def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, includ
     validation_status = "NOT_RUN"
     finish_reason = (getattr(response, "response_metadata", None) or {}).get("finish_reason")
     if (os.getenv("RAG_GROUNDED_GENERATION", "true").lower() == "true"
-            and citations and statuses and all(status == "SUCCESS" for status in statuses)
+            and citations and statuses and statuses[-1] == "SUCCESS"
+            and all(status in {"SUCCESS", "NO_RESULTS"} for status in statuses)
             and state.get("last_score", 0.0) >= 0.8
             and isinstance(candidate, str) and candidate.strip() and finish_reason == "stop"):
         # The answer is not subjected to custom content/citation rules; all
-        # retrieved rounds must still have successful status and usable text.
+        # Earlier empty searches are harmless when the latest search succeeds;
+        # errors, unknown status, and low relevance still block generation.
         disclosure = "\n\n另有图片资料，其内容需要进一步核验。" if omitted_images else ""
         response.content = candidate + disclosure
         mode = "GROUNDED_GENERATION"
