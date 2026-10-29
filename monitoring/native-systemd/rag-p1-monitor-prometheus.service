@@ -1,0 +1,13 @@
+[Unit]
+Description=Isolated P1 Prometheus
+After=network.target
+[Service]
+Type=simple
+ExecStart=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/root/usr/bin/prometheus --config.file=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/config/prometheus.yml --storage.tsdb.path=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/data/prometheus --storage.tsdb.retention.time=24h --storage.tsdb.retention.size=512MB --web.listen-address=127.0.0.1:19090
+Restart=on-failure
+RestartSec=5
+CPUQuota=35%
+MemoryMax=256M
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

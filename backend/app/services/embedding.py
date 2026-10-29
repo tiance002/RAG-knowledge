@@ -1,3 +1,5 @@
+from app.services.observability import observe, event
+from app.services.llm import invoke_provider_http, invoke_provider_http_async
 """
 Embedding 服务
 """
@@ -29,14 +31,16 @@ class EmbeddingService:
         """批量获取文本的向量表示"""
         return await self._embed(texts, model_id)
 
+    @observe("embedding.call")
     async def _embed(self, texts: List[str], model_id: str = None) -> List[List[float]]:
         """调用 Embedding API"""
         target_model = model_id or self.model
-        
+        event("embedding.request", model=target_model, input_count=len(texts), tokens=None, cost=None)
+
         # 针对 Doubao 模型 (Volcengine) 的特殊处理
         # 1. 识别：通过模型名称或 URL 特征 (如 ark.cn-beijing.volces.com)
         is_doubao = "doubao" in target_model.lower() or "volces.com" in (self.base_url or "")
-        
+
         if is_doubao:
             return await self._embed_doubao(texts, target_model)
 
@@ -47,29 +51,18 @@ class EmbeddingService:
             url = base_url_clean
         else:
             url = f"{base_url_clean}/embeddings"
-        
-        # 打印调试信息
-        print(f"DEBUG_EMBED: Requesting {url}")
-
-        print(f"DEBUG_EMBED: Model: {target_model}")
-        print(f"DEBUG_EMBED: Text Count: {len(texts)}")
-        if self.api_key:
-            masked_key = self.api_key[:6] + "***" + self.api_key[-4:] if len(self.api_key) > 10 else "***"
-            print(f"DEBUG_EMBED: API Key: {masked_key}")
-        else:
-             print("DEBUG_EMBED: API Key: None")
 
         try:
             # 针对 Ollama /api/embeddings (Legacy) 接口不支持 batch 处理的特殊处理
             # 如果是 batch 输入且 url 包含 /api/embeddings，则降级为串行调用
             if "/api/embeddings" in url and isinstance(texts, list) and len(texts) > 1:
-                print(f"DEBUG_EMBED: Detected legacy Ollama endpoint {url} with batch input (size={len(texts)}). Switching to sequential processing.")
+                print(f"DEBUG_EMBED: Processing {len(texts)} legacy requests sequentially.")
                 embeddings = []
                 for i, text in enumerate(texts):
                     # 复用单个处理逻辑 (递归调用自己，但 ensure list)
                     # 注意：为了避免无限递归，这里我们直接构造单次请求
                     async with httpx.AsyncClient(timeout=60.0, verify=False, trust_env=False) as client:
-                        response = await client.post(
+                        response = await invoke_provider_http_async(lambda: client.post(
                             url,
                             headers={
                                 "Authorization": f"Bearer {self.api_key}",
@@ -79,12 +72,14 @@ class EmbeddingService:
                                 "model": target_model,
                                 "prompt": text, # Legacy endpoint uses 'prompt'
                             },
-                        )
+                        ), stage="embedding", model_name=target_model)
                         if response.status_code != 200:
                             print(f"DEBUG_EMBED: Error Status (Item {i}): {response.status_code}")
-                            raise Exception(f"Embedding API Error (Item {i}): {response.text}")
-                        
+                            response.raise_for_status()
+
                         result = response.json()
+                        from app.services.metrics import record_provider_usage
+                        record_provider_usage("embedding", result.get("usage"))
                         if "embedding" in result:
                             embeddings.append(result["embedding"])
                         else:
@@ -107,32 +102,34 @@ class EmbeddingService:
                      # Standard /api/embed or OpenAI
                      req_json["input"] = texts
 
-                response = await client.post(
+                response = await invoke_provider_http_async(lambda: client.post(
                     url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
                     },
                     json=req_json,
-                )
+                ), stage="embedding", model_name=target_model)
 
                 if response.status_code != 200:
                     print(f"DEBUG_EMBED: Error Status: {response.status_code}")
-                    print(f"DEBUG_EMBED: Error Body: {response.text}")
+
                     # 如果是 404，可能是路径不对，尝试一下 doubao 逻辑（作为 fallback）
                     if response.status_code == 404 and "volces" in (self.base_url or ""):
                          print("DEBUG_EMBED: 404 detected, retrying with Doubao format...")
                          return await self._embed_doubao(texts, target_model)
-                    
-                    raise Exception(f"Embedding API 错误: {response.text}")
+
+                    response.raise_for_status()
 
                 result = response.json()
-                
+                from app.services.metrics import record_provider_usage
+                record_provider_usage("embedding", result.get("usage"))
+
                 # 兼容 Ollama 原生 API 响应格式 (non-OpenAI format)
                 # 1. /api/embeddings (Legacy): {"embedding": [...]}
                 if "embedding" in result and "data" not in result:
                      return [result["embedding"]]
-                
+
                 # 2. /api/embed (New): {"embeddings": [[...], ...]}
                 if "embeddings" in result and "data" not in result:
                      return result["embeddings"]
@@ -142,31 +139,32 @@ class EmbeddingService:
                     # 按 index 排序确保顺序正确
                     embeddings = sorted(result["data"], key=lambda x: x["index"])
                     return [e["embedding"] for e in embeddings]
-                
+
                 # 未知格式
                 print(f"DEBUG_EMBED: Unknown response format: {result.keys()}")
                 raise Exception(f"Embedding API 响应格式未知: {list(result.keys())}")
 
 
         except Exception as e:
-            print(f"DEBUG_EMBED: Exception: {e}")
+            print(f"DEBUG_EMBED: Exception: {type(e).__name__}")
             raise
 
+    @observe("embedding.doubao")
     async def _embed_doubao(self, texts: List[str], model_id: str) -> List[List[float]]:
         """调用 Doubao (Volcengine) Embedding API"""
         # 官方示例 URL 是完整的，不需要加 /embeddings 后缀
         # 如果 base_url 已经包含了 /embeddings/multimodal，则直接使用
         url = self.base_url
-        
+
         # 严格检查 URL 是否为完整的 endpoint
         if "volces.com" in url and not url.endswith("/embeddings/multimodal"):
              # 如果用户只填了 base (e.g., https://ark.cn-beijing.volces.com/api/v3)，则补全
              url = f"{url.rstrip('/')}/embeddings/multimodal"
-        
+
         print(f"DEBUG_EMBED_DOUBAO: Requesting {url}")
-        
+
         embeddings = []
-        
+
         # 使用 requests 替代 httpx 以避免 InvalidURL: URL too long 问题
         # 这是一个临时的同步调用，运行在 Celery 线程中是可以接受的
         import requests
@@ -175,37 +173,37 @@ class EmbeddingService:
         # Process in batches (Doubao Multimodal API might require single item per request, so default to 1)
         batch_size = 1
         total_texts = len(texts)
-        
+
         for i in range(0, total_texts, batch_size):
             batch_texts = texts[i : i + batch_size]
             print(f"DEBUG_EMBED_DOUBAO: Processing batch {i // batch_size + 1}/{(total_texts + batch_size - 1) // batch_size}, size={len(batch_texts)}")
-            
+
             batch_input = []
-            
+
             for text in batch_texts:
                 # 构造 Doubao 格式 input (单个样本)
                 # 检查 text 是否包含图片占位符 [图片: xxx]
                 sample_input = []
-                
+
                 if text.startswith("[图片: ") and text.endswith("]"):
                      # 提取图片路径
                      image_path_str = text[5:-1]
-                     
+
                      # 构造完整路径 (假设图片存储在 settings.IMAGE_DIR)
                      full_image_path = os.path.join(settings.IMAGE_DIR, image_path_str)
-                     
+
                      if os.path.exists(full_image_path):
                          try:
                              with open(full_image_path, "rb") as image_file:
                                  encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-                                 
+
                                  # 获取扩展名以确定 mime type
                                  ext = os.path.splitext(image_path_str)[1].lower().replace('.', '')
                                  if ext == 'jpg': ext = 'jpeg'
                                  if not ext: ext = 'png'
-                                 
+
                                  data_uri = f"data:image/{ext};base64,{encoded_string}"
-                                 
+
                                  sample_input.append({
                                      "type": "image_url", 
                                      "image_url": {
@@ -223,9 +221,9 @@ class EmbeddingService:
                      clean_text = text.strip()
                      if not clean_text:
                          clean_text = " " 
-                     
+
                      sample_input.append({"type": "text", "text": clean_text})
-                
+
                 batch_input.append(sample_input)
 
             # 发送批量请求
@@ -239,7 +237,7 @@ class EmbeddingService:
                     "model": model_id,
                     "input": final_input
                 }
-                
+
                 # 打印调试信息：Payload (脱敏处理)
                 debug_payload = copy.deepcopy(payload)
                 if "input" in debug_payload:
@@ -278,10 +276,10 @@ class EmbeddingService:
                              else:
                                  debug_sample.append(item)
                          debug_payload["input"] = debug_sample
-                
+
                 # print(f"DEBUG_EMBED_DOUBAO: Payload (Batch): {debug_payload}")
 
-                response = requests.post(
+                response = invoke_provider_http(lambda: requests.post(
                     url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
@@ -291,30 +289,32 @@ class EmbeddingService:
                     timeout=120.0, 
                     verify=False,
                     proxies={"http": None, "https": None} # 显式禁用代理
-                )
+                ), stage="embedding", model_name=model_id)
 
                 if response.status_code != 200:
                     print(f"DEBUG_EMBED_DOUBAO: Error Status: {response.status_code}")
-                    print(f"DEBUG_EMBED_DOUBAO: Error Body: {response.text}")
-                    raise Exception(f"Doubao API Error ({response.status_code}): {response.text}")
-                
+
+                    response.raise_for_status()
+
                 result = response.json()
-                
+                from app.services.metrics import record_provider_usage
+                record_provider_usage("embedding", result.get("usage"))
+
                 if "data" in result:
                     data_field = result["data"]
-                    
+
                     # 情况1: 返回 List (标准 Batch)
                     if isinstance(data_field, list):
                          if len(data_field) > 0 and "index" in data_field[0]:
                              data_field.sort(key=lambda x: x["index"])
-                         
+
                          for item in data_field:
                              if "embedding" in item:
                                  embeddings.append(item["embedding"])
                              else:
                                  print(f"DEBUG_EMBED_DOUBAO: Item missing embedding: {item}")
                                  raise Exception("Doubao API response item missing embedding")
-                    
+
                     # 情况2: 返回 Dict (Single Item)
                     elif isinstance(data_field, dict):
                          if "embedding" in data_field:
@@ -322,16 +322,16 @@ class EmbeddingService:
                          else:
                              print(f"DEBUG_EMBED_DOUBAO: Data dict missing embedding: {data_field}")
                              raise Exception("Doubao API response data missing embedding")
-                    
+
                     else:
                          print(f"DEBUG_EMBED_DOUBAO: Unexpected data structure: {type(data_field)}")
                          raise Exception("Doubao API response format error: data is not list or dict")
                 else:
                     print(f"DEBUG_EMBED_DOUBAO: Invalid Response Format (missing 'data'): {result}")
                     raise Exception("Doubao API response format error: missing data")
-                    
+
             except Exception as e:
-                print(f"DEBUG_EMBED_DOUBAO: Failed for batch: {e}")
+                print(f"DEBUG_EMBED_DOUBAO: Failed for batch: {type(e).__name__}")
                 raise e
-        
+
         return embeddings

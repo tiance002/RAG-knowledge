@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_API_KEY: str = "ollama"
     LLM_MODEL: str = "qwen2.5:7b"
+    # Non-streamed answer generation only; streaming and Agent retain provider defaults.
     LLM_ANSWER_MAX_TOKENS: int = 4096
 
     # Embedding 配置

@@ -1,8 +1,10 @@
+from app.services.observability import observe, event
 """
 文件管理 API 路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, BackgroundTasks, Body
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, BackgroundTasks, Body, Query
+from fastapi.responses import Response
 from typing import Optional
 from sqlmodel import Session, select, func
 from typing import List, Dict
@@ -15,6 +17,7 @@ from app.core.config import get_settings
 from app.models import KnowledgeBase, FileDocument, FileStatus, generate_uuid, DocumentChunk
 from app.schemas import FileUploadResponse, FileStatusResponse, ApiResponse
 from app.tasks.parse_tasks import process_file_parsing
+from app.services.metrics import track_background_task
 
 router = APIRouter(tags=["File"])
 settings = get_settings()
@@ -25,11 +28,39 @@ def get_file_extension(filename: str) -> str:
     return os.path.splitext(filename)[1].lower()
 
 
+@router.get('/files/{file_id}/source')
+def read_pdf_source(file_id: str, kb_id: str, sha256: str = Query(pattern=r'^[0-9a-f]{64}$'),
+                    session: Session = Depends(get_session)):
+    """Read the exact source version referenced by a same-file table expansion."""
+    import hashlib
+    from pathlib import Path
+    from urllib.parse import quote
+    doc = session.get(FileDocument, file_id)
+    kb = session.get(KnowledgeBase, kb_id)
+    if not doc or not kb or kb.is_deleted or doc.kb_id != kb_id:
+        raise HTTPException(status_code=404, detail='资料不存在')
+    path = Path(doc.local_path)
+    try:
+        if path.suffix.lower() != '.pdf' or path.stat().st_size > 50_000_000:
+            raise HTTPException(status_code=404, detail='原始 PDF 不可用')
+        data = path.read_bytes()
+    except OSError:
+        raise HTTPException(status_code=404, detail='原始 PDF 不可用')
+    if hashlib.sha256(data).hexdigest() != sha256:
+        raise HTTPException(status_code=409, detail='原始文件版本已变化，无法打开该引用')
+    if not data.startswith(b'%PDF-'):
+        raise HTTPException(status_code=404, detail='原始 PDF 不可用')
+    return Response(content=data, media_type='application/pdf', headers={
+        'Content-Disposition': "inline; filename*=UTF-8''" + quote(doc.name, safe=''),
+        'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store'})
+
+
 @router.post(
     "/knowledge-bases/{kb_id}/upload",
     response_model=ApiResponse[FileUploadResponse],
     status_code=status.HTTP_202_ACCEPTED,
 )
+@observe("ingest.upload")
 async def upload_file(
     kb_id: str,
     background_tasks: BackgroundTasks,
@@ -85,6 +116,7 @@ async def upload_file(
     session.add(file_doc)
     session.commit()
     session.refresh(file_doc)
+    event("ingest.uploaded", file_id=file_doc.id, kb_id=kb_id, status="PENDING")
 
     # 不再自动触发后台解析任务，等待用户手动触发
     # background_tasks.add_task(process_file_parsing, file_id)
@@ -214,7 +246,7 @@ async def parse_file_manually(
 
     # 触发后台任务，传递参数
     background_tasks.add_task(
-        process_file_parsing,
+        track_background_task("parse")(process_file_parsing),
         file_id,
         chunk_mode=chunk_mode,
         chunk_size=chunk_size,
@@ -254,7 +286,7 @@ async def submit_file_chunks(
 
     # 触发后台任务：process_submitted_chunks
     from app.tasks.parse_tasks import process_submitted_chunks
-    background_tasks.add_task(process_submitted_chunks, file_id, chunks, vector_model=vector_model)
+    background_tasks.add_task(track_background_task("index")(process_submitted_chunks), file_id, chunks, vector_model=vector_model)
 
     return ApiResponse(message="已提交分块，开始后台入库")
 
@@ -297,7 +329,7 @@ async def vectorize_file_manually(
 
     # 触发后台任务：process_submitted_chunks (复用提交逻辑)
     from app.tasks.parse_tasks import process_submitted_chunks
-    background_tasks.add_task(process_submitted_chunks, file_id, chunks_data)
+    background_tasks.add_task(track_background_task("index")(process_submitted_chunks), file_id, chunks_data)
 
     return ApiResponse(message="已确认，开始后台入库")
 

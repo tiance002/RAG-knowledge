@@ -1,3 +1,4 @@
+from app.services.observability import event, observe
 """
 文件解析服务
 支持 PDF, Word, Excel, CSV, TXT 格式
@@ -815,6 +816,7 @@ class FileParser:
         self.image_dir = os.path.join(settings.IMAGE_DIR, kb_id)
         os.makedirs(self.image_dir, exist_ok=True)
 
+    @observe("ingest.parser")
     def parse(
         self,
         file_path: str,
@@ -888,6 +890,7 @@ class FileParser:
         self.heading_level = heading_level
 
         ext = os.path.splitext(file_path)[1].lower()
+        event("ingest.parser_configuration", kb_id=self.kb_id, mode=chunk_mode, format=ext, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
         if ext == ".pdf":
             return self._parse_pdf(file_path)

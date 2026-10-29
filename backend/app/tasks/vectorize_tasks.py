@@ -11,6 +11,7 @@ from app.core.database import engine
 from app.models import FileDocument, DocumentChunk, KnowledgeBase, FileStatus, CustomModel
 from app.services.embedding import EmbeddingService
 from app.services.vector_store import VectorStoreService
+from app.services.metrics import track_background_task
 
 
 def run_async(coro):
@@ -24,6 +25,7 @@ def run_async(coro):
 
 
 @celery_app.task(bind=True, max_retries=3)
+@track_background_task("vectorize")
 def vectorize_file_task(self, file_id: str):
     """
     向量化文件任务

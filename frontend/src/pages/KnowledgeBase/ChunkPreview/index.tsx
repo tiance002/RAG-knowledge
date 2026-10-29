@@ -42,6 +42,7 @@ const ChunkPreview: React.FC = () => {
   const location = useLocation();
   const { models, setModels } = useAppStore();
   const previewState = location.state as { previewChunks?: ChunkInfo[], parseConfig?: any } | undefined;
+  const requestedChunkId = new URLSearchParams(location.search).get('chunk');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -78,7 +79,17 @@ const ChunkPreview: React.FC = () => {
         } else {
             // 正常模式或通过 ID 进入的预览模式：加载后端数据
             const chunksRes = await getFileChunks(fileId);
-            setChunks(Array.isArray(chunksRes.data) ? chunksRes.data : []);
+            const loadedChunks: ChunkInfo[] = Array.isArray(chunksRes.data) ? chunksRes.data : [];
+            setChunks(loadedChunks);
+            if (requestedChunkId) {
+                const match = loadedChunks.find(chunk => chunk.id === requestedChunkId);
+                if (match) {
+                    setSelectedChunk(match);
+                    setDetailModalVisible(true);
+                } else {
+                    message.warning('未找到引用的切块，文件内容可能已经变化。');
+                }
+            }
         }
         
         // 设置配置
@@ -93,7 +104,7 @@ const ChunkPreview: React.FC = () => {
       }
     };
     loadData();
-  }, [fileId, kbId, navigate, previewState]);
+  }, [fileId, kbId, navigate, previewState, requestedChunkId]);
 
   // 处理内容编辑
   const handleContentChange = (chunkId: string, content: string) => {
@@ -412,7 +423,9 @@ const ChunkPreview: React.FC = () => {
     const isEditing = !isReadOnly && (selectedChunk.id in editingChunks);
     
     // 获取显示内容 (去重叠)
-    const displayContent = getDisplayContent(selectedChunk, chunks.indexOf(selectedChunk));
+    const displayContent = selectedChunk.id === requestedChunkId
+      ? selectedChunk.content
+      : getDisplayContent(selectedChunk, chunks.indexOf(selectedChunk));
     
     // 如果已经在 editingChunks 中，说明用户修改过，直接展示修改后的内容
     // 如果不在，展示 displayContent

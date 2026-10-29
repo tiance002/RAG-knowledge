@@ -4,6 +4,7 @@
 !.env.example
 **/.env.*
 !**/.env.example
+!**/.env.langfuse.example
 
 # Runtime data and generated artifacts
 local.db

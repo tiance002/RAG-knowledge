@@ -1,3 +1,4 @@
+from app.services.observability import event, candidates as observe_candidates, observe, model_response
 """
 Rerank 服务模块
 """
@@ -11,6 +12,7 @@ from app.models.models import CustomModel, ModelType
 from app.core.database import get_session
 from sqlmodel import select, Session
 from app.core.rerank_model import RerankModelLoader
+from app.services.llm import is_unknown_provider_error, invoke_provider_http, provider_error_payload
 
 def extract_json_from_text(text: str) -> str:
     """从模型响应中提取 JSON 字符串"""
@@ -46,6 +48,7 @@ class RerankService:
         )
         return self.session.exec(statement).first()
 
+    @observe('rerank.call')
     def rerank(self, query: str, candidates: List[str], model: Optional[CustomModel] = None) -> List[Dict[str, Any]]:
         """
         执行重排序
@@ -84,9 +87,10 @@ class RerankService:
                 return self._rerank_via_api(query, candidates, model)
 
         except Exception as e:
-            print(f"Rerank execution failed: {e}")
-            import traceback
-            traceback.print_exc()
+            if is_unknown_provider_error(e):
+                raise
+            print(f"Rerank execution failed: {type(e).__name__}")
+            event('rerank.call_failed', status='FAILED', error_type=type(e).__name__)
             return []
 
     def _rerank_via_api(self, query: str, candidates: List[str], model: CustomModel) -> List[Dict[str, Any]]:
@@ -95,7 +99,7 @@ class RerankService:
             return []
         try:
             url = model.base_url.rstrip("/") + "/rerank"
-            resp = httpx.post(
+            resp = invoke_provider_http(lambda: httpx.post(
                 url,
                 headers={"Authorization": f"Bearer {model.api_key}",
                          "Content-Type": "application/json"},
@@ -103,9 +107,12 @@ class RerankService:
                       "top_n": len(candidates), "return_documents": False},
                 timeout=120.0,
                 trust_env=False,
-            )
+            ), stage="rerank", model_name=model.model_name)
             resp.raise_for_status()
             payload = resp.json()
+            event('rerank.usage', model=model.model_name, usage=payload.get('usage'), cost=None)
+            from app.services.metrics import record_provider_usage
+            record_provider_usage("rerank", payload.get("usage"))
             results = []
             for row in payload.get("results") or []:
                 idx = row.get("index")
@@ -122,7 +129,10 @@ class RerankService:
                 return results
             print("API Rerank (/rerank) returned empty results, falling back to chat scoring")
         except Exception as exc:
-            print(f"API Rerank (/rerank) failed: {exc}; falling back to chat scoring")
+            if is_unknown_provider_error(exc):
+                raise
+            print(f"API Rerank (/rerank) failed: {type(exc).__name__}; falling back to chat scoring")
+        event('rerank.chat_fallback', status='FALLBACK', reason='rerank_endpoint_unavailable_or_empty')
         return self._rerank_via_chat(query, candidates, model)
 
     def _rerank_via_chat(self, query: str, candidates: List[str], model: CustomModel) -> List[Dict[str, Any]]:
@@ -130,6 +140,7 @@ class RerankService:
         client = OpenAI(
             base_url=model.base_url,
             api_key=model.api_key,
+            max_retries=0,
             http_client=httpx.Client(
                 trust_env=False
             )
@@ -158,12 +169,13 @@ class RerankService:
 /no_think
 """
         try:
-            response = client.chat.completions.create(
+            response = invoke_provider_http(lambda: client.chat.completions.create(
                 model=model.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
                 stream=False,
-            )
+            ), stage="rerank_chat", model_name=model.model_name, check_status=False)
+            model_response(response, role='rerank_chat', model=model.model_name)
             result_text = response.choices[0].message.content
             json_str = extract_json_from_text(result_text)
             data = json.loads(json_str)
@@ -186,7 +198,10 @@ class RerankService:
             final_results.sort(key=lambda x: x["score"], reverse=True)
             return final_results
         except Exception as e:
-            print(f"API Rerank failed: {e}")
+            if is_unknown_provider_error(e):
+                raise
+            print(f"API Rerank failed: {type(e).__name__}")
+            event('rerank.chat_failed', status='FAILED', error_type=type(e).__name__)
             return []
 
 def test_rerank_connection(model_in: Any) -> Dict[str, Any]:
@@ -231,19 +246,19 @@ def test_rerank_connection(model_in: Any) -> Dict[str, Any]:
             if isinstance(model_in, dict):
                 api_key = model_in.get("api_key", "")
                 
-            client = OpenAI(base_url=base_url, api_key=api_key)
+            client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0)
             # ... 发送简单请求 ...
             # 鉴于用户主要关注本地，这里简单做个连通性检查即可，或者复用上面的 prompt
             # 为了完整性，还是写全一点
             try:
-                 response = client.chat.completions.create(
+                 response = invoke_provider_http(lambda: client.chat.completions.create(
                     model=model_name,
                     messages=[{"role": "user", "content": "test"}],
                     max_tokens=10
-                )
+                ), stage="rerank_connection_test", model_name=model_name, check_status=False)
                  return {"success": True, "message": "API 连接成功"}
             except Exception as e:
-                return {"success": False, "message": f"API 连接失败: {str(e)}"}
+                return {"success": False, "message": "API 连接失败", **provider_error_payload(e, stage="rerank_connection_test")}
 
     except Exception as e:
         return {"success": False, "message": f"未知错误: {str(e)}", "error": str(e)}
@@ -261,6 +276,7 @@ def estimate_tokens(text: str) -> int:
     return chinese_chars + english_words
 
 
+@observe("rerank.batch")
 def batch_rerank(
     query: str,
     candidates: List[Dict[str, Any]],
@@ -338,6 +354,7 @@ def batch_rerank(
     # 3. 分批调用 rerank
     all_results = []
     for batch_idx, batch in enumerate(batches):
+        observe_candidates("rerank.batch_input", batch, batch_index=batch_idx)
         batch_texts = [c.get("content", "") for c in batch]
 
         try:
@@ -355,7 +372,10 @@ def batch_rerank(
             print(f"   批次 {batch_idx + 1}/{len(batches)} 完成")
 
         except Exception as e:
+            if is_unknown_provider_error(e):
+                raise
             print(f"⚠️ [Rerank] 批次 {batch_idx + 1} 失败: {e}")
+            event('rerank.fallback', status='FALLBACK', batch_index=batch_idx, reason='original_score_retained', error_type=type(e).__name__)
             # 批次失败时，保留原始分数
             for c in batch:
                 result = {**c}
@@ -363,6 +383,7 @@ def batch_rerank(
                 result.pop("_tokens", None)
                 all_results.append(result)
 
+    observe_candidates("rerank.batch_output", all_results)
     # 4. 按 rerank_score 排序
     all_results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
 
@@ -372,10 +393,13 @@ def batch_rerank(
         if r.get("rerank_score", 0) >= score_threshold
     ]
 
+    observe_candidates("rerank.filtered", filtered_results)
     # 6. 返回 top_k
+    observe_candidates('rerank.selected', filtered_results[:top_k], top_k=top_k)
     return filtered_results[:top_k]
 
 
+@observe("retrieval.expand_context")
 def expand_context(
     top_chunks: List[Dict[str, Any]],
     session,
@@ -425,6 +449,10 @@ def expand_context(
         # 2. 父文档拼接
         parent_id = db_chunk.parent_id
         parent_content = ""
+        sibling_ids = []
+        included_sibling_ids = []
+        previous_ids = []
+        next_ids = []
 
         if parent_id:
             # 获取同一父 chunk 下的所有子 chunk
@@ -435,6 +463,7 @@ def expand_context(
             ).all()
 
             sibling_ids = [s.id for s in siblings]
+            included_sibling_ids = list(sibling_ids)
             seen_ids.update(sibling_ids)
 
             # 拼接内容，注意长度限制
@@ -448,15 +477,18 @@ def expand_context(
 
                 # 保留当前 chunk 前后的内容
                 kept_siblings = []
+                included_sibling_ids = []
                 current_len = 0
                 for i, s in enumerate(siblings):
                     if current_len + len(s.content) > max_parent_length:
                         break
                     if abs(i - current_idx) <= 2:  # 保留附近的
                         kept_siblings.append(s.content)
+                        included_sibling_ids.append(s.id)
                         current_len += len(s.content)
                     elif i < current_idx and current_len < max_parent_length // 2:
                         kept_siblings.append(s.content)
+                        included_sibling_ids.append(s.id)
                         current_len += len(s.content)
 
                 parent_content = "\n".join(kept_siblings)
@@ -491,6 +523,8 @@ def expand_context(
                 .limit(window_size)
             ).all()
 
+            previous_ids = [str(c.id) for c in reversed(prev_chunks)]
+            next_ids = [str(c.id) for c in next_chunks]
             prev_contents = [c.content for c in reversed(prev_chunks)]
             next_contents = [c.content for c in next_chunks]
 
@@ -508,6 +542,7 @@ def expand_context(
 
         full_context = "\n".join(filter(None, all_parts))
 
+        event("retrieval.context_expansion", chunk_id=chunk_id, parent_id=parent_id, previous_count=len(prev_contents), next_count=len(next_contents), sibling_ids=sibling_ids, included_sibling_ids=included_sibling_ids, previous_ids=previous_ids, next_ids=next_ids)
         # 5. 构建扩展结果
         expanded.append({
             "id": chunk_id,

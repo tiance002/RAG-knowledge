@@ -1,0 +1,4 @@
+# Optional isolated observation dependencies; production installation is not automatic.
+langfuse==5.0.4
+opentelemetry-sdk==1.45.1
+prometheus-client>=0.20.0

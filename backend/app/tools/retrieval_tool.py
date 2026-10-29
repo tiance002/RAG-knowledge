@@ -6,6 +6,7 @@ from app.core.database import engine
 from app.models import KnowledgeBase, CustomModel
 from app.services.retrieval import get_retrieval_service
 from app.services.rerank import RerankService, expand_context
+from app.services.llm import is_unknown_provider_error
 
 import json
 
@@ -59,12 +60,12 @@ async def search_knowledge_base(
         if not target_kb_ids:
             return json.dumps({
                 "context": "No knowledge bases found in the system.",
-                "citations": []
+                "citations": [], "retrieval_status": "NO_RESULTS"
             }, ensure_ascii=False)
             
         # 2. Execute Retrieval
         try:
-            results, _ = await retrieval_service.search(
+            results, retrieval_metrics = await retrieval_service.search(
                 session=session,
                 query=query,
                 kb_ids=target_kb_ids,
@@ -75,15 +76,21 @@ async def search_knowledge_base(
                 bm25_weight=bm25_weight
             )
         except Exception as e:
+            if is_unknown_provider_error(e):
+                raise
             return json.dumps({
-                "context": f"Error during retrieval: {str(e)}",
-                "citations": []
+                "context": "Retrieval failed.",
+                "citations": [], "retrieval_status": "RETRIEVAL_ERROR"
             }, ensure_ascii=False)
+
+        retrieval_status = retrieval_metrics.get("retrieval_status", "UNKNOWN")
+        if retrieval_status not in ("SUCCESS", "NO_RESULTS", "RETRIEVAL_ERROR", "UNKNOWN"):
+            retrieval_status = "UNKNOWN"
             
         if not results:
             return json.dumps({
-                "context": "No relevant documents found.",
-                "citations": []
+                "context": "No relevant documents found." if retrieval_status == "NO_RESULTS" else "Retrieval status is unavailable or failed.",
+                "citations": [], "retrieval_status": retrieval_status
             }, ensure_ascii=False)
             
         # 3. Execute Reranking (Optional)
@@ -100,10 +107,17 @@ async def search_knowledge_base(
                 
                 # Execute rerank
                 reranked = rerank_service.rerank(query, candidates, model=rerank_model)
+
+                # The existing service returns [] both for an unavailable reranker
+                # and for an empty response. Preserve real retrieval evidence and
+                # do not report either case as a confirmed absence of documents.
+                if not reranked:
+                    retrieval_status = "UNKNOWN"
+                    reranked = None
                 
                 # Filter and map back to results
                 final_results = []
-                for item in reranked:
+                for item in reranked or []:
                     idx = item["index"]
                     score = item["score"]
                     if score >= rerank_score_threshold:
@@ -115,13 +129,15 @@ async def search_knowledge_base(
                 
                 # Sort and slice
                 final_results.sort(key=lambda x: x["score"], reverse=True)
-                results = final_results[:rerank_top_k]
+                if reranked is not None:
+                    results = final_results[:rerank_top_k]
+                    if not results and retrieval_status == "SUCCESS":
+                        retrieval_status = "LOW_RELEVANCE"
                 
             except Exception as e:
-                return json.dumps({
-                    "context": f"Error during reranking: {str(e)}",
-                    "citations": []
-                }, ensure_ascii=False)
+                if is_unknown_provider_error(e):
+                    raise
+                retrieval_status = "RETRIEVAL_ERROR"
         else:
             # If not reranking, just ensure we respect top_k
             results = results[:top_k]
@@ -142,11 +158,35 @@ async def search_knowledge_base(
         formatted_results = []
         citations = []
         
-        for i, r in enumerate(results, 1):
+        omitted_expanded = False
+        for r in results:
+            from pathlib import PurePath
+            import re
             source = r.get("file_name", "Unknown File")
             kb_name = r.get("kb_name", "Unknown KB")
             score = r.get("score", 0.0)
-            content = r.get("content", "").strip()
+            expanded = r.get("is_expanded") or (r.get("metadata") or {}).get("is_expanded")
+            content = r.get("original_content") if expanded else r.get("content")
+            if expanded and (not isinstance(content, str) or not content.strip()):
+                omitted_expanded = True
+                continue
+            if not r.get("id") or not isinstance(content, str) or not content.strip():
+                continue
+            content = content.strip()
+            extension = PurePath(source).suffix.lower()
+            page_number = r.get('page_number') if extension == '.pdf' else None
+            if extension in {'.xlsx', '.xls'}:
+                metadata = r.get('source_metadata') or {}
+                sheet = metadata.get('sheet') or metadata.get('sheet_name')
+                if not sheet:
+                    match = re.match(r'^\s*\[工作表:\s*([^\]\r\n]+)\]', content)
+                    sheet = match.group(1).strip() if match else None
+                location = f'工作表: {sheet}' if sheet else '未知位置'
+            elif extension == '.pdf':
+                location = r.get('location_info', '')
+            else:
+                location = r.get('heading_text') or '未知位置'
+            i = len(citations) + 1
             
             formatted_results.append(
                 f"Document {i} (Source: {source}, KB: {kb_name}, Score: {score:.4f}):\n{content}\n"
@@ -154,15 +194,20 @@ async def search_knowledge_base(
             
             citations.append({
                 "fileName": source,
+                "fileId": r.get("file_id"),
+                "page_number": page_number,
+                "content_type": r.get("content_type"),
                 "source_metadata": r.get("source_metadata", {}),
                 "kb_name": kb_name,
                 "score": score,
                 "content": content,
                 "chunk_id": r.get("id"),
-                "location": r.get("location_info", "")
+                "location": location
             })
             
+        if omitted_expanded and retrieval_status in ("SUCCESS", "NO_RESULTS", "LOW_RELEVANCE"):
+            retrieval_status = "UNKNOWN"
         return json.dumps({
             "context": "\n".join(formatted_results),
-            "citations": citations
+            "citations": citations, "retrieval_status": retrieval_status
         }, ensure_ascii=False)

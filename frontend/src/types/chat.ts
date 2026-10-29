@@ -30,6 +30,9 @@ export interface Citation {
   chunk_id?: string;
   fileId?: string;
   image_path?: string;
+  source_type?: 'source_native_table_expansion';
+  parent_chunk_id?: string;
+  sourceUrl?: string;
 }
 
 /** Agent 思考步骤类型 */

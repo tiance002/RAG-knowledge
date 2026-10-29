@@ -1,3 +1,4 @@
+from app.services.observability import event, observe, enabled
 """
 文件解析任务
 """
@@ -60,6 +61,7 @@ def submit_chunks_task(self, file_id: str, chunks_data: list, vector_model: str 
         raise self.retry(exc=e, countdown=60)
 
 
+@observe("ingest.index")
 def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str = None):
     """
     处理前端提交的 chunks (包含手动修改后的内容)
@@ -131,6 +133,16 @@ def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str 
             session.add(file_doc)
 
             safe_commit(session) # 提交以获取 ID 并保存分块
+            lineage = {}
+            if enabled():
+                try:
+                    from app.services.index_lineage import file_lineage
+                    persisted = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).all()
+                    lineage = file_lineage(file_id, file_doc.local_path, persisted)
+                    event("ingest.file_lineage", **lineage)
+                except Exception:
+                    pass
+            event("ingest.index_chunks", file_id=file_id, kb_id=file_doc.kb_id, chunk_count=len(db_chunks), chunk_ids=[str(c.id) for c in db_chunks])
             print(f"✅ [SubmitTask] 分块保存完成，共 {len(db_chunks)} 个")
 
             # 建立 BM25 索引
@@ -138,6 +150,7 @@ def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str 
             for chunk in db_chunks:
                 bm25_index.index_chunk(session, chunk.id, chunk.content, file_doc.kb_id)
             safe_commit(session)
+            event("ingest.bm25_indexed", kb_id=file_doc.kb_id, **(lineage or {"file_id": file_id, "chunk_count": len(db_chunks)}))
             print(f"✅ [SubmitTask] BM25 索引建立完成")
 
             # 向量化并入库
@@ -240,6 +253,7 @@ def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str 
                     documents=documents_for_chroma,
                     embeddings=embeddings
                 )
+                event("ingest.vector_indexed", kb_id=file_doc.kb_id, model=embedding_model_id, **(lineage or {"file_id": file_id, "chunk_count": len(db_chunks)}))
                 print("✅ [SubmitTask] 向量入库完成！")
 
                 if selected_model_id and kb.embedding_model != selected_model_id:
@@ -299,6 +313,7 @@ def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str 
             raise e
 
 
+@observe("ingest.parse")
 def process_file_parsing(
     file_id: str, 
     chunk_mode: str = "custom", 
@@ -449,6 +464,7 @@ def process_file_parsing(
                     semantic_max_tokens=semantic_max_tokens # 传递语义模型上下文长度
                 )
 
+                event("ingest.parsed", file_id=file_id, chunk_count=len(parsed_chunks))
                 print(f"✅ [ParseTask] 解析完成，获得 {len(parsed_chunks)} 个块")
                 if chunk_mode in ["no_split", "no_chunk"]:
                     print(f"🔍 [ParseTask] No Split Mode Result: {[c.content[:50] + '...' for c in parsed_chunks]}")
@@ -489,6 +505,7 @@ def process_file_parsing(
                 db_chunks.append(db_chunk)
                 session.add(db_chunk)
 
+            event("ingest.chunks", file_id=file_id, chunk_count=len(db_chunks))
             print(f"✅ [ParseTask] 分块处理完成，共生成 {len(db_chunks)} 个数据库记录块")
 
             # 更新文件状态为解析完成 (PENDING_CONFIRM)

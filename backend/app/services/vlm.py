@@ -5,6 +5,7 @@ VLM (视觉语言模型) 服务
 import base64
 import httpx
 from typing import Optional
+from app.services.llm import invoke_provider_http_async
 
 from app.core.config import get_settings
 
@@ -39,7 +40,7 @@ class VLMService:
 
             # 构建请求
             async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
-                response = await client.post(
+                response = await invoke_provider_http_async(lambda: client.post(
                     f"{self.base_url}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
@@ -66,7 +67,7 @@ class VLMService:
                         ],
                         "max_tokens": 1000,
                     },
-                )
+                ), stage="vlm", model_name=self.model)
 
                 if response.status_code != 200:
                     raise Exception(f"VLM API 错误: {response.text}")

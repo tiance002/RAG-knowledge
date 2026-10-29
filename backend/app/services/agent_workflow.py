@@ -1,3 +1,4 @@
+from app.services.observability import observe, event, snapshot, enabled, model_response
 """
 基于 LangGraph 的 Agent 工作流 (Cyclic Graph)
 """
@@ -5,6 +6,8 @@
 from typing import TypedDict, List, Annotated, Literal, Dict, Any
 import operator
 import json
+import re
+import os
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -12,7 +15,8 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.message import add_messages
 
-from app.services.llm import LLMService
+from app.services.llm import LLMService, is_unknown_provider_error, should_abort_provider_error, invoke_provider_model
+from app.services.metrics import record_agent_retry_decision
 from app.tools import search_knowledge_base
 
 # 定义状态
@@ -28,6 +32,7 @@ class AgentState(TypedDict):
     
     # RAG 相关 (用于前端展示)
     rag_context: str
+    retrieval_status: str
     citations: List[dict]
     retrieved_docs: List[Any] # 累计召回文档 (暂存)
     search_params: Dict[str, Any] # 前端传递的默认检索参数
@@ -39,9 +44,143 @@ class AgentState(TypedDict):
     
     agent_steps: Annotated[List[dict], operator.add] # Append only
     final_system_prompt: str
+    answer_mode: str
     
     # LLM 配置 (动态注入)
     model_config: Dict[str, Any]
+
+def explicitly_requests_sources(content: str) -> bool:
+    # A definition request about the concept does not ask to consult a corpus.
+    if re.fullmatch(r"\s*(?:什么是知识库|知识库(?:是)?什么|what\s+is\s+(?:a\s+)?knowledge\s+base)\s*[？?。.!！]*\s*", content, re.IGNORECASE):
+        return False
+    # A direct mention can express scope without an imperative (e.g. 知识库里的预算).
+    explicit_kb = re.search(r"知识库|\bknowledge\s+base\b", content, re.IGNORECASE)
+    negated_kb = re.search(
+        r"(?:不(?:用|需要|使用|要)|无需|别用)\s*(?:这个|该|所选)?知识库"
+        r"|\b(?:don't|do\s+not|no\s+need\s+to)\s+(?:use|search|consult)\s+(?:(?:the|my|our)\s+)?knowledge\s+base\b",
+        content, re.IGNORECASE,
+    )
+    if explicit_kb:
+        return not bool(negated_kb)
+    chinese = re.search(r"(?:根据|基于|依据|按照|从|在|查看|查阅|阅读|参照|参考|检索|查询|搜索)(?:我(?:的)?|用户)?(?:上传的?|所选的?|选定的?|当前的?|这些|这个|的){0,2}(?:知识库|资料|文档|文件)", content)
+    english = re.search(
+        r"\b(?:according\s+to|based\s+on|use|using|search|searching|look\s+in|look\s+through|refer\s+to|reference|consult|read|review|check)\s+(?:(?:the|my|our|selected|uploaded|provided)\s+){0,3}(?:knowledge\s+base|documents?|files?|materials?)\b",
+        content, re.IGNORECASE,
+    )
+    return bool(chinese or english)
+
+
+def evidence_text(citation: dict):
+    """Return textual source evidence and whether image material was omitted."""
+    content = citation.get("content")
+    if not isinstance(content, str):
+        return "", False
+    placeholders = re.compile(r"\[图片\s*[:：][^\]]*\]")
+    has_image = bool(placeholders.search(content)) or citation.get("content_type") == "image"
+    if citation.get("content_type") == "image":
+        return "", True
+    return placeholders.sub("", content).strip(), has_image
+
+
+def _guard_knowledge_answer(state: AgentState, response: AIMessage):
+    """Conservatively render evidence when retrieval is incomplete or weak."""
+    statuses = []
+    citations = []
+    seen = set()
+    omitted_images = False
+    for message in state.get("messages", []):
+        if not isinstance(message, ToolMessage) or message.name != "search_knowledge_base":
+            continue
+        try:
+            data = json.loads(message.content)
+            status = data.get("retrieval_status", "RETRIEVAL_ERROR" if data.get("error") else "UNKNOWN")
+            if status not in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"}:
+                status = "UNKNOWN"
+            statuses.append(status)
+            for citation in data.get("citations", []):
+                if not isinstance(citation, dict):
+                    continue
+                chunk_id = citation.get("chunk_id")
+                content, has_image = evidence_text(citation)
+                omitted_images = omitted_images or has_image
+                if chunk_id and content and chunk_id not in seen:
+                    seen.add(chunk_id)
+                    citations.append({**citation, "content": content})
+        except (TypeError, ValueError, AttributeError):
+            statuses.append("UNKNOWN")
+
+    incomplete = any(status in {"RETRIEVAL_ERROR", "UNKNOWN"} for status in statuses)
+    if not citations:
+        if "RETRIEVAL_ERROR" in statuses:
+            answer = "知识库检索发生错误，无法确认是否存在相关资料，请稍后重试。"
+        elif not statuses or incomplete:
+            answer = "知识库检索状态不确定，无法确认是否存在相关资料，请稍后重试。"
+        elif omitted_images:
+            answer = "检索到图片资料，但没有可用于回答的文本证据；图片内容需要进一步核验。"
+        elif "LOW_RELEVANCE" in statuses:
+            answer = "找到的候选资料相关性不足，无法依据现有证据回答。"
+        else:
+            answer = "未在所选知识库中找到可用于回答的相关资料。"
+        if omitted_images and incomplete:
+            answer += " 检索到的图片资料需要进一步核验。"
+        response.content = answer
+        return []
+
+    if incomplete:
+        prefix = "检索未完全成功，以下是已找到的原文，无法确认是否足以完整回答："
+    elif "LOW_RELEVANCE" in statuses or state.get("last_score", 0.0) < 0.8:
+        prefix = "现有证据不足以完整回答，以下是相关原文："
+    else:
+        prefix = "无法确认以下资料是否足以完整回答，以下为检索到的原文："
+    excerpts = [f"[{i}] {item['content'].strip()}" for i, item in enumerate(citations, 1)]
+    response.content = prefix + "\n\n" + "\n\n".join(excerpts)
+    if omitted_images:
+        response.content += "\n\n另有图片资料，其内容需要进一步核验。"
+    return citations
+
+
+def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, include_mode=False):
+    """Return a complete generated answer when retrieval is usable, else fallback."""
+    candidate = response.content
+    citations = _guard_knowledge_answer(state, response)
+    statuses = []
+    omitted_images = False
+    raw_citations = []
+    for message in state.get("messages", []):
+        if not isinstance(message, ToolMessage) or message.name != "search_knowledge_base":
+            continue
+        try:
+            data = json.loads(message.content)
+            status = data.get("retrieval_status", "RETRIEVAL_ERROR" if data.get("error") else "UNKNOWN")
+            statuses.append(status if status in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"} else "UNKNOWN")
+            raw_citations = data.get("citations", [])
+            for item in raw_citations:
+                if isinstance(item, dict):
+                    omitted_images |= evidence_text(item)[1]
+        except (TypeError, ValueError, AttributeError):
+            statuses.append("UNKNOWN")
+    if citations:
+        mode = "EXTRACTIVE_FALLBACK"
+    elif "RETRIEVAL_ERROR" in statuses:
+        mode = "RETRIEVAL_ERROR"
+    elif not statuses or "UNKNOWN" in statuses:
+        mode = "UNKNOWN"
+    else:
+        mode = "INSUFFICIENT_EVIDENCE"
+    validation_status = "NOT_RUN"
+    finish_reason = (getattr(response, "response_metadata", None) or {}).get("finish_reason")
+    if (os.getenv("RAG_GROUNDED_GENERATION", "true").lower() == "true"
+            and citations and statuses and all(status == "SUCCESS" for status in statuses)
+            and state.get("last_score", 0.0) >= 0.8
+            and isinstance(candidate, str) and candidate.strip() and finish_reason == "stop"):
+        # The answer is not subjected to custom content/citation rules; all
+        # retrieved rounds must still have successful status and usable text.
+        disclosure = "\n\n另有图片资料，其内容需要进一步核验。" if omitted_images else ""
+        response.content = candidate + disclosure
+        mode = "GROUNDED_GENERATION"
+    event("agent.answer_validation", mode=mode, status=validation_status)
+    event("qa.answer", answer_mode=mode, validation_status=validation_status)
+    return (citations, mode) if include_mode else citations
 
 class AgentWorkflow:
     def __init__(self):
@@ -108,11 +247,22 @@ class AgentWorkflow:
             )
         return self.llm_service
 
+    @observe("agent.analyze_intent")
     async def analyze_intent(self, state: AgentState, config: RunnableConfig):
         """意图分析节点"""
         # 获取最新的一条 HumanMessage
         last_message = state["messages"][-1]
         content = last_message.content
+
+        # Explicit requests to use selected sources must not be routed to chat.
+        if explicitly_requests_sources(content):
+            return {
+                "intent": "qa",
+                "agent_steps": [{"step": "decision", "content": "检测到明确的知识库资料请求"}],
+                "original_query": content,
+                "retry_count": 0,
+                "execution_history": [],
+            }
         
         # 简单规则快速判断
         if len(content.strip()) < 10 and content.strip().lower() in ["你好", "在吗", "hello", "hi", "help", "test"]:
@@ -139,14 +289,18 @@ Output ONLY one word: "chat" or "qa".
         try:
             llm = self._get_llm_service(state)
             # Use streaming=False to avoid "No generations found in stream" error with some local models
-            response = await llm.get_chat_model(temperature=0.01, streaming=False).ainvoke([HumanMessage(content=prompt)], config=config)
+            response = await invoke_provider_model(llm.get_chat_model(temperature=0.01, streaming=False), [HumanMessage(content=prompt)], config=config, stage="intent", model_name=llm.model)
+            model_response(response, role="intent", model=llm.model)
             intent = response.content.strip().lower()
             if "qa" in intent or "knowledge" in intent:
                 intent = "qa"
             else:
                 intent = "chat"
         except Exception as e:
+            if should_abort_provider_error(e):
+                raise
             print(f"Intent analysis failed: {e}")
+            event('agent.intent_fallback', status='FALLBACK', error_type=type(e).__name__)
             intent = "qa" # Fallback to QA
             
         new_steps = [{
@@ -165,6 +319,7 @@ Output ONLY one word: "chat" or "qa".
     def route_based_on_intent(self, state: AgentState):
         return state["intent"]
 
+    @observe("agent.agent_node")
     async def agent_node(self, state: AgentState, config: RunnableConfig):
         """Agent 思考节点"""
         # 准备 System Prompt
@@ -199,8 +354,9 @@ Output ONLY one word: "chat" or "qa".
         # Use streaming=False to prevent crashes on local models
         model = llm.get_chat_model(streaming=False).bind_tools(self.tools)
         
-        response = await model.ainvoke(invocation_messages, config=config)
+        response = await invoke_provider_model(model, invocation_messages, config=config, stage="agent", model_name=llm.model)
         
+        model_response(response, role="agent", model=llm.model)
         # 处理 Thinking 块：将其从 content 中剥离，放入 agent_steps
         import re
         content = response.content
@@ -219,7 +375,7 @@ Output ONLY one word: "chat" or "qa".
             for block in thinking_blocks:
                 steps.append({
                     "step": "thinking",
-                    "content": block.strip()
+                    "content": "Agent 正在处理检索与证据。"
                 })
         else:
             steps.append({
@@ -230,19 +386,18 @@ Output ONLY one word: "chat" or "qa".
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 function_name = tool_call.get("name")
-                function_args = tool_call.get("args")
-                # 截断过长的参数显示
-                args_str = str(function_args)
-                if len(args_str) > 100:
-                    args_str = args_str[:100] + "..."
                 
                 steps.append({
                     "step": "action",
-                    "content": f"调用工具: {function_name}, 参数: {args_str}"
+                    "content": f"调用工具: {function_name}"
                 })
         
-        return {"messages": [response], "agent_steps": steps}
+        result = {"messages": [response], "agent_steps": steps}
+        if not response.tool_calls:
+            result["citations"], result["answer_mode"] = _finalize_knowledge_answer(state, response, include_mode=True)
+        return result
 
+    @observe("agent.run_tools")
     async def run_tools(self, state: AgentState, config: RunnableConfig):
         """自定义工具执行节点，注入配置参数"""
         messages = state["messages"]
@@ -254,67 +409,66 @@ Output ONLY one word: "chat" or "qa".
         tool_outputs = []
         for tool_call in last_message.tool_calls:
             if tool_call["name"] == "search_knowledge_base":
-                # Agent 生成的参数
+                # Only the server state determines scope and requested settings. The
+                # model may choose the query, but cannot override supplied settings.
                 agent_args = tool_call["args"].copy()
-                
-                # 前端传递的默认参数
                 search_params = state.get("search_params", {})
-                
-                # 最终参数：基础参数由 Agent 决定，但资源配置和上下文扩展等高级参数由系统注入
-                final_args = {}
-                
-                # 1. 注入环境/资源参数 (用户/系统指定)
-                final_args["kb_ids"] = state.get("kb_ids", [])
-                
-                # 2. 注入 Search Params (如果 Agent 没有指定，则使用默认值)
-                # 注意：Agent 可能会 hallucinate 一些参数，我们需要小心处理
-                # 这里我们允许 Agent 覆盖 search_mode 等策略参数，但对于 rerank_model_id 等资源参数优先使用 search_params
-                
-                # 注入基础检索参数
-                if "top_k" in search_params and "top_k" not in agent_args:
-                    final_args["top_k"] = search_params["top_k"]
-                    
-                if "score_threshold" in search_params and "score_threshold" not in agent_args:
-                    final_args["score_threshold"] = search_params["score_threshold"]
+                parameter_names = (
+                    "search_mode", "top_k", "score_threshold", "vector_weight",
+                    "bm25_weight", "rerank_top_k", "rerank_score_threshold",
+                    "rerank_model_id", "context_window",
+                )
+                final_args = {"query": agent_args.get("query"), "kb_ids": state.get("kb_ids", [])}
+                for name in parameter_names:
+                    if name in search_params:
+                        final_args[name] = search_params[name]
+                    elif name in agent_args and name != "rerank_model_id":
+                        final_args[name] = agent_args[name]
+                if "rerank_enabled" in search_params:
+                    final_args["use_rerank"] = search_params["rerank_enabled"]
+                elif "use_rerank" in agent_args:
+                    final_args["use_rerank"] = agent_args["use_rerank"]
 
-                # 注入 Rerank 配置
-                if "rerank_model_id" in search_params:
-                    final_args["rerank_model_id"] = search_params["rerank_model_id"]
-                
-                # 注入上下文扩展参数 (通常 Agent 不会控制这个)
-                if "context_window" in search_params:
-                    final_args["context_window"] = search_params["context_window"]
-                
-                # 注入重排序参数 (如果 Agent 没指定)
-                # 注意：tool definition 中参数名是 use_rerank，但前端通常传 rerank_enabled
-                # 我们需要映射一下
-                if "rerank_enabled" in search_params and "use_rerank" not in agent_args:
-                     final_args["use_rerank"] = search_params["rerank_enabled"]
-                
-                if "rerank_top_k" in search_params and "rerank_top_k" not in agent_args:
-                     final_args["rerank_top_k"] = search_params["rerank_top_k"]
-                     
-                if "rerank_score_threshold" in search_params and "rerank_score_threshold" not in agent_args:
-                     final_args["rerank_score_threshold"] = search_params["rerank_score_threshold"]
+                # Log only bounded, non-content settings; query and resource IDs
+                # can contain sensitive data and must not enter this metadata.
+                def safe_settings(values):
+                    safe = {}
+                    for key in ("top_k", "score_threshold", "vector_weight", "bm25_weight",
+                                "rerank_top_k", "rerank_score_threshold", "context_window"):
+                        value = values.get(key)
+                        if type(value) in (int, float):
+                            safe[key] = value
+                    if values.get("search_mode") in ("vector", "fulltext", "hybrid"):
+                        safe["search_mode"] = values["search_mode"]
+                    if type(values.get("use_rerank")) is bool:
+                        safe["use_rerank"] = values["use_rerank"]
+                    return safe
 
-                # 注入检索权重 (如果 Agent 没指定)
-                if "vector_weight" in search_params and "vector_weight" not in agent_args:
-                    final_args["vector_weight"] = search_params["vector_weight"]
-                if "bm25_weight" in search_params and "bm25_weight" not in agent_args:
-                    final_args["bm25_weight"] = search_params["bm25_weight"]
-                
-                # 3. 注入 Agent 决策参数 (覆盖前面的默认值，除了资源 ID)
-                for k, v in agent_args.items():
-                    # 保护资源 ID 不被覆盖
-                    if k == "rerank_model_id" and "rerank_model_id" in final_args:
-                        continue
-                    final_args[k] = v
-                
-                # Execute tool
+                requested = dict(search_params)
+                if "rerank_enabled" in requested:
+                    requested["use_rerank"] = requested["rerank_enabled"]
                 try:
-                    result = await search_knowledge_base.ainvoke(final_args, config=config)
+                    effective_args = {
+                        name: field.default
+                        for name, field in search_knowledge_base.args_schema.model_fields.items()
+                        if not field.is_required()
+                    }
+                    effective_args.update(final_args)
+                    import hashlib
+                    scope_hash = hashlib.sha256(json.dumps(final_args["kb_ids"], sort_keys=True).encode("utf-8")).hexdigest()
+                    event("agent.actual_query", query=snapshot(final_args.get("query")) if enabled() else None,
+                          kb_scope_sha256=scope_hash, retry_count=state.get("retry_count", 0),
+                          requested_parameters=safe_settings(requested),
+                          actual_parameters=safe_settings(effective_args))
+                    if not final_args["kb_ids"]:
+                        result = json.dumps({"retrieval_status": "NO_RESULTS", "context": "No knowledge bases found in the system.", "citations": []})
+                    else:
+                        result = await search_knowledge_base.ainvoke(final_args, config=config)
                 except Exception as e:
-                    result = json.dumps({"error": str(e), "context": "", "citations": []})
+                    if is_unknown_provider_error(e):
+                        raise
+                    event('agent.tool_failed', status='FAILED', error_type=type(e).__name__, retry_count=state.get('retry_count', 0))
+                    result = json.dumps({"retrieval_status": "RETRIEVAL_ERROR", "context": "", "citations": []})
                 
                 tool_outputs.append(
                     ToolMessage(
@@ -338,6 +492,7 @@ Output ONLY one word: "chat" or "qa".
         # 否则结束
         return "end"
 
+    @observe("agent.process_tool_output")
     async def process_tool_output(self, state: AgentState):
         """处理工具输出，解析 JSON，记录 Observation"""
         messages = state["messages"]
@@ -349,12 +504,16 @@ Output ONLY one word: "chat" or "qa".
         new_steps = []
         citations = []
         rag_context = ""
+        retrieval_status = "UNKNOWN"
         
         try:
             # 解析工具返回的 JSON
             data = json.loads(last_message.content)
             rag_context = data.get("context", "")
             citations = data.get("citations", [])
+            retrieval_status = data.get("retrieval_status", "UNKNOWN")
+            if retrieval_status not in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"}:
+                retrieval_status = "UNKNOWN"
             
             # 记录 Observation
             new_steps.append({
@@ -373,12 +532,15 @@ Output ONLY one word: "chat" or "qa".
         return {
             "citations": citations, # 更新 citations
             "rag_context": rag_context,
+            "retrieval_status": retrieval_status,
             "agent_steps": new_steps
         }
 
+    @observe("agent.grade_documents")
     async def grade_documents(self, state: AgentState, config: RunnableConfig):
         """文档评分节点，处理重试逻辑"""
         citations = state.get("citations", [])
+        quality_fallback = False
         
         # 0. 如果无结果
         if not citations:
@@ -403,13 +565,21 @@ Output ONLY one word: "chat" or "qa".
 """
             try:
                 llm = self._get_llm_service(state)
-                response = await llm.get_chat_model(temperature=0.1).ainvoke([HumanMessage(content=prompt)], config=config)
+                response = await invoke_provider_model(llm.get_chat_model(temperature=0.1), [HumanMessage(content=prompt)], config=config, stage="quality", model_name=llm.model)
+                model_response(response, role="quality", model=llm.model)
                 score_str = response.content.strip()
                 import re
                 match = re.search(r"0\.\d+|1\.0|0|1", score_str)
                 score = float(match.group()) if match else 0.5
+                # Preserve legacy grading, but do not claim a valid score when
+                # a malformed response merely contains a numeric substring.
+                quality_fallback = re.fullmatch(r'(?:0(?:\.\d+)?|1(?:\.0+)?)', score_str) is None
             except Exception as e:
+                if should_abort_provider_error(e):
+                    raise
                 print(f"Grading failed: {e}")
+                event('agent.quality_fallback', status='FALLBACK', error_type=type(e).__name__)
+                quality_fallback = True
                 score = 0.5 # Fallback
             
         steps = [{
@@ -420,10 +590,16 @@ Output ONLY one word: "chat" or "qa".
         # 2. 检查重试逻辑
         messages = []
         retry_count = state.get("retry_count", 0)
+        event("agent.quality", score=score, retry_count=retry_count, is_fallback=quality_fallback, cost=None)
+        # A low score only represents low relevance when candidate evidence exists.
+        if citations and not quality_fallback and score < 0.8:
+            event("agent.evidence_outcome", status="LOW_RELEVANCE", score=score, retry_count=retry_count)
         
         if score < 0.8: # 阈值 0.8
             if retry_count < 3:
                 new_retry_count = retry_count + 1
+                record_agent_retry_decision("SCHEDULED", new_retry_count)
+                event("agent.retry_decision", action="SCHEDULED", attempt=new_retry_count)
                 hint = f"Observation: 检索结果相关性评分较低 ({score})。请尝试改写查询或拆分问题进行重试。这是第 {new_retry_count}/3 次重试。"
                 messages.append(HumanMessage(content=hint)) # 注入 HumanMessage 作为提示
                 
@@ -439,6 +615,8 @@ Output ONLY one word: "chat" or "qa".
                     "agent_steps": steps
                 }
             else:
+                record_agent_retry_decision("EXHAUSTED", retry_count)
+                event("agent.retry_decision", action="EXHAUSTED", attempt=retry_count)
                 hint = f"Observation: 检索结果相关性评分较低 ({score})，且已达到最大重试次数。请基于现有信息尽力回答，并在回答中说明信息可能不完整。"
                 messages.append(HumanMessage(content=hint))
                 
@@ -455,6 +633,7 @@ Output ONLY one word: "chat" or "qa".
         
         return {"last_score": score, "agent_steps": steps}
 
+    @observe("agent.generate_chat")
     async def generate_chat(self, state: AgentState, config: RunnableConfig):
         """闲聊生成节点"""
         system_prompt = """你是一个智能问答助手。请根据你的训练知识，准确、完整、有条理地回答用户的问题。使用中文回答。"""
@@ -468,7 +647,8 @@ Output ONLY one word: "chat" or "qa".
         llm = self._get_llm_service(state)
         # Use streaming=False to ensure compatibility
         model = llm.get_chat_model(streaming=False)
-        response = await model.ainvoke([SystemMessage(content=system_prompt)] + messages, config=config)
+        response = await invoke_provider_model(model, [SystemMessage(content=system_prompt)] + messages, config=config, stage="agent_chat", model_name=llm.model)
+        model_response(response, role='agent_chat', model=llm.model)
         
         return {
             "messages": [response],

@@ -1,3 +1,5 @@
+from app.services.observability import event, candidates, observe, enabled
+from app.services.llm import is_unknown_provider_error
 """
 统一检索服务
 
@@ -25,6 +27,14 @@ from app.services.bm25 import BM25Index, get_bm25_index
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+class _HybridNoCandidates(Exception):
+    """Preserve the existing fallback while retaining why both routes were empty."""
+
+    def __init__(self, route_failed: bool):
+        super().__init__("向量检索和 BM25 检索均失败")
+        self.route_failed = route_failed
 
 
 class RetrievalCache:
@@ -116,7 +126,10 @@ def deduplicate_results(
 
     策略：
     1. ID 去重
-    2. 内容相似度去重（基于 Jaccard 相似度）
+    2. 同一来源内的内容相似度去重（基于 Jaccard 相似度）
+
+    不同文件可能使用同一模板但包含不同事实；即使文本相似，也不能
+    用一个文件的引用替代另一个文件。来源未知时保留结果。
     """
     seen_ids = set()
     seen_contents = []
@@ -133,7 +146,13 @@ def deduplicate_results(
 
         # 内容相似度去重
         is_duplicate = False
-        for seen in seen_contents:
+        file_id = r.get("file_id")
+        kb_id = r.get("kb_id")
+        for seen_file_id, seen_kb_id, seen in seen_contents:
+            if not file_id or not seen_file_id or not kb_id or not seen_kb_id:
+                continue
+            if file_id != seen_file_id or kb_id != seen_kb_id:
+                continue
             sim = jaccard_similarity(content, seen)
             if sim > similarity_threshold:
                 is_duplicate = True
@@ -141,7 +160,7 @@ def deduplicate_results(
 
         if not is_duplicate:
             seen_ids.add(chunk_id)
-            seen_contents.append(content)
+            seen_contents.append((file_id, kb_id, content))
             deduplicated.append(r)
 
     return deduplicated
@@ -201,6 +220,7 @@ class RetrievalService:
         print(f"⚠️ [Retrieval] KB={kb_id} 未配置embedding_model，回退系统默认: {settings.EMBEDDING_MODEL}")
         return await embedding_service.embed_query(query)
 
+    @observe("retrieval.search")
     async def search(
         self,
         session: Session,
@@ -226,7 +246,7 @@ class RetrievalService:
             score_threshold: 分数阈值
             vector_weight: 向量权重（hybrid 模式）
             bm25_weight: BM25 权重（hybrid 模式）
-            use_cache: 是否使用缓存
+            use_cache: 保留的兼容参数；当前因缺少可靠索引版本而跳过缓存
             log_retrieval: 是否记录检索日志
 
         Returns:
@@ -245,15 +265,15 @@ class RetrievalService:
             "bm25_latency_ms": 0,
         }
 
-        # 尝试从缓存获取
-        if use_cache:
-            cached = self.cache.get(query, kb_ids, search_mode, top_k)
-            if cached:
-                print(f"✅ [Retrieval] 命中缓存")
-                return cached, {"from_cache": True}
+        # Bypass the legacy in-memory cache: entries have neither outcome nor
+        # model/index/corpus provenance, and their keys omit retrieval inputs.
+        # Re-executing retrieval preserves the actual status and configuration.
+        # `use_cache` remains accepted for API compatibility until versioned
+        # provenance exists; no old entry is promoted to a successful result.
 
         results = []
         fallback_used = False
+        failure_outcome = None
 
         try:
             if search_mode == "vector":
@@ -273,7 +293,20 @@ class RetrievalService:
                 raise ValueError(f"未知的检索模式: {search_mode}")
 
         except Exception as e:
+            if is_unknown_provider_error(e):
+                event('retrieval.failed', status='UNKNOWN', error_type=type(e).__name__, search_mode=search_mode)
+                raise
+            if isinstance(e, _HybridNoCandidates):
+                failure_outcome = "UNKNOWN" if e.route_failed else "NO_RESULTS"
+            else:
+                failure_outcome = "RETRIEVAL_ERROR"
             print(f"❌ [Retrieval] 检索失败: {e}")
+            if failure_outcome == 'NO_RESULTS':
+                event('retrieval.no_candidates', status='NO_RESULTS', search_mode=search_mode)
+            elif failure_outcome == 'UNKNOWN':
+                event('retrieval.incomplete', status='UNKNOWN', search_mode=search_mode)
+            else:
+                event('retrieval.failed', status='FAILED', error_type=type(e).__name__, search_mode=search_mode)
             # 降级处理：尝试其他模式
             if search_mode == "hybrid":
                 try:
@@ -282,21 +315,36 @@ class RetrievalService:
                         session, query, kb_ids, top_k, score_threshold
                     )
                     fallback_used = True
-                except Exception:
+                except Exception as fallback_exc:
+                    if is_unknown_provider_error(fallback_exc):
+                        event('retrieval.fallback_failed', status='UNKNOWN', error_type=type(fallback_exc).__name__)
+                        raise
+                    event('retrieval.fallback_failed', status='FAILED', error_type=type(fallback_exc).__name__)
+                    failure_outcome = 'RETRIEVAL_ERROR'
                     results = []
 
         # 去重
+        candidates("retrieval.before_dedup", results)
         results = deduplicate_results(results)
+        candidates("retrieval.after_dedup", results)
+
+        if failure_outcome in ("RETRIEVAL_ERROR", "UNKNOWN"):
+            outcome = failure_outcome
+        elif results and fallback_used and failure_outcome is None:
+            outcome = "RETRIEVAL_ERROR"
+        else:
+            outcome = "SUCCESS" if results else (failure_outcome or "NO_RESULTS")
+        event("retrieval.outcome", outcome=outcome, search_mode=search_mode,
+              fallback_used=fallback_used, result_count=len(results))
 
         # 计算总耗时
         total_latency = (time.time() - start_time) * 1000
         metrics["total_latency_ms"] = total_latency
         metrics["final_count"] = len(results)
         metrics["fallback_used"] = fallback_used
-
-        # 缓存结果
-        if use_cache and results:
-            self.cache.set(query, kb_ids, search_mode, top_k, results)
+        metrics["retrieval_status"] = outcome
+        event('retrieval.metrics', metrics=metrics, search_mode=search_mode, top_k=top_k,
+              score_threshold=score_threshold, vector_weight=vector_weight, bm25_weight=bm25_weight)
 
         # 记录检索日志
         if log_retrieval:
@@ -337,6 +385,7 @@ class RetrievalService:
                 r["kb_name"] = kb_name
                 all_results.append(r)
 
+        candidates("retrieval.vector", all_results)
         # 补充 chunk 详情
         all_results = self._enrich_results(session, all_results)
 
@@ -385,6 +434,7 @@ class RetrievalService:
                 r["kb_name"] = kb_name
                 all_results.append(r)
 
+        candidates("retrieval.bm25", all_results)
         # 补充 chunk 详情
         all_results = self._enrich_results(session, all_results)
 
@@ -440,9 +490,14 @@ class RetrievalService:
                     r["kb_id"] = kb_id
                     vector_results.append(r)
         except Exception as e:
+            if is_unknown_provider_error(e):
+                event('retrieval.vector_failed', status='UNKNOWN', error_type=type(e).__name__)
+                raise
             print(f"⚠️ [Retrieval] 向量检索失败: {e}")
+            event('retrieval.vector_failed', status='FALLBACK', error_type=type(e).__name__)
             fallback_used = True
 
+        candidates("retrieval.vector", vector_results)
         vector_latency = (time.time() - vector_start) * 1000
 
         # 2. BM25 检索
@@ -460,18 +515,26 @@ class RetrievalService:
                     r["kb_id"] = kb_id
                     bm25_results.append(r)
         except Exception as e:
+            if is_unknown_provider_error(e):
+                event('retrieval.bm25_failed', status='UNKNOWN', error_type=type(e).__name__)
+                raise
             print(f"⚠️ [Retrieval] BM25 检索失败: {e}")
+            event('retrieval.bm25_failed', status='FALLBACK', error_type=type(e).__name__)
             fallback_used = True
 
+        candidates("retrieval.bm25", bm25_results)
         bm25_latency = (time.time() - bm25_start) * 1000
 
         # 如果两路都失败，抛出异常
         if not vector_results and not bm25_results:
-            raise Exception("向量检索和 BM25 检索均失败")
+            raise _HybridNoCandidates(route_failed=fallback_used)
 
         # 3. 分数归一化
         vector_scores = normalize_scores({r["id"]: r["score"] for r in vector_results})
         bm25_scores = normalize_scores({r["chunk_id"]: r["bm25_score"] for r in bm25_results})
+
+        candidates("retrieval.normalized_vector", [{"id": k, "score": v} for k, v in vector_scores.items()])
+        candidates("retrieval.normalized_bm25", [{"id": k, "score": v} for k, v in bm25_scores.items()])
 
         # 4. 融合分数
         all_chunk_ids = set(vector_scores.keys()) | set(bm25_scores.keys())
@@ -501,6 +564,7 @@ class RetrievalService:
                 "kb_id": raw.get("kb_id", ""),
             })
 
+        candidates("retrieval.fusion", merged_results)
         # 补充 chunk 详情
         merged_results = self._enrich_results(session, merged_results)
 
@@ -530,6 +594,7 @@ class RetrievalService:
         - 父子关系等
         """
         enriched = []
+        lineage_seen = set()
 
         for r in results:
             chunk_id = r.get("id") or r.get("chunk_id")
@@ -544,6 +609,14 @@ class RetrievalService:
             # 获取文件信息
             file_doc = session.get(FileDocument, chunk.file_id)
             file_name = file_doc.name if file_doc else "未知文件"
+            if enabled() and file_doc and chunk.file_id not in lineage_seen:
+                lineage_seen.add(chunk.file_id)
+                try:
+                    from app.services.index_lineage import file_lineage
+                    chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == chunk.file_id)).all()
+                    event("retrieval.file_lineage", **file_lineage(chunk.file_id, file_doc.local_path, chunks))
+                except Exception:
+                    pass
 
             # 获取知识库名称
             kb_id = r.get("kb_id") or (file_doc.kb_id if file_doc else "")
