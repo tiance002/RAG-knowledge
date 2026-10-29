@@ -1,4 +1,4 @@
-from app.services.observability import event, candidates as observe_candidates, observe, model_response
+from app.services.observability import event, candidates as observe_candidates, observe, model_response, enabled, snapshot
 """
 Rerank 服务模块
 """
@@ -64,6 +64,7 @@ class RerankService:
             model = self.get_default_rerank_model()
         
         if not model:
+            event("rerank.unavailable", status="UNKNOWN", reason="no_active_model")
             print("No active rerank model found.")
             return []
 
@@ -153,7 +154,9 @@ class RerankService:
 候选文本列表：
 """
         for i, text in enumerate(candidates):
-            safe_text = text[:500].replace("\n", " ") 
+            safe_text = text[:500].replace("\n", " ")
+            if enabled():
+                event("rag.candidate_transition", operation="truncate", input_ids=[i], output_ids=[i], input_candidate_ids=[i], output_candidate_ids=[i], input_kind="rerank_chat_candidate", output_kind="rerank_sent", start=0, end=min(len(text), 500), original_content=snapshot(text), rerank_sent_content=snapshot(safe_text), clipped=len(text) > 500, removed=[], rule_version="chat_prefix_500_replace_newlines_v1")
             prompt += f"[{i}] {safe_text}\n"
 
         prompt += """
@@ -334,6 +337,9 @@ def batch_rerank(
                 current_tokens = estimate_tokens(query)
             # 截断过长的文档
             truncated_content = candidate.get("content", "")[:max_context_tokens * 2]
+            if enabled():
+                cid = candidate.get("id", candidate.get("chunk_id"))
+                event("rag.candidate_transition", operation="truncate", input_ids=[cid], output_ids=[cid], input_candidate_ids=[cid], output_candidate_ids=[cid], start=0, end=len(truncated_content), original_content=snapshot(candidate.get("content", "")), rerank_sent_content=snapshot(truncated_content), estimated_tokens=tokens, max_context_tokens=max_context_tokens, removed=[], rule_version="batch_prefix_max_tokens_times_two_v1")
             batches.append([{**candidate, "content": truncated_content}])
             continue
 
@@ -356,10 +362,16 @@ def batch_rerank(
     for batch_idx, batch in enumerate(batches):
         observe_candidates("rerank.batch_input", batch, batch_index=batch_idx)
         batch_texts = [c.get("content", "") for c in batch]
+        if enabled():
+            ids = [c.get("id", c.get("chunk_id")) for c in batch]
+            event("rag.candidate_transition", operation="batch_rerank", input_ids=ids, output_ids=ids, input_candidate_ids=ids, output_candidate_ids=ids, batch_index=batch_idx, input_snapshots=[snapshot(text) for text in batch_texts], removed=[], rule_version="batch_rerank_input_v1")
 
         try:
             rerank_results = rerank_service.rerank(query, batch_texts, model=model)
+            mapped = []
 
+            if not rerank_results:
+                event("rerank.empty", status="UNKNOWN", batch_index=batch_idx, reason="empty_response_no_score_fallback")
             for rr in rerank_results:
                 idx = rr.get("index")
                 if idx is not None and 0 <= idx < len(batch):
@@ -368,14 +380,19 @@ def batch_rerank(
                     # 移除临时字段
                     result.pop("_tokens", None)
                     all_results.append(result)
+                    if enabled():
+                        mapped.append({"response_index": idx, "candidate_id": result.get("id", result.get("chunk_id")), "rerank_score": result["rerank_score"]})
 
+            if enabled():
+                output_ids = [item["candidate_id"] for item in mapped]
+                event("rag.candidate_transition", operation="batch_rerank", input_ids=ids, output_ids=output_ids, input_candidate_ids=ids, output_candidate_ids=output_ids, batch_index=batch_idx, response_mapping=mapped, execution_status="RETURNED" if rerank_results else "UNKNOWN", removed=[], rule_version="batch_rerank_output_v1")
             print(f"   批次 {batch_idx + 1}/{len(batches)} 完成")
 
         except Exception as e:
             if is_unknown_provider_error(e):
                 raise
             print(f"⚠️ [Rerank] 批次 {batch_idx + 1} 失败: {e}")
-            event('rerank.fallback', status='FALLBACK', batch_index=batch_idx, reason='original_score_retained', error_type=type(e).__name__)
+            event('rerank.fallback', status='FALLBACK', batch_index=batch_idx, reason='original_score_retained', fallback_score_origin='original_score', error_type=type(e).__name__)
             # 批次失败时，保留原始分数
             for c in batch:
                 result = {**c}
@@ -385,7 +402,11 @@ def batch_rerank(
 
     observe_candidates("rerank.batch_output", all_results)
     # 4. 按 rerank_score 排序
+    before_sort = [r.get("id", r.get("chunk_id")) for r in all_results] if enabled() else []
     all_results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
+    if enabled():
+        after_sort = [r.get("id", r.get("chunk_id")) for r in all_results]
+        event("rag.candidate_transition", operation="sort", input_ids=before_sort, output_ids=after_sort, input_candidate_ids=before_sort, output_candidate_ids=after_sort, sort_key="rerank_score_desc", removed=[], rule_version="rerank_sort_v1")
 
     # 5. 过滤低于阈值的结果
     filtered_results = [
@@ -394,6 +415,12 @@ def batch_rerank(
     ]
 
     observe_candidates("rerank.filtered", filtered_results)
+    if enabled():
+        before = [r.get("id", r.get("chunk_id")) for r in all_results]
+        after = [r.get("id", r.get("chunk_id")) for r in filtered_results]
+        event("rag.candidate_transition", operation="threshold_filter", input_ids=before, output_ids=after, input_candidate_ids=before, output_candidate_ids=after, threshold=score_threshold, score_kind="rerank_score", rule_version="rerank_threshold_gte_v1", removed=[{"candidate_id": r.get("id", r.get("chunk_id")), "reason_code": "below_threshold", "rank_before": i, "threshold": score_threshold} for i, r in enumerate(all_results, 1) if r.get("rerank_score", 0) < score_threshold])
+        selected = after[:top_k]
+        event("rag.candidate_transition", operation="topk", input_ids=after, output_ids=selected, input_candidate_ids=after, output_candidate_ids=selected, top_k=top_k, score_kind="rerank_score", rule_version="rerank_topk_v1", removed=[{"candidate_id": cid, "reason_code": "outside_topk", "rank_before": i} for i, cid in enumerate(after, 1) if i > len(selected)])
     # 6. 返回 top_k
     observe_candidates('rerank.selected', filtered_results[:top_k], top_k=top_k)
     return filtered_results[:top_k]
@@ -543,6 +570,9 @@ def expand_context(
         full_context = "\n".join(filter(None, all_parts))
 
         event("retrieval.context_expansion", chunk_id=chunk_id, parent_id=parent_id, previous_count=len(prev_contents), next_count=len(next_contents), sibling_ids=sibling_ids, included_sibling_ids=included_sibling_ids, previous_ids=previous_ids, next_ids=next_ids)
+        if enabled():
+            members = previous_ids + (included_sibling_ids if parent_id else [chunk_id]) + next_ids
+            event("rag.candidate_transition", operation="parent_or_neighbor_grouping", input_ids=[chunk_id], output_ids=["group:" + str(chunk_id)], input_candidate_ids=[chunk_id], output_candidate_ids=["group:" + str(chunk_id)], seed_evidence_ids=[chunk_id], parent_ids=[parent_id] if parent_id else [], considered_sibling_ids=sibling_ids, included_evidence_ids=members, considered_but_excluded_ids=[sid for sid in sibling_ids if sid not in included_sibling_ids], group_content=snapshot(full_context), removed=[], rule_version="parent_neighbor_grouping_v1")
         # 5. 构建扩展结果
         expanded.append({
             "id": chunk_id,

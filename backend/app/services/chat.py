@@ -1,4 +1,4 @@
-from app.services.observability import observe, event as trace_event, candidates as observe_candidates, snapshot, enabled
+from app.services.observability import observe, event as trace_event, candidates as observe_candidates, snapshot, enabled, fingerprint
 """
 对话服务 (Agent 实现)
 
@@ -155,6 +155,9 @@ class ChatService:
                 # candidates. Keep the evidence and report uncertainty.
                 results = original_results
                 metrics["retrieval_status"] = "UNKNOWN"
+                trace_event('rerank.fallback', execution_status='UNKNOWN', reason_code='rerank_fallback',
+                            fallback_score_origin='original_retrieval_score', input_ids=[],
+                            output_ids=[r.get('id', r.get('chunk_id')) for r in results])
 
         # 3. 上下文扩展
         if results and context_window > 0:
@@ -471,11 +474,16 @@ class ChatService:
         citations = []
         omitted_images = False
         omitted_expanded = False
+        delivery_changes = []
         for result in final_results:
             expanded = result.get("is_expanded") or (result.get("metadata") or {}).get("is_expanded")
             original = result.get("original_content")
             if expanded and (not isinstance(original, str) or not original.strip()):
                 omitted_expanded = True
+                if enabled():
+                    delivery_changes.append({'candidate_id': result.get('id'), 'reason_code': 'missing_source',
+                                             'selected_content_sha256': fingerprint(result.get('content', '')),
+                                             'delivered_content_sha256': None})
                 continue
             evidence = {**result, "content": original} if expanded else result
             content, has_image = evidence_text(evidence)
@@ -483,6 +491,17 @@ class ChatService:
             omitted_images = omitted_images or has_image
             if result.get("id") and content and not has_image:
                 citations.append({**format_citation(result, content), "content": content})
+            if enabled():
+                delivery_changes.append({'candidate_id': result.get('id'),
+                    'reason_code': 'image_not_used' if has_image else 'replaced_by_original_content' if expanded else None,
+                    'selected_content_sha256': fingerprint(result.get('content', '')),
+                    'delivered_content_sha256': fingerprint(content) if result.get('id') and content and not has_image else None,
+                    'used_original_content': bool(expanded), 'omitted_from_llm': bool(has_image or not content or not result.get('id'))})
+
+        trace_event('context.delivery', delivery_target='citation_selection', is_final_model_delivery=False,
+                    changes=delivery_changes, input_ids=[r.get('id') for r in final_results],
+                    output_ids=[c.get('chunk_id') for c in citations],
+                    rule_version='existing-citation-selection-v1')
 
         yield ("rag_result", {
             "citations": citations,
@@ -525,6 +544,12 @@ class ChatService:
                 citation['source_metadata'] = metadata
                 yield ('rag_result', {'citations': citations, 'original_citations': []})
             trace_event('qa.source_verification', status=source_status,
+                        reason_code=('provider_or_parser_error' if source_status == 'ERROR' else
+                                     'not_applicable' if not any(str(c.get('fileName', '')).lower().endswith('.xlsx') for c in citations) else
+                                     'unknown' if source_status == 'UNAVAILABLE' else None),
+                        source_type='native_source_expansion',
+                        source_sha256=spreadsheet_context.proof.get('source_sha256') if spreadsheet_context is not None else None,
+                        position={k: spreadsheet_context.proof.get(k) for k in ('sheet', 'row', 'label_col', 'value_col')} if spreadsheet_context is not None else None,
                         duration_ms=round((time.monotonic() - source_started) * 1000, 2),
                         evidence_count=1 if spreadsheet_context is not None else 0)
             if os.getenv('RAG_PDF_TABLE_GROUNDING', 'false').lower() == 'true':
@@ -553,6 +578,8 @@ class ChatService:
                     added = []
                     expansion_status = 'ERROR'
                 trace_event('qa.source_expansion', status=expansion_status,
+                            reason_code='provider_or_parser_error' if expansion_status == 'ERROR' else 'unknown' if expansion_status == 'UNAVAILABLE' else None,
+                            source_type='native_source_expansion',
                             duration_ms=round((time.monotonic() - started_expansion) * 1000, 2),
                             original_count=original_count, added_count=len(added),
                             locators=[{'file_id': x['fileId'], 'page': x['source_metadata']['page'],
@@ -825,7 +852,12 @@ class ChatService:
             rerank_top_k: Rerank 返回数量
             context_window: 上下文窗口大小
         """
-        trace_event("qa.config", mode=mode, model_id=model_id, kb_ids=kb_ids, search_mode=search_mode, top_k=top_k)
+        trace_event("qa.config", mode=mode, model_id=model_id, kb_ids=kb_ids,
+                    search_mode=search_mode, top_k=top_k, score_threshold=score_threshold,
+                    vector_weight=vector_weight, bm25_weight=bm25_weight,
+                    rerank_enabled=rerank_enabled, rerank_model_id=rerank_model_id,
+                    rerank_score_threshold=rerank_score_threshold, rerank_top_k=rerank_top_k,
+                    context_window=context_window, use_rewrite=use_rewrite)
         import sys
         print(f"DEBUG_CHAT: Start chat_stream. Mode: {mode}, SearchMode: {search_mode}, TopK: {top_k}", flush=True)
         sys.stdout.flush()

@@ -134,12 +134,15 @@ def deduplicate_results(
     seen_ids = set()
     seen_contents = []
     deduplicated = []
+    exact_removed = []
+    similar_removed = []
 
-    for r in results:
+    for rank, r in enumerate(results, 1):
         chunk_id = r.get("id") or r.get("chunk_id")
 
         # ID 去重
         if chunk_id in seen_ids:
+            exact_removed.append({"candidate_id": chunk_id, "reason_code": "duplicate_id", "retained_representative_id": chunk_id, "actual_similarity": None, "threshold": None, "rank_before": rank})
             continue
 
         content = r.get("content", "")
@@ -148,7 +151,7 @@ def deduplicate_results(
         is_duplicate = False
         file_id = r.get("file_id")
         kb_id = r.get("kb_id")
-        for seen_file_id, seen_kb_id, seen in seen_contents:
+        for seen_file_id, seen_kb_id, seen, seen_id in seen_contents:
             if not file_id or not seen_file_id or not kb_id or not seen_kb_id:
                 continue
             if file_id != seen_file_id or kb_id != seen_kb_id:
@@ -156,13 +159,28 @@ def deduplicate_results(
             sim = jaccard_similarity(content, seen)
             if sim > similarity_threshold:
                 is_duplicate = True
+                similar_removed.append({"candidate_id": chunk_id, "reason_code": "same_source_similarity", "retained_representative_id": seen_id, "actual_similarity": sim, "threshold": similarity_threshold, "rank_before": rank})
                 break
 
         if not is_duplicate:
             seen_ids.add(chunk_id)
-            seen_contents.append((file_id, kb_id, content))
+            seen_contents.append((file_id, kb_id, content, chunk_id))
             deduplicated.append(r)
 
+    if enabled():
+        ids = [r.get("id") or r.get("chunk_id") for r in results]
+        # Preserve duplicate occurrence order; an ID is not an occurrence key.
+        after_exact = [r.get("id") or r.get("chunk_id") for i, r in enumerate(results, 1)
+                       if i not in {x["rank_before"] for x in exact_removed}]
+        output = [r.get("id") or r.get("chunk_id") for r in deduplicated]
+        for operation, before, after, removed in (
+            ("dedup_exact_id", ids, after_exact, exact_removed),
+            ("dedup_same_source_similarity", after_exact, output, similar_removed),
+        ):
+            event("rag.candidate_transition", operation=operation, input_ids=before, output_ids=after,
+                  input_candidate_ids=before, output_candidate_ids=after, removed=removed,
+                  threshold=similarity_threshold if operation == "dedup_same_source_similarity" else None,
+                  rule_version="character_set_jaccard_gt_0.85_v1" if operation == "dedup_same_source_similarity" else "exact_id_v1")
     return deduplicated
 
 
@@ -530,11 +548,22 @@ class RetrievalService:
             raise _HybridNoCandidates(route_failed=fallback_used)
 
         # 3. 分数归一化
-        vector_scores = normalize_scores({r["id"]: r["score"] for r in vector_results})
-        bm25_scores = normalize_scores({r["chunk_id"]: r["bm25_score"] for r in bm25_results})
+        vector_raw = {r["id"]: r["score"] for r in vector_results}
+        bm25_raw = {r["chunk_id"]: r["bm25_score"] for r in bm25_results}
+        vector_scores = normalize_scores(vector_raw)
+        bm25_scores = normalize_scores(bm25_raw)
 
         candidates("retrieval.normalized_vector", [{"id": k, "score": v} for k, v in vector_scores.items()])
         candidates("retrieval.normalized_bm25", [{"id": k, "score": v} for k, v in bm25_scores.items()])
+
+        if enabled():
+            for kind, raw, normalized in (("vector", vector_raw, vector_scores), ("bm25", bm25_raw, bm25_scores)):
+                ids = list(raw)
+                event("rag.candidate_transition", operation="score_normalization", input_kind=kind, output_kind=kind,
+                      input_ids=ids, output_ids=ids, input_candidate_ids=ids, output_candidate_ids=ids,
+                      method="minmax", raw_scores=raw, normalized_scores=normalized,
+                      min_score=min(raw.values()) if raw else None, max_score=max(raw.values()) if raw else None,
+                      rule_version="minmax_equal_one_v1", removed=[])
 
         # 4. 融合分数
         all_chunk_ids = set(vector_scores.keys()) | set(bm25_scores.keys())
@@ -546,7 +575,16 @@ class RetrievalService:
             fused_scores[chunk_id] = vector_weight * v_score + bm25_weight * b_score
 
         # 5. 排序并取 top_k
-        sorted_chunks = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        sorted_all = sorted(fused_scores.items(), key=lambda x: x[1], reverse=True)
+        sorted_chunks = sorted_all[:top_k]
+        if enabled():
+            ids = list(all_chunk_ids)
+            ordered = [chunk_id for chunk_id, _ in sorted_all]
+            selected = [chunk_id for chunk_id, _ in sorted_chunks]
+            event("rag.candidate_transition", operation="union_by_chunk_id", input_candidate_ids=list(vector_scores) + list(bm25_scores), output_candidate_ids=ids, input_ids=list(vector_scores) + list(bm25_scores), output_ids=ids, removed=[], rule_version="union_by_chunk_id_v1")
+            event("rag.candidate_transition", operation="weighted_fusion", input_ids=ids, output_ids=ids, input_candidate_ids=ids, output_candidate_ids=ids, method="weighted_normalized_sum", vector_weight=vector_weight, bm25_weight=bm25_weight, scores=[{"candidate_id": cid, "vector_contribution": vector_weight * vector_scores.get(cid, 0), "bm25_contribution": bm25_weight * bm25_scores.get(cid, 0), "fusion_score": fused_scores[cid]} for cid in ids], removed=[], rule_version="weighted_normalized_sum_v1")
+            event("rag.candidate_transition", operation="sort", input_ids=ids, output_ids=ordered, input_candidate_ids=ids, output_candidate_ids=ordered, sort_key="fusion_score_desc", removed=[], rule_version="fusion_sort_v1")
+            event("rag.candidate_transition", operation="topk", input_ids=ordered, output_ids=selected, input_candidate_ids=ordered, output_candidate_ids=selected, top_k=top_k, score_kind="fusion", rule_version="fusion_topk_v1", removed=[{"candidate_id": cid, "reason_code": "outside_topk", "rank_before": i} for i, cid in enumerate(ordered, 1) if i > len(selected)])
 
         # 6. 获取完整信息
         # 合并原始结果用于获取 metadata

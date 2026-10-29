@@ -9,6 +9,15 @@ from app.services.rerank import RerankService, expand_context
 from app.services.llm import is_unknown_provider_error
 
 import json
+import uuid
+from app.services.observability import retrieval_attempt
+from app.services.observability import event, snapshot, enabled, fingerprint
+
+# The caller supplies this through task-local context, never through the tool schema.
+
+def _content_ref(value):
+    return snapshot(value) if enabled() and isinstance(value, str) else None
+
 
 @tool
 async def search_knowledge_base(
@@ -48,6 +57,7 @@ async def search_knowledge_base(
         - "citations": A list of structured citation objects.
     """
     
+    attempt_id = retrieval_attempt.get() or uuid.uuid4().hex
     retrieval_service = get_retrieval_service()
     
     with Session(engine) as session:
@@ -63,6 +73,13 @@ async def search_knowledge_base(
                 "citations": [], "retrieval_status": "NO_RESULTS"
             }, ensure_ascii=False)
             
+        event("agent.tool_search", retrieval_attempt_id=attempt_id,
+              query=_content_ref(query), kb_ids=target_kb_ids, search_mode=search_mode,
+              top_k=top_k if not use_rerank else top_k * 2, score_threshold=score_threshold,
+              vector_weight=vector_weight, bm25_weight=bm25_weight,
+              use_rerank=use_rerank, rerank_top_k=rerank_top_k,
+              rerank_score_threshold=rerank_score_threshold, rerank_model_id=rerank_model_id,
+              context_window=context_window)
         # 2. Execute Retrieval
         try:
             results, retrieval_metrics = await retrieval_service.search(
@@ -105,9 +122,20 @@ async def search_knowledge_base(
                 # Prepare candidates for rerank
                 candidates = [r["content"] for r in results]
                 
+                event("rerank.batch_input", retrieval_attempt_id=attempt_id,
+                      query=_content_ref(query), model_id=rerank_model_id,
+                      candidates=[{"id": r.get("id"), "content_sha256": fingerprint(r.get("content", "")),
+                                   "rank": i + 1} for i, r in enumerate(results)])
                 # Execute rerank
                 reranked = rerank_service.rerank(query, candidates, model=rerank_model)
 
+                event("rerank.batch_output", retrieval_attempt_id=attempt_id,
+                      results=[{"index": item.get("index"), "score": item.get("score"),
+                                "id": results[item["index"]].get("id")
+                                if isinstance(item, dict) and isinstance(item.get("index"), int)
+                                and 0 <= item["index"] < len(results) else None}
+                               for item in reranked if isinstance(item, dict)] if isinstance(reranked, list) else [],
+                      status="RETURNED" if reranked else "UNKNOWN")
                 # The existing service returns [] both for an unavailable reranker
                 # and for an empty response. Preserve real retrieval evidence and
                 # do not report either case as a confirmed absence of documents.
@@ -117,6 +145,7 @@ async def search_knowledge_base(
                 
                 # Filter and map back to results
                 final_results = []
+                threshold_removed = []
                 for item in reranked or []:
                     idx = item["index"]
                     score = item["score"]
@@ -126,10 +155,40 @@ async def search_knowledge_base(
                         # Update main score to rerank score for consistency
                         res["score"] = score 
                         final_results.append(res)
+                    else:
+                        threshold_removed.append({"id": results[idx].get("id") if isinstance(idx, int) and -len(results) <= idx < len(results) else None, "index": idx, "score": score,
+                                                  "reason_code": "below_threshold"})
                 
+                if reranked is not None:
+                    event("rerank.filtered", retrieval_attempt_id=attempt_id,
+                          threshold=rerank_score_threshold,
+                          input_ids=[r.get("id") for r in results],
+                          output_ids=[r.get("id") for r in final_results], removed=threshold_removed)
+                    event('rag.candidate_transition', operation='threshold_filter', retrieval_attempt_id=attempt_id,
+                          input_ids=[r.get('id') for r in results], output_ids=[r.get('id') for r in final_results],
+                          threshold=rerank_score_threshold, score_kind='rerank', rule_version='tool_rerank_threshold_v1',
+                          removed=[dict(r, candidate_id=r.get('id'), threshold=rerank_score_threshold) for r in threshold_removed])
+                else:
+                    event('rerank.fallback', retrieval_attempt_id=attempt_id, execution_status='UNKNOWN',
+                          fallback_score_origin='original_retrieval_score', reason_code='rerank_fallback',
+                          input_ids=[r.get('id') for r in results], output_ids=[r.get('id') for r in results])
                 # Sort and slice
+                before_sort = [r.get('id') for r in final_results] if enabled() else None
                 final_results.sort(key=lambda x: x["score"], reverse=True)
                 if reranked is not None:
+                    event('rag.candidate_transition', operation='sort', retrieval_attempt_id=attempt_id,
+                          input_ids=before_sort, output_ids=[r.get('id') for r in final_results],
+                          sort_key='rerank_score_desc', removed=[], rule_version='tool_rerank_sort_v1')
+                    event("rerank.selected", retrieval_attempt_id=attempt_id,
+                          top_k=rerank_top_k, input_ids=[r.get("id") for r in final_results],
+                          output_ids=[r.get("id") for r in final_results[:rerank_top_k]],
+                          removed=[{"id": r.get("id"), "reason_code": "outside_topk"}
+                                   for r in final_results[rerank_top_k:]])
+                    event('rag.candidate_transition', operation='topk', retrieval_attempt_id=attempt_id,
+                          input_ids=[r.get('id') for r in final_results], output_ids=[r.get('id') for r in final_results[:rerank_top_k]],
+                          top_k=rerank_top_k, score_kind='rerank', rule_version='tool_rerank_topk_v1',
+                          removed=[{'candidate_id': r.get('id'), 'reason_code': 'outside_topk', 'rank_before': i}
+                                   for i, r in enumerate(final_results, 1) if i > rerank_top_k])
                     results = final_results[:rerank_top_k]
                     if not results and retrieval_status == "SUCCESS":
                         retrieval_status = "LOW_RELEVANCE"
@@ -159,6 +218,7 @@ async def search_knowledge_base(
         citations = []
         
         omitted_expanded = False
+        delivery = []
         for r in results:
             from pathlib import PurePath
             import re
@@ -168,11 +228,17 @@ async def search_knowledge_base(
             expanded = r.get("is_expanded") or (r.get("metadata") or {}).get("is_expanded")
             content = r.get("original_content") if expanded else r.get("content")
             if expanded and (not isinstance(content, str) or not content.strip()):
+                delivery.append({"id": r.get("id"), "content_role": "context_sent", "content_field": "original_content", "reason_code": "missing_source", "delivered": False})
                 omitted_expanded = True
                 continue
             if not r.get("id") or not isinstance(content, str) or not content.strip():
+                delivery.append({"id": r.get("id"), "reason": "missing_id_or_content", "delivered": False})
                 continue
             content = content.strip()
+            delivery.append({"id": r.get("id"), "content_role": "context_sent", "content_field": "original_content" if expanded else "content",
+                             "expanded": bool(expanded), "expanded_content_sha256": fingerprint(r.get("content", "")),
+                             "content_sha256": fingerprint(content),
+                             "delivered": True, "rank": len(citations) + 1})
             extension = PurePath(source).suffix.lower()
             page_number = r.get('page_number') if extension == '.pdf' else None
             if extension in {'.xlsx', '.xls'}:
@@ -205,6 +271,8 @@ async def search_knowledge_base(
                 "location": location
             })
             
+        event("context.delivery", retrieval_attempt_id=attempt_id, delivery_target="tool_response",
+              is_final_model_delivery=False, candidates=delivery)
         if omitted_expanded and retrieval_status in ("SUCCESS", "NO_RESULTS", "LOW_RELEVANCE"):
             retrieval_status = "UNKNOWN"
         return json.dumps({

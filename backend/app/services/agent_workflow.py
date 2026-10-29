@@ -1,4 +1,4 @@
-from app.services.observability import observe, event, snapshot, enabled, model_response
+from app.services.observability import observe, event, snapshot, enabled, model_response, capture, observe_model_history
 """
 基于 LangGraph 的 Agent 工作流 (Cyclic Graph)
 """
@@ -18,6 +18,69 @@ from langgraph.graph.message import add_messages
 from app.services.llm import LLMService, is_unknown_provider_error, should_abort_provider_error, invoke_provider_model
 from app.services.metrics import record_agent_retry_decision
 from app.tools import search_knowledge_base
+from app.tools.retrieval_tool import retrieval_attempt
+import uuid
+import hashlib
+
+def _visible_content(content, *, assistant=False):
+    """Exclude reasoning blocks even when a provider puts them in content."""
+    if isinstance(content, str):
+        if assistant:
+            content = re.sub(r"<(think|thinking|analysis|reasoning)>.*?(?:</\1>|\Z)", "[REDACTED]", content,
+                             flags=re.DOTALL | re.IGNORECASE)
+            content = re.sub(r"Thinking:\s*.*?(?:\n\n|\Z)", "[REDACTED]", content,
+                             flags=re.DOTALL | re.IGNORECASE)
+        return content
+    if isinstance(content, list):
+        result = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in ("text", "image_url", "image"):
+                part = dict(item)
+                if item.get("type") == "text" and isinstance(item.get("text"), str):
+                    part["text"] = _visible_content(item["text"], assistant=assistant)
+                result.append(part)
+        return result
+    return None
+
+
+def _observe_model_request(stage, messages, model, provider_model=None):
+    # Telemetry must never change the model call or fail the request.
+    try:
+        if not enabled():
+            return
+        rows = []
+        for message in messages:
+            row = {"role": message.type, "content": _visible_content(
+                message.content, assistant=isinstance(message, AIMessage))}
+            if isinstance(message, AIMessage) and message.tool_calls:
+                row["tool_calls"] = message.tool_calls
+            if getattr(message, "name", None):
+                row["name"] = message.name
+            if isinstance(message, ToolMessage):
+                row["tool_call_id"] = message.tool_call_id
+            rows.append(row)
+        parameters = getattr(provider_model, 'bound', provider_model)
+        observe_model_history(rows)
+        event("llm.request", role=stage, model=model,
+              temperature=getattr(parameters, 'temperature', None), max_tokens=getattr(parameters, 'max_tokens', None),
+              input=capture(rows, content_role="provider_request"),
+              reasoning_policy="REDACTED", reason_code="provider_message_projection",
+              is_exact_provider_payload=False,
+              projection_excludes=["reasoning", "provider_specific_fields", "unsupported_content_blocks"])
+    except Exception:
+        pass
+
+
+def _observe_model_response(stage, response, model):
+    try:
+        if enabled():
+            event("llm.visible_response", role=stage, model=model,
+                  output=capture(_visible_content(response.content, assistant=True),
+                                 content_role="provider_response"),
+                  reasoning_policy="REDACTED")
+    except Exception:
+        pass
+
 
 # 定义状态
 class AgentState(TypedDict):
@@ -39,6 +102,8 @@ class AgentState(TypedDict):
     
     # 流程控制
     retry_count: int
+    retrieval_attempt_id: str
+    retrieval_attempt_count: int
     last_score: float # 最近一次评分
     execution_history: List[str] # 执行路径记录
     
@@ -291,7 +356,11 @@ Output ONLY one word: "chat" or "qa".
         try:
             llm = self._get_llm_service(state)
             # Use streaming=False to avoid "No generations found in stream" error with some local models
-            response = await invoke_provider_model(llm.get_chat_model(temperature=0.01, streaming=False), [HumanMessage(content=prompt)], config=config, stage="intent", model_name=llm.model)
+            invocation_messages = [HumanMessage(content=prompt)]
+            model = llm.get_chat_model(temperature=0.01, streaming=False)
+            _observe_model_request("intent", invocation_messages, llm.model, provider_model=model)
+            response = await invoke_provider_model(model, invocation_messages, config=config, stage="intent", model_name=llm.model)
+            _observe_model_response("intent", response, llm.model)
             model_response(response, role="intent", model=llm.model)
             intent = response.content.strip().lower()
             if "qa" in intent or "knowledge" in intent:
@@ -356,7 +425,9 @@ Output ONLY one word: "chat" or "qa".
         # Use streaming=False to prevent crashes on local models
         model = llm.get_chat_model(streaming=False).bind_tools(self.tools)
         
+        _observe_model_request("agent", invocation_messages, llm.model, provider_model=model)
         response = await invoke_provider_model(model, invocation_messages, config=config, stage="agent", model_name=llm.model)
+        _observe_model_response("agent", response, llm.model)
         
         model_response(response, role="agent", model=llm.model)
         # 处理 Thinking 块：将其从 content 中剥离，放入 agent_steps
@@ -409,10 +480,14 @@ Output ONLY one word: "chat" or "qa".
             return {}
             
         tool_outputs = []
+        attempt_count = state.get("retrieval_attempt_count", 0)
+        last_attempt_id = state.get("retrieval_attempt_id")
         for tool_call in last_message.tool_calls:
             if tool_call["name"] == "search_knowledge_base":
                 # Only the server state determines scope and requested settings. The
                 # model may choose the query, but cannot override supplied settings.
+                last_attempt_id = uuid.uuid4().hex
+                attempt_count += 1
                 agent_args = tool_call["args"].copy()
                 search_params = state.get("search_params", {})
                 parameter_names = (
@@ -456,16 +531,21 @@ Output ONLY one word: "chat" or "qa".
                         if not field.is_required()
                     }
                     effective_args.update(final_args)
-                    import hashlib
                     scope_hash = hashlib.sha256(json.dumps(final_args["kb_ids"], sort_keys=True).encode("utf-8")).hexdigest()
-                    event("agent.actual_query", query=snapshot(final_args.get("query")) if enabled() else None,
+                    event("agent.actual_query", retrieval_attempt_id=last_attempt_id,
+                          tool_call_id=tool_call.get("id"), origin="agent_tool_call",
+                          retrieval_attempt_count=attempt_count, query=snapshot(final_args.get("query")) if enabled() else None,
                           kb_scope_sha256=scope_hash, retry_count=state.get("retry_count", 0),
                           requested_parameters=safe_settings(requested),
                           actual_parameters=safe_settings(effective_args))
                     if not final_args["kb_ids"]:
                         result = json.dumps({"retrieval_status": "NO_RESULTS", "context": "No knowledge bases found in the system.", "citations": []})
                     else:
-                        result = await search_knowledge_base.ainvoke(final_args, config=config)
+                        token = retrieval_attempt.set(last_attempt_id)
+                        try:
+                            result = await search_knowledge_base.ainvoke(final_args, config=config)
+                        finally:
+                            retrieval_attempt.reset(token)
                 except Exception as e:
                     if is_unknown_provider_error(e):
                         raise
@@ -480,7 +560,8 @@ Output ONLY one word: "chat" or "qa".
                     )
                 )
         
-        return {"messages": tool_outputs}
+        return {"messages": tool_outputs, "retrieval_attempt_id": last_attempt_id,
+                "retrieval_attempt_count": attempt_count}
 
     def should_continue(self, state: AgentState):
         """决定是继续调用工具还是结束"""
@@ -543,6 +624,12 @@ Output ONLY one word: "chat" or "qa".
         """文档评分节点，处理重试逻辑"""
         citations = state.get("citations", [])
         quality_fallback = False
+        score_raw = None
+        score_valid = None
+        score_parsed = None
+        context = state.get("rag_context", "")
+        examined = context[:2000]
+        quality_reason = "NO_CITATIONS" if not citations else "MODEL_RESPONSE"
         
         # 0. 如果无结果
         if not citations:
@@ -567,21 +654,36 @@ Output ONLY one word: "chat" or "qa".
 """
             try:
                 llm = self._get_llm_service(state)
-                response = await invoke_provider_model(llm.get_chat_model(temperature=0.1), [HumanMessage(content=prompt)], config=config, stage="quality", model_name=llm.model)
+                invocation_messages = [HumanMessage(content=prompt)]
+                model = llm.get_chat_model(temperature=0.1)
+                _observe_model_request("quality", invocation_messages, llm.model, provider_model=model)
+                response = await invoke_provider_model(model, invocation_messages, config=config, stage="quality", model_name=llm.model)
+                _observe_model_response("quality", response, llm.model)
                 model_response(response, role="quality", model=llm.model)
+                try:
+                    score_raw = capture(_visible_content(response.content, assistant=True),
+                                        content_role="provider_response") if enabled() else None
+                except Exception:
+                    score_raw = None
                 score_str = response.content.strip()
                 import re
                 match = re.search(r"0\.\d+|1\.0|0|1", score_str)
-                score = float(match.group()) if match else 0.5
+                score_parsed = float(match.group()) if match else None
+                score = score_parsed if match else 0.5
                 # Preserve legacy grading, but do not claim a valid score when
                 # a malformed response merely contains a numeric substring.
                 quality_fallback = re.fullmatch(r'(?:0(?:\.\d+)?|1(?:\.0+)?)', score_str) is None
+                score_valid = not quality_fallback
+                if quality_fallback:
+                    quality_reason = 'INVALID_FORMAT'
             except Exception as e:
                 if should_abort_provider_error(e):
                     raise
                 print(f"Grading failed: {e}")
                 event('agent.quality_fallback', status='FALLBACK', error_type=type(e).__name__)
                 quality_fallback = True
+                score_valid = False
+                quality_reason = "PROVIDER_FAILURE"
                 score = 0.5 # Fallback
             
         steps = [{
@@ -592,7 +694,13 @@ Output ONLY one word: "chat" or "qa".
         # 2. 检查重试逻辑
         messages = []
         retry_count = state.get("retry_count", 0)
-        event("agent.quality", score=score, retry_count=retry_count, is_fallback=quality_fallback, cost=None)
+        event("agent.quality", score=score, score_parsed=score_parsed,
+              score_raw=score_raw, score_valid=score_valid, quality_fallback=quality_fallback,
+              threshold=0.8, context_sent_sha256=hashlib.sha256(examined.encode("utf-8")).hexdigest() if citations else None,
+              context_chars_examined=len(examined) if citations else 0,
+              context_chars_total=len(context), context_clipped=bool(citations and len(context) > 2000),
+              reason=quality_reason, retrieval_attempt_id=state.get("retrieval_attempt_id"),
+              retry_count=retry_count, is_fallback=quality_fallback, cost=None)
         # A low score only represents low relevance when candidate evidence exists.
         if citations and not quality_fallback and score < 0.8:
             event("agent.evidence_outcome", status="LOW_RELEVANCE", score=score, retry_count=retry_count)
@@ -601,7 +709,10 @@ Output ONLY one word: "chat" or "qa".
             if retry_count < 3:
                 new_retry_count = retry_count + 1
                 record_agent_retry_decision("SCHEDULED", new_retry_count)
-                event("agent.retry_decision", action="SCHEDULED", attempt=new_retry_count)
+                event("agent.retry_decision", action="SCHEDULED", attempt=new_retry_count,
+                      previous_attempt_id=state.get("retrieval_attempt_id"), decision="SCHEDULED",
+                      reason_code="SCORE_BELOW_THRESHOLD", retry_count=retry_count,
+                      next_action="PROMPT_AGENT", retrieval_attempt_count=state.get("retrieval_attempt_count", 0))
                 hint = f"Observation: 检索结果相关性评分较低 ({score})。请尝试改写查询或拆分问题进行重试。这是第 {new_retry_count}/3 次重试。"
                 messages.append(HumanMessage(content=hint)) # 注入 HumanMessage 作为提示
                 
@@ -618,7 +729,10 @@ Output ONLY one word: "chat" or "qa".
                 }
             else:
                 record_agent_retry_decision("EXHAUSTED", retry_count)
-                event("agent.retry_decision", action="EXHAUSTED", attempt=retry_count)
+                event("agent.retry_decision", action="EXHAUSTED", attempt=retry_count,
+                      previous_attempt_id=state.get("retrieval_attempt_id"), decision="EXHAUSTED",
+                      reason_code="RETRY_LIMIT", retry_count=retry_count,
+                      next_action="ANSWER", retrieval_attempt_count=state.get("retrieval_attempt_count", 0))
                 hint = f"Observation: 检索结果相关性评分较低 ({score})，且已达到最大重试次数。请基于现有信息尽力回答，并在回答中说明信息可能不完整。"
                 messages.append(HumanMessage(content=hint))
                 
@@ -633,6 +747,9 @@ Output ONLY one word: "chat" or "qa".
                     "agent_steps": steps
                 }
         
+        event("agent.retry_decision", action="NOT_SCHEDULED", previous_attempt_id=state.get("retrieval_attempt_id"),
+              decision="NOT_SCHEDULED", reason_code="SCORE_AT_OR_ABOVE_THRESHOLD", retry_count=retry_count,
+              next_action="ANSWER", retrieval_attempt_count=state.get("retrieval_attempt_count", 0))
         return {"last_score": score, "agent_steps": steps}
 
     @observe("agent.generate_chat")
@@ -649,7 +766,10 @@ Output ONLY one word: "chat" or "qa".
         llm = self._get_llm_service(state)
         # Use streaming=False to ensure compatibility
         model = llm.get_chat_model(streaming=False)
-        response = await invoke_provider_model(model, [SystemMessage(content=system_prompt)] + messages, config=config, stage="agent_chat", model_name=llm.model)
+        invocation_messages = [SystemMessage(content=system_prompt)] + messages
+        _observe_model_request("agent_chat", invocation_messages, llm.model, provider_model=model)
+        response = await invoke_provider_model(model, invocation_messages, config=config, stage="agent_chat", model_name=llm.model)
+        _observe_model_response("agent_chat", response, llm.model)
         model_response(response, role='agent_chat', model=llm.model)
         
         return {

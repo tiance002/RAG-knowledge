@@ -1,4 +1,4 @@
-from app.services.observability import observe, event, snapshot, enabled, model_response
+from app.services.observability import observe, event, snapshot, enabled, model_response, capture, span, observe_model_history
 from app.services.metrics import record_provider_attempt
 """
 LLM 服务
@@ -72,7 +72,7 @@ def _safe_model(value):
 
 
 @contextmanager
-def provider_attempt(stage: str, model: str, *, stream: bool = False):
+def _provider_attempt_recorded(stage: str, model: str, *, stream: bool = False):
     attempt = {"local_request_id": uuid.uuid4().hex, "stage": stage, "model": _safe_model(model), "attempt_count": 1, "provider_request_id": None}
     started = time.monotonic()
     event("provider.request_started", **attempt)
@@ -91,12 +91,20 @@ def provider_attempt(stage: str, model: str, *, stream: bool = False):
         exc.local_request_id = attempt["local_request_id"]
         exc.provider_status = status
         exc.provider_request_id = attempt["provider_request_id"]
-        event("provider.request_finished", status=status, error_type=type(exc).__name__, finish_reason=getattr(exc, "finish_reason", None), **{k: v for k, v in attempt.items() if k != "stream_started"})
+        event("provider.request_finished", status=status, duration_ms=(time.monotonic()-started)*1000, error_type=type(exc).__name__, finish_reason=getattr(exc, "finish_reason", None), **{k: v for k, v in attempt.items() if k != "stream_started"})
         record_provider_attempt(stage, status, time.monotonic() - started, streaming=stream, error=exc)
         raise
     else:
-        event("provider.request_finished", status="RETURNED", **{k: v for k, v in attempt.items() if k != "stream_started"})
+        event("provider.request_finished", status="RETURNED", duration_ms=(time.monotonic()-started)*1000, **{k: v for k, v in attempt.items() if k != "stream_started"})
         record_provider_attempt(stage, "RETURNED", time.monotonic() - started, streaming=stream)
+
+
+@contextmanager
+def provider_attempt(stage: str, model: str, *, stream: bool = False):
+    """Time the real invocation; response events are not its latency measurement."""
+    with span('provider.call', model=_safe_model(model), stage=stage, streaming=stream):
+        with _provider_attempt_recorded(stage, model, stream=stream) as attempt:
+            yield attempt
 
 
 async def invoke_provider_http_async(send, *, stage, model_name):
@@ -229,8 +237,9 @@ class LLMService:
             request_messages.append({"role": "system", "content": system_prompt})
         
         request_messages.extend(messages)
+        observe_model_history(request_messages)
         if enabled():
-            event("llm.request", prompt=snapshot(request_messages), model=target_model, max_tokens=None)
+            event("llm.request", input=capture(request_messages, content_role='provider_request'), prompt=snapshot(request_messages), model=target_model, max_tokens=None, temperature=temperature)
 
         try:
             with provider_attempt("answer_stream", target_model, stream=True) as attempt:
@@ -247,14 +256,20 @@ class LLMService:
                 attempt["stream_started"] = True
                 attempt["provider_request_id"] = _provider_id(response)
                 answer_chars = 0
+                observed_parts = []
                 finish_reason = None
                 async for chunk in response:
                     if chunk.choices and getattr(chunk.choices[0], 'finish_reason', None):
                         finish_reason = chunk.choices[0].finish_reason
                     if chunk.choices and chunk.choices[0].delta.content:
                         answer_chars += len(chunk.choices[0].delta.content)
+                        if enabled():
+                            observed_parts.append(chunk.choices[0].delta.content)
                         yield chunk.choices[0].delta.content
                 event("llm.stream_result", model=target_model, answer_chars=answer_chars, empty=answer_chars == 0, truncated=finish_reason == "length", finish_reason=finish_reason, tokens=None, cost=None)
+                if enabled():
+                    event('llm.visible_response', output=capture(''.join(observed_parts), content_role='provider_response'),
+                          model=target_model, finish_reason=finish_reason)
                 if finish_reason == "length":
                     raise ProviderStreamError("TRUNCATED", finish_reason)
                 if finish_reason is None:
@@ -280,8 +295,9 @@ class LLMService:
             request_messages.append({"role": "system", "content": system_prompt})
 
         request_messages.extend(messages)
+        observe_model_history(request_messages)
         if enabled():
-            event("llm.request", prompt=snapshot(request_messages), model=target_model, max_tokens=settings.LLM_ANSWER_MAX_TOKENS)
+            event("llm.request", input=capture(request_messages, content_role='provider_request'), prompt=snapshot(request_messages), model=target_model, max_tokens=settings.LLM_ANSWER_MAX_TOKENS, temperature=0.7)
 
         try:
             with provider_attempt("answer", target_model) as attempt:
@@ -293,6 +309,7 @@ class LLMService:
                 )
                 attempt["provider_request_id"] = _provider_id(response)
                 model_response(response, model=target_model)
+                event('llm.visible_response', output=capture(response.choices[0].message.content or '', content_role='provider_response'), model=target_model)
                 event("llm.answer", empty=not bool(response.choices[0].message.content), answer=snapshot(response.choices[0].message.content) if enabled() else None)
                 return response.choices[0].message.content
         except Exception as e:
