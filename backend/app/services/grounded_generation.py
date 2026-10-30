@@ -2,7 +2,7 @@
 import os
 from app.core.config import get_settings
 from app.services.observability import event, model_response, snapshot, capture, observe_model_history
-from app.services.llm import provider_attempt, _provider_id
+from app.services.llm import provider_generation, _provider_id, _response_usage, _update_generation, _completion_status
 
 
 def grounded_generation_enabled():
@@ -24,6 +24,12 @@ def delivered_evidence_records(citations):
                        'content': citation.get('content', ''), 'source_sha256': source_sha,
                        'source_type': 'native_source_expansion' if native else 'indexed_chunk' if chunk_id else 'other',
                        'position': {k: source.get(k) for k in ('page', 'table_bbox', 'sheet', 'row', 'cell')}})
+        if citation.get('context_group_id'):
+            output[-1].update(context_group_id=citation['context_group_id'],
+                              context_group_ids=citation.get('context_group_ids', []),
+                              evidence_relation=citation.get('evidence_relation'),
+                              seed_evidence_ids=citation.get('seed_evidence_ids', []),
+                              content_hash=citation.get('content_hash'))
     return output
 
 
@@ -47,11 +53,16 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
     target = model_id or llm.model
     observe_model_history(request_messages)
     event('grounded.request', model=target, prompt=snapshot(request_messages), evidence_count=len(citations))
+    delivered_ids = [r['evidence_id'] for r in delivered_evidence_records(citations)]
     event('context.delivery', delivery_target='provider_request', is_final_model_delivery=True,
+          delivery_status='PREPARED_FOR_PROVIDER', delivered_evidence_ids=delivered_ids,
           output=capture(delivered_evidence_records(citations), content_role='context_sent'))
     event('grounded.request.sent', input=capture(request_messages, content_role='provider_request'),
           model=target, max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS, temperature=0.7)
-    with provider_attempt('grounded_answer', target) as attempt:
+    with provider_generation('grounded_answer', target, request_messages, max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS, temperature=0.7) as (attempt, observation):
+        if observation is not None:
+            observation.update(delivered_evidence_ids=delivered_ids,
+                context_group_ids=list(dict.fromkeys(c['context_group_id'] for c in citations if c.get('context_group_id'))))
         response = await llm._get_client().chat.completions.create(
             model=target, messages=request_messages, max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS,
             temperature=0.7, stream=False,
@@ -62,6 +73,10 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
         usage = getattr(response, 'usage', None)
         usage = usage.model_dump() if hasattr(usage, 'model_dump') else usage
         content = choice.message.content or ''
+        if observation is not None:
+            _update_generation(observation, output=capture(content, content_role='provider_response'),
+                               usage=_response_usage(response), finish_reason=getattr(choice, 'finish_reason', None),
+                               execution_status=_completion_status(getattr(choice, 'finish_reason', None)))
         # Candidate text is never sent to the telemetry backend. Explicitly
         # enabled snapshots use the existing private local snapshot store.
         event('grounded.candidate', candidate=snapshot(content))

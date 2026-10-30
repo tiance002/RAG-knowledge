@@ -1,4 +1,4 @@
-from app.services.observability import event, candidates, observe, enabled
+from app.services.observability import native_operation, event, candidates, observe, enabled
 from app.services.llm import is_unknown_provider_error
 """
 统一检索服务
@@ -373,6 +373,7 @@ class RetrievalService:
 
         return results, metrics
 
+    @native_operation("retrieval.vector", as_type="retriever")
     async def _vector_search(
         self,
         session: Session,
@@ -422,6 +423,7 @@ class RetrievalService:
 
         return all_results, metrics
 
+    @native_operation("retrieval.bm25", as_type="retriever")
     async def _bm25_search(
         self,
         session: Session,

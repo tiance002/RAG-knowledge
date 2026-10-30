@@ -1,4 +1,4 @@
-from app.services.observability import observe, event as trace_event, candidates as observe_candidates, snapshot, enabled, fingerprint
+from app.services.observability import native_span, observe, event as trace_event, candidates as observe_candidates, snapshot, enabled, fingerprint
 """
 对话服务 (Agent 实现)
 
@@ -164,7 +164,8 @@ class ChatService:
             results = expand_context(
                 top_chunks=results,
                 session=session,
-                window_size=context_window
+                window_size=context_window,
+                include_source_members=True,
             )
             metrics["expanded"] = True
 
@@ -469,39 +470,22 @@ class ChatService:
                 "heading_level": r.get("heading_level"),
             }
 
-        observe_candidates("qa.citations", final_results)
-        from app.services.agent_workflow import evidence_text
-        citations = []
-        omitted_images = False
-        omitted_expanded = False
-        delivery_changes = []
-        for result in final_results:
-            expanded = result.get("is_expanded") or (result.get("metadata") or {}).get("is_expanded")
-            original = result.get("original_content")
-            if expanded and (not isinstance(original, str) or not original.strip()):
-                omitted_expanded = True
-                if enabled():
-                    delivery_changes.append({'candidate_id': result.get('id'), 'reason_code': 'missing_source',
-                                             'selected_content_sha256': fingerprint(result.get('content', '')),
-                                             'delivered_content_sha256': None})
-                continue
-            evidence = {**result, "content": original} if expanded else result
-            content, has_image = evidence_text(evidence)
-            has_image = has_image or evidence.get("content_type") == "image"
-            omitted_images = omitted_images or has_image
-            if result.get("id") and content and not has_image:
-                citations.append({**format_citation(result, content), "content": content})
-            if enabled():
-                delivery_changes.append({'candidate_id': result.get('id'),
-                    'reason_code': 'image_not_used' if has_image else 'replaced_by_original_content' if expanded else None,
-                    'selected_content_sha256': fingerprint(result.get('content', '')),
-                    'delivered_content_sha256': fingerprint(content) if result.get('id') and content and not has_image else None,
-                    'used_original_content': bool(expanded), 'omitted_from_llm': bool(has_image or not content or not result.get('id'))})
-
-        trace_event('context.delivery', delivery_target='citation_selection', is_final_model_delivery=False,
-                    changes=delivery_changes, input_ids=[r.get('id') for r in final_results],
-                    output_ids=[c.get('chunk_id') for c in citations],
-                    rule_version='existing-citation-selection-v1')
+        with native_span("context.build", as_type="chain"):
+            observe_candidates("qa.citations", final_results)
+            from app.services.context_builder import build_chat_context
+            # Process-level experiment selector, never accepted from user fields.
+            # Agent has a different builder and retains its existing behavior.
+            citations, context_summary = build_chat_context(final_results, format_citation,
+                strategy=os.getenv('RAG_CHAT_CONTEXT_STRATEGY', 'EXPANDED_CONTENT'))
+            omitted_images = context_summary['omitted_images']
+            omitted_expanded = context_summary['omitted_expanded']
+            trace_event('context.build.summary', **context_summary)
+            trace_event('context.delivery', delivery_target='citation_selection', is_final_model_delivery=False,
+                        changes=context_summary['changes'], input_ids=[r.get('id') for r in final_results],
+                        output_ids=[c.get('chunk_id') for c in citations],
+                        context_strategy=context_summary['context_strategy'],
+                        source_mapping_status=context_summary['source_mapping_status'],
+                        rule_version='source-linked-citation-selection-v2')
 
         yield ("rag_result", {
             "citations": citations,

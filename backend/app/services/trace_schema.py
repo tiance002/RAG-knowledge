@@ -172,7 +172,7 @@ def capture_payload(value, *, content_role, root=None, save_local=False,
     text = raw.decode('utf-8')
     digest = hashlib.sha256(raw).hexdigest()
     context = _context.get() or {}
-    result = {**capture_identity(), 'trace_schema_version': TRACE_SCHEMA_VERSION,
+    result = {**capture_identity(), 'trace_schema_version': ('rag-trace-v1.2' if os.getenv('RAG_OBSERVABILITY_ENABLED', 'false').lower() == 'true' and os.getenv('RAG_TRACE_SCHEMA', 'e11').lower() == 'e12' else TRACE_SCHEMA_VERSION),
               'capture_mode': context.get('capture_mode', 'BASIC'),
               'content_role': content_role, 'captured_at': time.time(),
               'content_sha256': digest, 'sha256': digest, 'chars': len(text),

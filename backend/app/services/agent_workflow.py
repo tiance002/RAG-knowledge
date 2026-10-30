@@ -21,6 +21,7 @@ from app.tools import search_knowledge_base
 from app.tools.retrieval_tool import retrieval_attempt
 import uuid
 import hashlib
+from contextlib import nullcontext
 
 def _visible_content(content, *, assistant=False):
     """Exclude reasoning blocks even when a provider puts them in content."""
@@ -543,7 +544,26 @@ Output ONLY one word: "chat" or "qa".
                     else:
                         token = retrieval_attempt.set(last_attempt_id)
                         try:
-                            result = await search_knowledge_base.ainvoke(final_args, config=config)
+                            from app.services.observability import native_enabled, langchain_callback_config, tool_observation
+                            if native_enabled():
+                                tool_config, callback_enabled, reason = langchain_callback_config(
+                                    config, tool_input=final_args,
+                                    tool_metadata={'tool_call_id': tool_call.get('id'),
+                                                   'retrieval_attempt_id': last_attempt_id})
+                                manager = nullcontext(None) if callback_enabled else tool_observation(
+                                    'search_knowledge_base', input=capture(final_args, content_role='provider_request'),
+                                    tool_call_id=tool_call.get('id'), retrieval_attempt_id=last_attempt_id,
+                                    reason_code=reason)
+                                with manager as observation:
+                                    result = await search_knowledge_base.ainvoke(final_args, config=tool_config)
+                                    if observation is not None:
+                                        try:
+                                            observation.update(output=capture(result, content_role='context_sent'),
+                                                               execution_status='RETURNED')
+                                        except Exception:
+                                            pass
+                            else:
+                                result = await search_knowledge_base.ainvoke(final_args, config=config)
                         finally:
                             retrieval_attempt.reset(token)
                 except Exception as e:

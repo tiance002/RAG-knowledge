@@ -30,6 +30,8 @@ def test_native_source_identity_is_not_fabricated_as_a_chunk():
 
 
 def test_expanded_neighbor_does_not_reach_final_model_message(monkeypatch, tmp_path):
+    # Historical A-arm regression; the default E2 chat strategy is tested separately.
+    monkeypatch.setenv('RAG_CHAT_CONTEXT_STRATEGY', 'ORIGINAL_CONTENT')
     monkeypatch.setenv('RAG_GROUNDED_GENERATION', 'true')
     monkeypatch.setenv('RAG_OBSERVABILITY_ENABLED', 'true')
     monkeypatch.setenv('RAG_SNAPSHOTS_ENABLED', 'false')

@@ -177,7 +177,8 @@ class RerankService:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
                 stream=False,
-            ), stage="rerank_chat", model_name=model.model_name, check_status=False)
+            ), stage="rerank_chat", model_name=model.model_name, check_status=False,
+               messages=[{"role": "user", "content": prompt}], model_parameters={"temperature": 0.0})
             model_response(response, role='rerank_chat', model=model.model_name)
             result_text = response.choices[0].message.content
             json_str = extract_json_from_text(result_text)
@@ -258,7 +259,8 @@ def test_rerank_connection(model_in: Any) -> Dict[str, Any]:
                     model=model_name,
                     messages=[{"role": "user", "content": "test"}],
                     max_tokens=10
-                ), stage="rerank_connection_test", model_name=model_name, check_status=False)
+                ), stage="rerank_connection_test", model_name=model_name, check_status=False,
+                   messages=[{"role": "user", "content": "test"}], model_parameters={"max_tokens": 10})
                  return {"success": True, "message": "API 连接成功"}
             except Exception as e:
                 return {"success": False, "message": "API 连接失败", **provider_error_payload(e, stage="rerank_connection_test")}
@@ -392,7 +394,7 @@ def batch_rerank(
             if is_unknown_provider_error(e):
                 raise
             print(f"⚠️ [Rerank] 批次 {batch_idx + 1} 失败: {e}")
-            event('rerank.fallback', status='FALLBACK', batch_index=batch_idx, reason='original_score_retained', fallback_score_origin='original_score', error_type=type(e).__name__)
+            event('rerank.fallback', status='FALLBACK', batch_index=batch_idx, reason='original_score_retained', fallback_score_origin='original_score', input_ids=[c.get('id', c.get('chunk_id')) for c in batch], error_type=type(e).__name__)
             # 批次失败时，保留原始分数
             for c in batch:
                 result = {**c}
@@ -431,7 +433,8 @@ def expand_context(
     top_chunks: List[Dict[str, Any]],
     session,
     window_size: int = None,
-    max_parent_length: int = None
+    max_parent_length: int = None,
+    include_source_members: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     扩展上下文窗口
@@ -469,7 +472,7 @@ def expand_context(
         db_chunk = session.get(DocumentChunk, chunk_id)
         if not db_chunk:
             # 如果数据库中没有，直接使用原始数据
-            expanded.append(chunk)
+            expanded.append({**chunk, 'source_mapping_status': 'UNKNOWN'} if include_source_members else chunk)
             seen_ids.add(chunk_id)
             continue
 
@@ -480,6 +483,8 @@ def expand_context(
         included_sibling_ids = []
         previous_ids = []
         next_ids = []
+        member_rows = []
+        parent_clipped = False
 
         if parent_id:
             # 获取同一父 chunk 下的所有子 chunk
@@ -491,6 +496,7 @@ def expand_context(
 
             sibling_ids = [s.id for s in siblings]
             included_sibling_ids = list(sibling_ids)
+            member_rows = [(s, 'parent_sibling') for s in siblings]
             seen_ids.update(sibling_ids)
 
             # 拼接内容，注意长度限制
@@ -498,6 +504,7 @@ def expand_context(
             parent_content = "\n".join(sibling_contents)
 
             if len(parent_content) > max_parent_length:
+                parent_clipped = True
                 # 截断，保留当前 chunk 所在的部分
                 # 找到当前 chunk 在兄弟中的位置
                 current_idx = next((i for i, s in enumerate(siblings) if s.id == chunk_id), 0)
@@ -519,8 +526,10 @@ def expand_context(
                         current_len += len(s.content)
 
                 parent_content = "\n".join(kept_siblings)
+                member_rows = [(s, 'parent_sibling') for s in siblings if s.id in included_sibling_ids]
         else:
             parent_content = db_chunk.content
+            member_rows = [(db_chunk, 'seed')]
             seen_ids.add(chunk_id)
 
         # 3. 前后上下文窗口
@@ -554,6 +563,8 @@ def expand_context(
             next_ids = [str(c.id) for c in next_chunks]
             prev_contents = [c.content for c in reversed(prev_chunks)]
             next_contents = [c.content for c in next_chunks]
+            member_rows = ([(c, 'previous_neighbor') for c in reversed(prev_chunks)]
+                           + member_rows + [(c, 'next_neighbor') for c in next_chunks])
 
             # 标记这些 chunk 已处理
             seen_ids.update(c.id for c in prev_chunks)
@@ -574,7 +585,7 @@ def expand_context(
             members = previous_ids + (included_sibling_ids if parent_id else [chunk_id]) + next_ids
             event("rag.candidate_transition", operation="parent_or_neighbor_grouping", input_ids=[chunk_id], output_ids=["group:" + str(chunk_id)], input_candidate_ids=[chunk_id], output_candidate_ids=["group:" + str(chunk_id)], seed_evidence_ids=[chunk_id], parent_ids=[parent_id] if parent_id else [], considered_sibling_ids=sibling_ids, included_evidence_ids=members, considered_but_excluded_ids=[sid for sid in sibling_ids if sid not in included_sibling_ids], group_content=snapshot(full_context), removed=[], rule_version="parent_neighbor_grouping_v1")
         # 5. 构建扩展结果
-        expanded.append({
+        expanded_row = {
             "id": chunk_id,
             "content": full_context,
             "original_content": chunk.get("content", db_chunk.content),  # 保留原始内容
@@ -596,6 +607,17 @@ def expand_context(
                 "heading_level": chunk.get("heading_level", db_chunk.heading_level),
                 "heading_text": chunk.get("heading_text", db_chunk.heading_text),
             }
-        })
+        }
+        if include_source_members:
+            from app.services.context_builder import source_member, content_hash
+            expanded_row['context_group'] = {
+                'context_group_id': 'group:' + str(chunk_id),
+                'seed_evidence_ids': [chunk_id],
+                'expanded_evidence_ids': list(dict.fromkeys(str(c.id) for c, _ in member_rows if c.id != chunk_id)),
+                'source_members': [source_member(c, chunk, relation) for c, relation in member_rows],
+                'original_expanded_hash': content_hash(full_context),
+                'truncation_status': 'CHAR_LIMIT_APPLIED' if parent_clipped else 'NOT_APPLIED',
+            }
+        expanded.append(expanded_row)
 
     return expanded
