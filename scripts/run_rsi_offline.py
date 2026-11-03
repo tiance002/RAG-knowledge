@@ -209,7 +209,7 @@ def run(manifest_path, out):
         for name in ("parent_template.json", "observation_manifest.json", "observation_results.json",
                      "observation_feedback.json"):
             shutil.copyfile(manifest_path.parent / name, lineage_dir / name)
-        for name in ("rsi_candidates.py", "rsi_feedback.py"):
+        for name in ("rsi_candidates.py", "rsi_feedback.py", "rsi_decision.py"):
             shutil.copyfile(WORKER.with_name(name), recovery / name)
             source_hashes[name] = digest((recovery / name).read_bytes())
     save(out / "versions.json", {"run_id": run_id, "base_commit": base, "checkout": head, "implementation": source_hashes,
@@ -290,14 +290,44 @@ def run(manifest_path, out):
     if registered:
         from rsi_feedback import write_feedback
         write_feedback(out, run_id)
+        from rsi_decision import review_run
+        try:
+            decision = review_run(out, manifest_path.parent)
+        except (OSError, ValueError, KeyError, TypeError, IndexError) as exc:
+            decision = {"run_id": run_id, "next_step": "BLOCKED_INSUFFICIENT_RECORDS",
+                        "eligible_development_parent": False, "reason": str(exc)}
+        save(out / "decision.json", decision)
     return summary
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["review"]:
+        from rsi_decision import review_cli
+        review_cli(sys.argv[2:])
+        sys.exit(0)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
-    parser.add_argument("--out", required=True, type=Path)
+    destination = parser.add_mutually_exclusive_group(required=True)
+    destination.add_argument("--out", type=Path)
+    destination.add_argument("--archive-root", type=Path,
+                             help="Use one immutable output per frozen proposal in this registry of runs")
     args = parser.parse_args()
-    summary = run(args.manifest, args.out)
+    if args.archive_root:
+        manifest = load(args.manifest)
+        if "r1" not in manifest:
+            parser.error("--archive-root requires a registered candidate")
+        key = fingerprint({k: manifest[k] for k in ("r1", "fixed", "budget", "evaluator_version", "base_commit")})
+        out = args.archive_root / key
+        print(f"Archive: {out}", file=sys.stderr)
+        if out.exists():
+            if not (out / "decision.json").is_file():
+                parser.exit(2, f"Incomplete archive retained at {out}; inspect before an explicit new attempt.\n")
+            from rsi_decision import review_run
+            decision = review_run(out, args.manifest.parent)
+            print(f"Reused {out} run_id={decision['run_id']}", file=sys.stderr)
+            sys.exit(decision["runner_exit_by_contract"])
+    else:
+        out = args.out
+    summary = run(args.manifest, out)
     print(json.dumps(summary, ensure_ascii=False))
     sys.exit(0 if summary["status"] == "PASS" else 1)

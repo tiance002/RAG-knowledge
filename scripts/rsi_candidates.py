@@ -369,6 +369,10 @@ def main():
     reg = subs.add_parser('register-r0'); reg.add_argument('--manifest', required=True, type=Path); reg.add_argument('--run', required=True, type=Path)
     der = subs.add_parser('derive'); der.add_argument('--parent', required=True); der.add_argument('--config', required=True, type=Path); workers = der.add_mutually_exclusive_group(required=True); workers.add_argument('--worker', type=Path); workers.add_argument('--worker-patch', type=Path)
     der.add_argument('--from-run', required=True, type=Path); der.add_argument('--observation-id', required=True)
+    der.add_argument('--decision', type=Path, help='Require a recomputed child-specific development decision')
+    from rsi_decision import ENGINEERING_GATE
+    der.add_argument('--engineering-gate', choices=[ENGINEERING_GATE],
+                     help='Optional development gate bound to the proposal before materialization')
     for flag in ('observation', 'hypothesis', 'change', 'impact', 'falsification'):
         der.add_argument('--' + flag, required=True)
     mat = subs.add_parser('materialize'); mat.add_argument('--parent', required=True); mat.add_argument('--child', required=True); mat.add_argument('--out', required=True, type=Path); mat.add_argument('--cases', type=Path); mat.add_argument('--evaluation', type=Path); mat.add_argument('--engineering-fixture', action='store_true')
@@ -376,8 +380,18 @@ def main():
     if args.command == 'register-r0':
         output = register(args.registry, args.manifest, args.run)
     elif args.command == 'derive':
+        if args.decision:
+            from rsi_decision import authorize_derivation
+            authorize_derivation(read_json(args.decision), args.from_run, args.parent, args.observation_id)
+            parent = candidate(args.registry, args.parent)
+            code_change = args.worker_patch or sha(args.worker.read_bytes()) != parent['worker']
+            if code_change and sha(canonical(read_json(args.config))) != parent['config']:
+                parser.error('a reviewed proposal changes either the selector or its config')
+        notes = {key: getattr(args, key) for key in ('observation', 'hypothesis', 'change', 'impact', 'falsification')}
+        if args.engineering_gate:
+            notes['engineering_gate'] = args.engineering_gate
         output = {'candidate_id': derive(args.registry, args.parent, args.config, args.worker,
-                  {key: getattr(args, key) for key in ('observation', 'hypothesis', 'change', 'impact', 'falsification')}, args.from_run, args.observation_id, args.worker_patch)}
+                  notes, args.from_run, args.observation_id, args.worker_patch)}
     else:
         if bool(args.cases or args.evaluation) != args.engineering_fixture:
             parser.error('fixture inputs require --engineering-fixture and vice versa')
