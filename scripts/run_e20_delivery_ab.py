@@ -44,10 +44,10 @@ socket.getaddrinfo = deny
 os.environ.update(RAG_GROUNDED_GENERATION='true', RAG_PDF_TABLE_GROUNDING='false',
                   RAG_OBSERVABILITY_ENABLED='false', RAG_SNAPSHOTS_ENABLED='false')
 
-from sqlmodel import SQLModel, Session, create_engine
-from app.models import DocumentChunk
+from sqlmodel import Session, create_engine
 from app.schemas import Message, MessageRole
-from app.services import chat, rerank, spreadsheet_grounding
+from app.services import chat, spreadsheet_grounding
+from replay_source_preparation import prepare_replay_sql, expand_replay_context
 
 def sha(s): return hashlib.sha256(s.encode('utf8')).hexdigest()
 def canon(v): return json.dumps(v, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
@@ -96,7 +96,7 @@ class FakeSession:
     def __enter__(self): return self
     def __exit__(self,*args): return False
 
-async def arm(q, expanded, strategy):
+async def arm(q, expanded, strategy, allowed_kb_ids):
     os.environ['RAG_CHAT_CONTEXT_STRATEGY']=strategy
     calls=[]
     async def fake_create(**kwargs):
@@ -110,7 +110,7 @@ async def arm(q, expanded, strategy):
     service._retrieve_with_new_service=fake_retrieval
     started=time.perf_counter()
     events=[x async for x in service._chat_stream_normal([Message(role=MessageRole.USER,content=q['question'])],
-        ['office50-v1'],20,0,None,False,0,None,search_mode='fulltext',context_window=1,use_rewrite=False)]
+        allowed_kb_ids,20,0,None,False,0,None,search_mode='fulltext',context_window=1,use_rewrite=False)]
     elapsed_ms=round((time.perf_counter()-started)*1000,3)
     assert len(calls)==1 and events[-1][0]=='done', (q['qid'], strategy, [x[0] for x in events])
     citations=next(data['citations'] for kind,data in events if kind=='rag_result')
@@ -123,38 +123,52 @@ async def arm(q, expanded, strategy):
             'delivered':delivered,'provider_text':provider_text,'events':events,'elapsed_ms':elapsed_ms}
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--preflight',action='store_true');p.add_argument('--snapshot',type=Path,required=True);p.add_argument('--output-dir',type=Path,required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--preflight',action='store_true');p.add_argument('--snapshot',type=Path,required=True);p.add_argument('--output-dir',type=Path,required=True)
+    p.add_argument('--source-manifest',type=Path,required=True,help='Verified manifest: status=VERIFIED, snapshot_sha256, ownership_provenance, allowed_kb_ids, files')
+    a=p.parse_args()
     raw=a.snapshot.read_bytes(); frozen=json.loads(raw); chunks={x['id']:x for x in frozen['chunks']}
     assert len(frozen['questions'])==6 and not frozen['candidate_sse_index_mismatches']
     assert sha(canon(frozen['chunks'])) == frozen['actual_snapshot_chunk_subset_fingerprint']
     try: socket.create_connection(('203.0.113.1', 443), timeout=1)
     except RuntimeError as exc: assert str(exc)=='E20_NETWORK_DENIED'
     else: raise AssertionError('network guard failed')
-    if a.preflight:
-        print(json.dumps({'status':'PASS','snapshot_sha256':hashlib.sha256(raw).hexdigest(),'questions':len(frozen['questions']),'network':'DENIED','external_model_calls':0}));return
-    secure(a.output_dir)
+    source_raw=a.source_manifest.read_bytes(); source=json.loads(source_raw)
+    if source.get('status') != 'VERIFIED':
+        raise ValueError('verified source ownership manifest required; never infer ownership from chunks/citations')
+    if source.get('snapshot_sha256') != hashlib.sha256(raw).hexdigest():
+        raise ValueError('source ownership manifest is not bound to this snapshot')
     engine=create_engine('sqlite://',connect_args={'check_same_thread':False},poolclass=__import__('sqlalchemy').pool.StaticPool)
-    SQLModel.metadata.create_all(engine)
+    preparation=prepare_replay_sql(engine,chunks=frozen['chunks'],files=source.get('files',[]),
+        allowed_kb_ids=source.get('allowed_kb_ids'),ownership_provenance=source.get('ownership_provenance'))
+    # Check every question before A/B. A missing expected hit is a blocked replay,
+    # never a successful zero-evidence experiment or a clean retrieval zero.
+    prepared=[]
     with Session(engine) as s:
-        for x in frozen['chunks']:
-            assert sha(x['content'])==x['content_sha256']
-            s.add(DocumentChunk(**{k:v for k,v in x.items() if k!='content_sha256'}))
-        s.commit()
+        for q in frozen['questions']:
+            seeds=candidates(q,chunks)
+            if not seeds:
+                raise ValueError('historical replay expected hits absent: '+q['qid'])
+            expanded=expand_replay_context(s,copy.deepcopy(seeds),allowed_kb_ids=source['allowed_kb_ids'],
+                expected_seed_count=len(q['candidates']),window_size=1,max_parent_length=4000)
+            gold_ids=[x['id'] for x in frozen['chunks'] if q['source_sha256'] in x['file_id'] and matches(q['qid'],x['content'])]
+            if not gold_ids:
+                raise ValueError('no source-linked target field: '+q['qid'])
+            prepared.append((q,seeds,expanded,gold_ids))
+    preparation['source_manifest_sha256']=hashlib.sha256(source_raw).hexdigest()
+    if a.preflight:
+        print(json.dumps({'status':'PASS','snapshot_sha256':hashlib.sha256(raw).hexdigest(),'questions':len(prepared),
+            'source_preparation':preparation,'actual_expansion':'PASS','network':'DENIED','external_model_calls':0}));return
+    secure(a.output_dir)
     chat.Session=FakeSession
     spreadsheet_grounding.prepare_spreadsheet_grounding=lambda *args: None
     ledger=[]; details=[]
-    for q in frozen['questions']:
-        seeds=candidates(q,chunks)
-        with Session(engine) as session:
-            expanded=rerank.expand_context(copy.deepcopy(seeds),session,window_size=1,max_parent_length=4000,include_source_members=True)
+    for q,seeds,expanded,gold_ids in prepared:
         expansion_hash=sha(canon(expanded)); seed_ids=[x['id'] for x in seeds]
-        gold_ids=[x['id'] for x in frozen['chunks'] if q['source_sha256'] in x['file_id'] and matches(q['qid'],x['content'])]
-        assert gold_ids, ('no source-linked target field',q['qid'])
         possible={m['id'] for group in expanded for m in group.get('context_group',{}).get('source_members',[])}
         expanded_seed_ids=[x['id'] for x in expanded]
         results={}
         for label,strategy in [('A','ORIGINAL_CONTENT'),('B','EXPANDED_CONTENT')]:
-            result=asyncio.run(arm(q,expanded,strategy)); actual={x['id'] for x in result['delivered'] if x['exact_content_in_provider_request']}; hit=sorted(set(gold_ids)&actual)
+            result=asyncio.run(arm(q,expanded,strategy,source['allowed_kb_ids'])); actual={x['id'] for x in result['delivered'] if x['exact_content_in_provider_request']}; hit=sorted(set(gold_ids)&actual)
             present=set(gold_ids)&set(seed_ids); recoverable=(not present and bool(set(gold_ids)&possible))
             row={'qid':q['qid'],'arm':label,'run_id':'e20-'+uuid.uuid4().hex,'request_sha256':result['request_sha256'],
                  'experiment_id':'e20-historical-delivery-ab-v1','trace_id':None,
@@ -177,6 +191,7 @@ def main():
     (a.output_dir/'ledger.json').write_text(json.dumps(ledger,ensure_ascii=False,indent=2),encoding='utf8')
     (a.output_dir/'evidence.json').write_text(json.dumps(details,ensure_ascii=False,indent=2),encoding='utf8')
     summary={'status':'PASS','snapshot_sha256':hashlib.sha256(raw).hexdigest(),'snapshot_subset_fingerprint':frozen['actual_snapshot_chunk_subset_fingerprint'],
+        'source_preparation':preparation,
         'case_count':len(frozen['questions']),'rows':len(ledger),'source':'historical candidate replay; no live retrieval',
         'controlled_factors':{'window_size':1,'max_parent_length':4000,'top_k':20,'rerank':False,'rewrite':False,'pdf_grounding':False,'spreadsheet_grounding':False},
         'actual_external_model_calls':0,'network_guard':'outbound denied; loopback permitted only inside Windows asyncio socketpair construction',

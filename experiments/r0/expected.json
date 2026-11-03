@@ -1,0 +1,61 @@
+{
+  "delivery": {
+    "status": "PAIRED",
+    "members": {
+      "A": [
+        "header",
+        "row",
+        "copy"
+      ],
+      "B": [
+        "header",
+        "row"
+      ]
+    },
+    "facts": [
+      {
+        "kind": "field",
+        "file_id": "f1",
+        "text": "春季 | 120"
+      },
+      {
+        "kind": "header",
+        "file_id": "f1",
+        "text": "季度 | 收入"
+      },
+      {
+        "kind": "unit",
+        "file_id": "f1",
+        "text": "单位：万元"
+      }
+    ],
+    "forbidden": [],
+    "length_change": "shorter"
+  },
+  "collision": {
+    "status": "PAIRED",
+    "members": {
+      "A": [
+        "color"
+      ],
+      "B": [
+        "color"
+      ]
+    },
+    "facts": [
+      {
+        "kind": "field",
+        "file_id": "f2",
+        "text": "颜色：青绿"
+      }
+    ],
+    "forbidden": [
+      "受限资料：月球基地 999"
+    ],
+    "length_change": "equal"
+  },
+  "missing-owner": {
+    "status": "BLOCKED",
+    "missing_file_id": "missing"
+  }
+}
