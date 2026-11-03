@@ -64,6 +64,8 @@ def _observe_model_request(stage, messages, model, provider_model=None):
         observe_model_history(rows)
         event("llm.request", role=stage, model=model,
               temperature=getattr(parameters, 'temperature', None), max_tokens=getattr(parameters, 'max_tokens', None),
+              **({'extra_body': provider_model.kwargs['extra_body']}
+                 if isinstance(getattr(provider_model, 'kwargs', None), dict) and 'extra_body' in provider_model.kwargs else {}),
               input=capture(rows, content_role="provider_request"),
               reasoning_policy="REDACTED", reason_code="provider_message_projection",
               is_exact_provider_payload=False,
@@ -103,6 +105,7 @@ class AgentState(TypedDict):
     
     # 流程控制
     retry_count: int
+    router_escalations_used: int
     retrieval_attempt_id: str
     retrieval_attempt_count: int
     last_score: float # 最近一次评分
@@ -251,6 +254,28 @@ def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, includ
     return (citations, mode) if include_mode else citations
 
 class AgentWorkflow:
+    def _route_post_retrieval_model(self, state, llm, invocation_messages, *, return_decision=False):
+        """Route only post-retrieval Agent execution; auxiliary stages stay fixed."""
+        from app.services.grounded_generation import routing_is_off
+        if routing_is_off():
+            return (llm, None, None) if return_decision else llm
+        if (not state.get('kb_ids') or state.get('retrieval_status') != 'SUCCESS'
+                or not state.get('citations')):
+            event('router.agent', stage='agent_post_retrieval', reason='NO_RELIABLE_EVIDENCE_FOR_ROUTING')
+            return (llm, None, None) if return_decision else llm
+        from app.services.grounded_generation import _route_generation
+        roles = {'human': 'user', 'ai': 'assistant', 'system': 'system', 'tool': 'tool'}
+        actual_messages = [{'role': roles.get(message.type, message.type),
+                            'content': message.content} for message in invocation_messages]
+        routed = _route_generation(
+            llm, llm.model, actual_messages, state['citations'],
+            question=state.get('original_query', ''), retrieval_status=state['retrieval_status'],
+            **({'return_decision': True} if return_decision else {}))
+        selected = routed[0]
+        event('router.agent', stage='agent_post_retrieval', model=selected.model,
+              reason='PRE_ROUTE_ONLY', quality_status='NOT_RUN')
+        return (selected, routed[2], routed[3]) if return_decision else selected
+
     def __init__(self):
         self.llm_service = LLMService()
         self.tools = [search_knowledge_base]
@@ -423,14 +448,59 @@ Output ONLY one word: "chat" or "qa".
         invocation_messages = [system_msg] + messages
         
         llm = self._get_llm_service(state)
+        llm, route, router_config = self._route_post_retrieval_model(
+            state, llm, invocation_messages, return_decision=True)
         # Use streaming=False to prevent crashes on local models
-        model = llm.get_chat_model(streaming=False).bind_tools(self.tools)
+        from app.services.grounded_generation import _routed_chat_model, _routed_response_identity, _router_outcome
+        model = _routed_chat_model(llm, self.tools)
         
         _observe_model_request("agent", invocation_messages, llm.model, provider_model=model)
-        response = await invoke_provider_model(model, invocation_messages, config=config, stage="agent", model_name=llm.model)
+        try:
+            response = await invoke_provider_model(model, invocation_messages, config=config, stage="agent", model_name=llm.model)
+        except BaseException as error:
+            _router_outcome(route, llm.model, error=error, stage='agent')
+            raise
         _observe_model_response("agent", response, llm.model)
         
         model_response(response, role="agent", model=llm.model)
+        identity_status = (_routed_response_identity(response, llm.model, stage='agent')
+                           if route is not None else 'UNKNOWN')
+        escalation_used = state.get('router_escalations_used', 0)
+        finish_reason = (getattr(response, 'response_metadata', None) or {}).get('finish_reason')
+        if (route is not None and route.mode == 'DYNAMIC' and route.selected_role == 'CHEAP'
+                and os.getenv('RAG_ROUTER_QUALITY_CHECK', 'NONE').strip().upper() == 'REFERENCE_RANGE'
+                and not response.tool_calls and finish_reason == 'stop' and identity_status == 'MATCH'
+                and isinstance(response.content, str) and response.content.strip()):
+            from app.services.grounded_generation import _reference_range_quality, _role_service
+            from app.services.model_router import decide_escalation
+            try:
+                quality_status = _reference_range_quality(response.content, len(state['citations']))
+            except Exception:
+                quality_status = 'UNKNOWN'
+            escalation = decide_escalation(route, completion_status='COMPLETED', quality_status=quality_status,
+                                           retries_used=escalation_used, config=router_config)
+            event('router.agent_quality', stage='agent_post_retrieval', status=quality_status, reason=escalation.reason)
+            if escalation.should_retry and quality_status == 'FAIL' and escalation_used == 0:
+                event('router.escalation', stage='agent_post_retrieval', status='QUALITY_ESCALATION',
+                      model=escalation.selected_model, retry_count=1, cost={'status': 'UNKNOWN'})
+                upgraded = _role_service('EXPENSIVE', escalation.selected_model)
+                upgraded_model = _routed_chat_model(upgraded, self.tools)
+                _observe_model_request('agent', invocation_messages, upgraded.model, provider_model=upgraded_model)
+                try:
+                    response = await invoke_provider_model(upgraded_model, invocation_messages, config=config,
+                                                           stage='agent', model_name=upgraded.model)
+                except BaseException as error:
+                    _router_outcome(route, upgraded.model, escalations=1, error=error, stage='agent')
+                    raise
+                _routed_response_identity(response, upgraded.model, stage='agent')
+                _observe_model_response('agent', response, upgraded.model)
+                model_response(response, role='agent', model=upgraded.model)
+                escalation_used += 1
+        _router_outcome(route, upgraded.model if escalation_used > state.get('router_escalations_used', 0) else llm.model,
+                        finish=(getattr(response, 'response_metadata', None) or {}).get('finish_reason'),
+                        content=response.content if not response.tool_calls else None,
+                        escalations=escalation_used, stage='agent', tool_calls=bool(response.tool_calls),
+                        selected_role='EXPENSIVE' if escalation_used > state.get('router_escalations_used', 0) else getattr(route, 'selected_role', None))
         # 处理 Thinking 块：将其从 content 中剥离，放入 agent_steps
         import re
         content = response.content
@@ -467,6 +537,8 @@ Output ONLY one word: "chat" or "qa".
                 })
         
         result = {"messages": [response], "agent_steps": steps}
+        if escalation_used:
+            result['router_escalations_used'] = escalation_used
         if not response.tool_calls:
             result["citations"], result["answer_mode"] = _finalize_knowledge_answer(state, response, include_mode=True)
         return result

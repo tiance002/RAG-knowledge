@@ -1,0 +1,8 @@
+# Progress
+- Started R0 research-only at 5e36633. No changes to RAG runtime authorized; preserve unrelated worktree artifacts.
+
+- Official repos cloned shallow/blob-filtered/no-checkout, source archives extracted; no execution. API403 preserved. A few rg paths/globs corrected; no changes to target runtime. ECS read-only resource audit exit0.
+- Completed the nine-section R0 report, pinned official sources, real Word citation-coverage failure qualification and a proposed (not authorized/executed) 30-attempt GEPA pilot budget. Document structure/required manifest field validation exit0. No paid calls or historical evaluation reruns.
+- Owner separately authorized stopped-container and duplicate-index cleanup. Removed 579 stopped containers (343 first, 236 logging-driver-none second), retained the same 3 running containers. Full SHA256 audited 890 files across 18 Chroma directories. Preserved 3 baseline versions and 48,802 bytes of persisted deltas; all 15 reconstructed original directory file identities verified before duplicate deletion. Freed 9,942,544,384 allocated bytes. Actual full-directory restoration and Chroma reopening NOT_RUN.
+- Post-cleanup df/free/docker/ps commands exit0, HTTP GET /health returned 200 with status=ok; production Uvicorn PID unchanged. Available disk ~17.82 GiB. Private audit and restore script kept on ECS and downloaded under ignored var/rsi-r0. No source documents, frozen Gold/qrel or historical question results removed.
+- Persisted owner reuse/teardown preference in project AGENTS.md. R0 and operations evidence recorded; stop awaiting owner review, do not enter R1 or commit/push.
