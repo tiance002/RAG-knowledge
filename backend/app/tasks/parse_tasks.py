@@ -43,6 +43,39 @@ def run_async(coro):
         loop.close()
 
 
+def _preflight_embedding(session, file_doc, vector_model):
+    """Reject incompatible models before replacing any persisted file data."""
+    kb = session.get(KnowledgeBase, file_doc.kb_id)
+    if not kb:
+        raise ValueError(f"知识库不存在: {file_doc.kb_id}")
+    service = VectorStoreService()
+    collection = service._existing_collection(file_doc.kb_id)
+    if collection is None or not collection.count():
+        return
+    if vector_model and vector_model != kb.embedding_model:
+        raise ValueError("知识库已有向量，不能通过单文件入库更换 Embedding 模型；需要显式迁移")
+
+
+def _prepare_embeddings(session, file_doc, vector_model, contents):
+    kb = session.get(KnowledgeBase, file_doc.kb_id)
+    model_id = vector_model or kb.embedding_model
+    custom = session.get(CustomModel, model_id) if model_id else None
+    if custom:
+        embedding = EmbeddingService(base_url=custom.base_url, api_key=custom.api_key, model=custom.model_name)
+        model_id = custom.model_name
+    else:
+        embedding = EmbeddingService()
+    vectors = run_async(embedding.embed_documents(contents, model_id=model_id))
+    if len(vectors) != len(contents) or any(not v for v in vectors):
+        raise ValueError("Embedding returned incomplete vectors")
+    if vectors:
+        dimension = len(vectors[0])
+        if any(len(vector) != dimension for vector in vectors):
+            raise ValueError("Embedding returned vectors with inconsistent dimensions")
+        VectorStoreService().validate_dimension(file_doc.kb_id, vectors[0])
+    return vectors
+
+
 @celery_app.task(bind=True, max_retries=3)
 def parse_file_task(self, file_id: str, **kwargs):
     """Celery 任务包装器"""
@@ -61,256 +94,144 @@ def submit_chunks_task(self, file_id: str, chunks_data: list, vector_model: str 
         raise self.retry(exc=e, countdown=60)
 
 
+class IndexRetirementError(RuntimeError):
+    """SQL has committed, but retiring the superseded vectors failed."""
+
+
 @observe("ingest.index")
 def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str = None):
-    """
-    处理前端提交的 chunks (包含手动修改后的内容)
-    """
-    print(f"🚀 [SubmitTask] 开始处理提交的 Chunks: {file_id}, Count={len(chunks_data)}, VectorModel={vector_model}")
+    """Stage new vectors first, then replace SQL chunks and retire exact old IDs."""
     with Session(engine, expire_on_commit=False) as session:
-        # 获取文件记录
         file_doc = session.get(FileDocument, file_id)
         if not file_doc:
-            print(f"❌ [SubmitTask] 文件不存在: {file_id}")
             return {"error": "文件不存在"}
-
+        started_without_index = file_doc.status in (FileStatus.PENDING, FileStatus.PENDING_CONFIRM)
         try:
-            # 更新状态为处理中
-            file_doc.status = FileStatus.EMBEDDING # 直接进入 Embedding 阶段，因为已经 Parse 过了
-            file_doc.progress = 10
-            file_doc.updated_at = datetime.utcnow()
-            session.add(file_doc)
-            safe_commit(session)
-
-            # 清理旧数据
-            print("🧹 [SubmitTask] 清理旧数据...")
-            existing_chunks = session.exec(
-                select(DocumentChunk).where(DocumentChunk.file_id == file_id)
-            ).all()
-
-            # 清理旧的 BM25 索引
-            bm25_index = get_bm25_index()
-            for c in existing_chunks:
-                bm25_index.delete_chunk_index(session, c.id, file_doc.kb_id)
-                session.delete(c)
-            safe_commit(session)
-
-            try:
-                vector_service = VectorStoreService()
-                vector_service.delete_by_file_id(file_doc.kb_id, file_id)
-            except Exception as e:
-                print(f"⚠️ [SubmitTask] 清理向量库失败: {e}")
-
-            # 保存 Chunks
-            db_chunks = []
-            print("🔄 [SubmitTask] 开始保存分块...")
-
-            for idx, chunk_data in enumerate(chunks_data):
-                # chunk_data 是字典
-                try:
-                    c_type = ContentType(chunk_data.get("content_type", "text"))
-                except ValueError:
-                    c_type = ContentType.TEXT
-
-                db_chunk = DocumentChunk(
-                    file_id=file_id,
-                    content=chunk_data.get("content", ""),
-                    page_number=chunk_data.get("page_number", 0),
-                    content_type=c_type,
-                    image_path=chunk_data.get("image_path", ""),
-                    original_index=idx,
-                    # 新增字段
-                    parent_id=chunk_data.get("parent_id"),
-                    heading_level=chunk_data.get("heading_level"),
-                    heading_text=chunk_data.get("heading_text"),
-                    chunk_type=chunk_data.get("chunk_type", "content"),
-                )
-                db_chunks.append(db_chunk)
-                session.add(db_chunk)
-
-            # 更新进度为 50% 并提交分块
-            file_doc.progress = 50
-            session.add(file_doc)
-
-            safe_commit(session) # 提交以获取 ID 并保存分块
-            lineage = {}
-            if enabled():
-                try:
-                    from app.services.index_lineage import file_lineage
-                    persisted = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).all()
-                    lineage = file_lineage(file_id, file_doc.local_path, persisted)
-                    event("ingest.file_lineage", **lineage)
-                except Exception:
-                    pass
-            event("ingest.index_chunks", file_id=file_id, kb_id=file_doc.kb_id, chunk_count=len(db_chunks), chunk_ids=[str(c.id) for c in db_chunks])
-            print(f"✅ [SubmitTask] 分块保存完成，共 {len(db_chunks)} 个")
-
-            # 建立 BM25 索引
-            print("🔍 [SubmitTask] 建立 BM25 索引...")
-            for chunk in db_chunks:
-                bm25_index.index_chunk(session, chunk.id, chunk.content, file_doc.kb_id)
-            safe_commit(session)
-            event("ingest.bm25_indexed", kb_id=file_doc.kb_id, **(lineage or {"file_id": file_id, "chunk_count": len(db_chunks)}))
-            print(f"✅ [SubmitTask] BM25 索引建立完成")
-
-            # 向量化并入库
-            print("🧠 [SubmitTask] 开始生成 Embedding 并入库...")
-            # 刷新对象以确保在同一事务中可用（虽然 commit 会 expire，但我们马上要用它）
-            session.refresh(file_doc)
-
-            try:
-                # 获取知识库信息 (为了获取 embedding_model)
-                kb = session.get(KnowledgeBase, file_doc.kb_id)
-                if not kb:
-                    raise Exception(f"知识库不存在: {file_doc.kb_id}")
-                
-                # 优先使用传入的 vector_model，否则使用知识库配置
-                selected_model_id = vector_model or kb.embedding_model
-                embedding_model_id = selected_model_id
-
-                # 关键修复：如果传入了 vector_model 且与当前 KB 配置不同（或是首次设置），则立即更新 KB 配置
-                # 这样确保后续流程（如召回）能立即感知到模型变更
-                if vector_model and vector_model != kb.embedding_model:
-                    print(f"🔄 [SubmitTask] 更新知识库 {kb.id} 的 Embedding 模型: {kb.embedding_model} -> {vector_model}")
-                    
-                    # ⚠️ 警告：模型变更通常意味着维度变更，必须重建 Collection
-                    # 否则会报 "Collection expecting embedding with dimension X, got Y"
-                    print(f"⚠️ [SubmitTask] 检测到模型变更，正在删除旧的 ChromaDB Collection 以避免维度冲突...")
-                    try:
-                        vector_service = VectorStoreService()
-                        vector_service.delete_collection(file_doc.kb_id)
-                        print(f"✅ [SubmitTask] 旧 Collection 已删除")
-                    except Exception as e:
-                        print(f"⚠️ [SubmitTask] 删除旧 Collection 失败 (可能不存在): {e}")
-
-                    kb.embedding_model = vector_model
-                    session.add(kb)
-                    safe_commit(session)
-                    session.refresh(kb)
-
-                print(f"🔍 [ParseTask] KnowledgeBase ID: {kb.id}")
-                print(f"🔍 [ParseTask] Target embedding_model_id: '{embedding_model_id}' (From param: {vector_model}, From KB: {kb.embedding_model})")
-
-                # 检查是否为自定义模型
-                custom_model = session.get(CustomModel, embedding_model_id)
-                
-                embedding_service = None
-                if custom_model:
-                    print(f"🔍 [ParseTask] Using Custom Model: {custom_model.name} ({custom_model.model_name})")
-                    embedding_service = EmbeddingService(
-                        base_url=custom_model.base_url,
-                        api_key=custom_model.api_key,
-                        model=custom_model.model_name
-                    )
-                    # 使用实际模型名称覆盖 ID
-                    embedding_model_id = custom_model.model_name
-                else:
-                    print(f"🔍 [ParseTask] Using System/Default Model: {embedding_model_id}")
-                    embedding_service = EmbeddingService()
-
-                vector_service = VectorStoreService()
-
-                documents_for_chroma = []
-                contents_to_embed = []
-
-                for chunk in db_chunks:
-                    text_content = chunk.content
-                    
-                    metadata = {
-                        "file_id": file_id,
-                        "file_name": file_doc.name,
-                        "chunk_index": chunk.original_index,
-                        "page_number": chunk.page_number or 0,
-                        "content_type": chunk.content_type.value,
-                        "image_path": chunk.image_path or "",
-                        "location_info": f"Page {chunk.page_number or 1} | Chunk #{chunk.original_index + 1}",
-                        # 新增字段
-                        "parent_id": chunk.parent_id or "",
-                        "heading_level": chunk.heading_level or 0,
-                        "heading_text": chunk.heading_text or "",
-                        "chunk_type": chunk.chunk_type or "content",
-                    }
-                    from app.services.pdf_provenance import index_provenance
-                    metadata.update(index_provenance(file_doc.local_path, chunk))
-                    
-                    documents_for_chroma.append({
-                        "id": chunk.id,
-                        "content": text_content,
-                        "metadata": metadata
-                    })
-                    contents_to_embed.append(text_content)
-
-                print(f"   -> 正在为 {len(contents_to_embed)} 个块生成向量...")
-                embeddings = run_async(embedding_service.embed_documents(contents_to_embed, model_id=embedding_model_id))
-                
-                print(f"   -> 正在写入 ChromaDB...")
-                # 由于 embedding 过程是异步的，session 可能会因为 expire_on_commit=True 而失效
-                # 虽然我们 refresh 过了，但为了保险，这里再次 refresh 或者 merge
-                # 不过 file_doc 在这里并不需要 update，我们只是用 kb_id
-                
-                vector_service.add_documents(
-                    kb_id=file_doc.kb_id,
-                    documents=documents_for_chroma,
-                    embeddings=embeddings
-                )
-                event("ingest.vector_indexed", kb_id=file_doc.kb_id, model=embedding_model_id, **(lineage or {"file_id": file_id, "chunk_count": len(db_chunks)}))
-                print("✅ [SubmitTask] 向量入库完成！")
-
-                if selected_model_id and kb.embedding_model != selected_model_id:
-                    kb.embedding_model = selected_model_id
-                    kb.updated_at = datetime.utcnow()
-                    session.add(kb)
-                    safe_commit(session)
-                    print(f"✅ [SubmitTask] 已更新知识库 embedding_model 为 {selected_model_id}")
-
-            except Exception as embed_err:
-                print(f"❌ [SubmitTask] 向量化失败: {embed_err}")
-                raise embed_err
-
-            # 完成
-            # 这里必须重新获取 file_doc，因为经历了耗时的 embedding 过程，
-            # 且之前的 commit 可能导致对象过期或 detached
-            file_doc = session.get(FileDocument, file_id)
-            if file_doc:
-                file_doc.status = FileStatus.PARSED
-                file_doc.progress = 100
+            _preflight_embedding(session, file_doc, vector_model)
+            if started_without_index:
+                file_doc.status = FileStatus.EMBEDDING
+                file_doc.progress = 10
                 file_doc.updated_at = datetime.utcnow()
                 session.add(file_doc)
                 safe_commit(session)
-
-                # 更新知识库的 chunk_count
+            embeddings = _prepare_embeddings(session, file_doc, vector_model, [c.get("content", "") for c in chunks_data])
+            kb = session.get(KnowledgeBase, file_doc.kb_id)
+            old_chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).all()
+            old_ids = [c.id for c in old_chunks]
+            new_chunks = []
+            documents = []
+            from app.services.pdf_provenance import index_provenance
+            for idx, data in enumerate(chunks_data):
                 try:
-                    kb = session.get(KnowledgeBase, file_doc.kb_id)
-                    if kb:
-                        # 统计该知识库下所有文件的 chunks 总数
-                        from sqlalchemy import func
-                        total_chunks = session.exec(
-                            select(func.count(DocumentChunk.id))
-                            .join(FileDocument)
-                            .where(FileDocument.kb_id == kb.id)
-                        ).one()
-                        
-                        kb.chunk_count = total_chunks
-                        kb.updated_at = datetime.utcnow()
-                        session.add(kb)
-                        safe_commit(session)
-                        print(f"✅ [SubmitTask] 更新知识库 {kb.id} 的 chunk_count 为 {total_chunks}")
-                except Exception as kb_err:
-                    print(f"⚠️ [SubmitTask] 更新知识库 chunk_count 失败: {kb_err}")
-
-            print("🎉 [SubmitTask] 任务完成。")
-
-        except Exception as e:
-            print(f"❌ [SubmitTask] 异常: {e}")
-            import traceback
-            traceback.print_exc()
-            file_doc = session.get(FileDocument, file_id)
-            if file_doc:
+                    content_type = ContentType(data.get("content_type", "text"))
+                except ValueError:
+                    content_type = ContentType.TEXT
+                chunk = DocumentChunk(
+                    file_id=file_id, content=data.get("content", ""),
+                    page_number=data.get("page_number", 0), content_type=content_type,
+                    image_path=data.get("image_path", ""), original_index=idx,
+                    parent_id=data.get("parent_id"), heading_level=data.get("heading_level"),
+                    heading_text=data.get("heading_text"), chunk_type=data.get("chunk_type", "content"),
+                    token_count=data.get("token_count", 0),
+                )
+                metadata = {
+                    "file_id": file_id, "file_name": file_doc.name, "chunk_index": idx,
+                    "page_number": chunk.page_number or 0, "content_type": chunk.content_type.value,
+                    "image_path": chunk.image_path or "",
+                    "location_info": f"Page {chunk.page_number or 1} | Chunk #{idx + 1}",
+                    "parent_id": chunk.parent_id or "", "heading_level": chunk.heading_level or 0,
+                    "heading_text": chunk.heading_text or "", "chunk_type": chunk.chunk_type or "content",
+                }
+                metadata.update(index_provenance(file_doc.local_path, chunk))
+                new_chunks.append(chunk)
+                documents.append({"id": chunk.id, "content": chunk.content, "metadata": metadata})
+            service = VectorStoreService()
+            # A rejected write must leave the old SQL and vectors untouched.
+            try:
+                service.add_documents(kb_id=file_doc.kb_id, documents=documents, embeddings=embeddings)
+            except Exception as write_error:
+                try:
+                    service.delete_ids(file_doc.kb_id, [c.id for c in new_chunks])
+                except Exception as cleanup_error:
+                    raise RuntimeError(f"向量写入失败: {write_error}; 新向量清理失败: {cleanup_error}") from write_error
+                raise
+        except Exception as exc:
+            file_doc.error_message = str(exc)
+            if started_without_index:
                 file_doc.status = FileStatus.FAILED
-                file_doc.error_message = str(e)
-                session.add(file_doc)
-                safe_commit(session)
-            raise e
+            session.add(file_doc)
+            safe_commit(session)
+            raise
+
+        new_ids = [c.id for c in new_chunks]
+        try:
+            bm25 = get_bm25_index()
+            for chunk in old_chunks:
+                bm25.delete_chunk_index(session, chunk.id, file_doc.kb_id)
+                session.delete(chunk)
+            session.flush()
+            for chunk in new_chunks:
+                session.add(chunk)
+                bm25.index_chunk(session, chunk.id, chunk.content, file_doc.kb_id)
+            file_doc.status = FileStatus.PARSED
+            file_doc.progress = 100
+            file_doc.error_message = None
+            file_doc.updated_at = datetime.utcnow()
+            selected_model_id = vector_model or kb.embedding_model
+            if selected_model_id:
+                kb.embedding_model = selected_model_id
+            from sqlalchemy import func
+            session.flush()
+            kb.chunk_count = session.exec(select(func.count(DocumentChunk.id)).join(FileDocument).where(FileDocument.kb_id == kb.id)).one()
+            kb.updated_at = datetime.utcnow()
+            session.add(file_doc)
+            session.add(kb)
+            safe_commit(session)
+        except Exception as sql_error:
+            session.rollback()
+            cleanup_error = None
+            try:
+                service.delete_ids(file_doc.kb_id, new_ids)
+            except Exception as exc:
+                cleanup_error = exc
+            file_doc = session.get(FileDocument, file_id)
+            file_doc.error_message = f"数据库提交失败: {sql_error}"
+            if started_without_index:
+                file_doc.status = FileStatus.FAILED
+            if cleanup_error:
+                file_doc.error_message += f"; 新向量清理失败: {cleanup_error}"
+            session.add(file_doc)
+            safe_commit(session)
+            if cleanup_error:
+                raise RuntimeError(file_doc.error_message) from sql_error
+            raise
+
+        lineage = {}
+        if enabled():
+            try:
+                from app.services.index_lineage import file_lineage
+                lineage = file_lineage(file_id, file_doc.local_path, new_chunks)
+                event("ingest.file_lineage", **lineage)
+            except Exception:
+                pass
+        event("ingest.index_chunks", file_id=file_id, kb_id=file_doc.kb_id,
+              chunk_count=len(new_chunks), chunk_ids=[str(c.id) for c in new_chunks])
+        event("ingest.bm25_indexed", kb_id=file_doc.kb_id,
+              **(lineage or {"file_id": file_id, "chunk_count": len(new_chunks)}))
+        custom = session.get(CustomModel, selected_model_id) if selected_model_id else None
+        actual_model = custom.model_name if custom else selected_model_id
+        event("ingest.vector_indexed", kb_id=file_doc.kb_id, model=actual_model,
+              **(lineage or {"file_id": file_id, "chunk_count": len(new_chunks)}))
+
+        try:
+            service.delete_ids(file_doc.kb_id, old_ids)
+        except Exception as exc:
+            # New index is committed; expose stale-vector cleanup failure explicitly.
+            file_doc.error_message = f"旧向量清理失败: {exc}"
+            session.add(file_doc)
+            safe_commit(session)
+            raise IndexRetirementError(file_doc.error_message) from exc
+
 
 
 @observe("ingest.parse")
@@ -361,6 +282,23 @@ def process_file_parsing(
             print(f"❌ [ParseTask] 文件不存在: {file_id}")
             return {"error": "文件不存在"}
 
+        old_chunk = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).first()
+        try:
+            _preflight_embedding(session, file_doc, vector_model)
+            if not auto_vectorize:
+                collection = VectorStoreService()._existing_collection(file_doc.kb_id)
+                if collection is not None and collection.get(where={"file_id": file_id}, limit=1)["ids"]:
+                    raise ValueError("文件已有有效向量，暂不支持保留索引的手动重解析；请选择自动入库")
+        except Exception as exc:
+            file_doc.error_message = str(exc)
+            if file_doc.status in (FileStatus.PENDING, FileStatus.PENDING_CONFIRM):
+                file_doc.status = FileStatus.FAILED
+            session.add(file_doc)
+            safe_commit(session)
+            raise
+        previous_status, previous_progress = file_doc.status, file_doc.progress
+
+
         try:
             print(f"📄 [ParseTask] 文件信息: {file_doc.name}, 路径: {file_doc.local_path}")
             
@@ -371,23 +309,6 @@ def process_file_parsing(
             session.add(file_doc)
             safe_commit(session)
             
-            # 清理旧的 Chunks (支持重解析)
-            print("🧹 [ParseTask] 清理旧数据...")
-            existing_chunks = session.exec(
-                select(DocumentChunk).where(DocumentChunk.file_id == file_id)
-            ).all()
-            for c in existing_chunks:
-                session.delete(c)
-            safe_commit(session)
-
-            # 清理向量库中的旧数据
-            try:
-                vector_service = VectorStoreService()
-                vector_service.delete_by_file_id(file_doc.kb_id, file_id)
-                print(f"🧹 [ParseTask] 已从向量库清理文件 {file_id} 的数据")
-            except Exception as e:
-                print(f"⚠️ [ParseTask] 清理向量库失败 (可能之前未入库): {e}")
-
             # 初始化解析器
             parser = FileParser(kb_id=file_doc.kb_id)
 
@@ -466,14 +387,38 @@ def process_file_parsing(
 
                 event("ingest.parsed", file_id=file_id, chunk_count=len(parsed_chunks))
                 print(f"✅ [ParseTask] 解析完成，获得 {len(parsed_chunks)} 个块")
-                if chunk_mode in ["no_split", "no_chunk"]:
-                    print(f"🔍 [ParseTask] No Split Mode Result: {[c.content[:50] + '...' for c in parsed_chunks]}")
             except Exception as parse_err:
                 print(f"❌ [ParseTask] parser.parse() 内部抛出异常: {parse_err}")
                 import traceback
                 traceback.print_exc()
                 raise parse_err
 
+            if auto_vectorize:
+                auto_data = []
+                for chunk in parsed_chunks:
+                    metadata = chunk.metadata if hasattr(chunk, "metadata") and chunk.metadata else {}
+                    auto_data.append({
+                        "content": chunk.content, "page_number": chunk.page_number,
+                        "content_type": chunk.content_type, "image_path": chunk.image_path,
+                        "parent_id": metadata.get("parent_id"), "heading_level": metadata.get("heading_level"),
+                        "heading_text": metadata.get("heading_text"), "chunk_type": metadata.get("chunk_type", "content"),
+                        "token_count": chunk.token_count,
+                    })
+                process_submitted_chunks(file_id, auto_data, vector_model=vector_model)
+                return {"file_id": file_id, "chunk_count": len(parsed_chunks), "status": "pending_confirm"}
+
+            # 清理旧的 Chunks (支持重解析)
+            print("🧹 [ParseTask] 清理旧数据...")
+            existing_chunks = session.exec(
+                select(DocumentChunk).where(DocumentChunk.file_id == file_id)
+            ).all()
+            bm25_index = get_bm25_index()
+            for c in existing_chunks:
+                bm25_index.delete_chunk_index(session, c.id, file_doc.kb_id)
+                session.delete(c)
+            session.flush()
+
+            # This preview path has no active vectors. Only the indexing path replaces vectors.
             # 保存 Chunks
             db_chunks = []
             print("🔄 [ParseTask] 开始保存分块...")
@@ -520,36 +465,15 @@ def process_file_parsing(
             safe_commit(session)
             print("🎉 [ParseTask] 解析完成，等待用户确认入库。")
             
-            # 准备自动向量化的数据
-            auto_vectorize_data = None
-            if auto_vectorize:
-                print(f"🚀 [ParseTask] 自动触发向量化入库: {file_id}")
-                auto_vectorize_data = []
-                for c in db_chunks:
-                    auto_vectorize_data.append({
-                        "content": c.content,
-                        "page_number": c.page_number,
-                        "content_type": c.content_type.value,
-                        "image_path": c.image_path,
-                        # 新增字段
-                        "parent_id": c.parent_id,
-                        "heading_level": c.heading_level,
-                        "heading_text": c.heading_text,
-                        "chunk_type": c.chunk_type,
-                        "token_count": c.token_count,
-                    })
-
-            # 即使在 Session 上下文中，只要 commit 了，连接锁就释放了（对于 WAL）
-            # 使用 QueuePool 时，process_submitted_chunks 会获取一个新的连接
-            if auto_vectorize_data:
-                process_submitted_chunks(file_id, auto_vectorize_data, vector_model=vector_model)
-
             return {
                 "file_id": file_id,
                 "chunk_count": len(db_chunks) if 'db_chunks' in locals() else 0,
                 "status": "pending_confirm",
             }
 
+        except IndexRetirementError:
+            # The new SQL/index state is already committed; do not restore stale state.
+            raise
         except Exception as e:
             # 更新状态为失败
             print(f"❌ [ParseTask] 全局异常捕获: {e}")
@@ -557,9 +481,12 @@ def process_file_parsing(
             traceback.print_exc()
             
             # 重新获取 session 中的对象以防过期
+            session.rollback()
             file_doc = session.get(FileDocument, file_id)
             if file_doc:
-                file_doc.status = FileStatus.FAILED
+                file_doc.status = previous_status if old_chunk else FileStatus.FAILED
+                if old_chunk:
+                    file_doc.progress = previous_progress
                 file_doc.error_message = str(e)
                 file_doc.updated_at = datetime.utcnow()
                 session.add(file_doc)

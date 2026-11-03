@@ -4,15 +4,18 @@ from pathlib import PurePath
 
 
 def content_hash(text):
-    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    return hashlib.sha256(text.encode('utf-8')).hexdigest() if isinstance(text, str) else None
 
 
-def source_member(chunk, seed, relation):
+def source_member(chunk, seed, relation, source_path=None):
     """Describe an actually selected DB chunk; unknown locators stay unknown."""
     is_seed = str(chunk.id) == str(seed.get('id'))
     metadata = dict(seed.get('source_metadata') or {}) if is_seed else {}
+    if not is_seed and source_path and PurePath(source_path).suffix.lower() in {'.xlsx', '.csv'}:
+        from app.services.pdf_provenance import source_metadata
+        metadata = source_metadata(source_path, chunk.content, chunk.page_number, chunk.content_type)
     # Office/TXT index page placeholders are not verified source pagination.
-    page = chunk.page_number if PurePath(seed.get('file_name', '')).suffix.lower() == '.pdf' else None
+    page = chunk.page_number if PurePath(seed.get('file_name') or '').suffix.lower() == '.pdf' else None
     if page is not None:
         metadata['page'] = page
     elif 'page' in metadata:
@@ -101,10 +104,12 @@ def build_chat_context(results, format_citation, strategy='EXPANDED_CONTENT'):
             mid = member.get('id')
             if not mid or not text or has_image:
                 continue
+            source_name = member.get('file_name') or row.get('file_name') or ''
+            verified_page = member.get('page_number') if PurePath(source_name).suffix.lower() == '.pdf' else None
             if mid in delivered_by_id:
                 existing = delivered_by_id[mid]
                 if (existing['content'] != text or existing.get('fileId') != member.get('file_id')
-                        or existing.get('page_number') != member.get('page_number')):
+                        or existing.get('page_number') != verified_page):
                     mapping_unknown = True
                     continue
                 if group_id and group_id not in existing.get('context_group_ids', []):
@@ -116,7 +121,7 @@ def build_chat_context(results, format_citation, strategy='EXPANDED_CONTENT'):
                 # Group membership is not an independent retrieval/rerank score.
                 mapped.update(score=None, rerank_score=None, vector_score=None, bm25_score=None)
             citation = {**format_citation(mapped, text), 'content': text,
-                        'page_number': member.get('page_number')}
+                        'page_number': verified_page}
             if group_id and strategy == 'EXPANDED_CONTENT' and members is not None:
                 citation.update(context_group_id=group_id, context_group_ids=[group_id],
                                 seed_evidence_ids=[seed], parent_chunk_id=member.get('parent_id'),
@@ -154,9 +159,13 @@ def build_chat_context(results, format_citation, strategy='EXPANDED_CONTENT'):
         'context_char_count': len(context), 'content_hash': content_hash(context),
         'context_token_count': None, 'token_count_status': 'UNKNOWN',
         'token_count_method': 'model_tokenizer_not_configured',
-        'truncation_status': ('CHAR_LIMIT_APPLIED' if any(g['truncation_status'] == 'CHAR_LIMIT_APPLIED' for g in groups)
+        'truncation_status': ('SEED_OMITTED_OVER_LIMIT' if any(g['truncation_status'] == 'SEED_OMITTED_OVER_LIMIT' for g in groups) else 'CHAR_LIMIT_APPLIED' if any(g['truncation_status'] == 'CHAR_LIMIT_APPLIED' for g in groups)
                               else 'UNKNOWN' if any(g['truncation_status'] == 'UNKNOWN' for g in groups) else 'NOT_APPLIED'),
         'delivery_status': 'SELECTED_NOT_YET_SENT',
+        'expansion_delivery_status': ('NOT_REQUESTED' if not groups else
+            'OMITTED' if omitted_expanded else
+            'SEED_ONLY' if strategy == 'ORIGINAL_CONTENT' or any(g['source_mapping_status'] == 'UNKNOWN' for g in groups) else
+            'PARTIAL' if any(g['truncation_status'] != 'NOT_APPLIED' for g in groups) else 'DELIVERED'),
         'source_mapping_status': 'UNKNOWN' if mapping_unknown else 'VERIFIED',
         'omitted_images': omitted_images, 'omitted_expanded': omitted_expanded, 'changes': changes,
     }

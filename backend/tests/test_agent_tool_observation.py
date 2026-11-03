@@ -42,7 +42,7 @@ def test_tool_attempt_rerank_and_original_delivery_do_not_change_output(monkeypa
     assert data['citations'][0]['content'] == 'original'
     events = dict(events)
     assert all(e['retrieval_attempt_id'] == 'attempt-1' for e in events.values())
-    assert events['rerank.batch_output']['results'][0]['id'] == 'b'
+    assert events['rerank.batch_output']['results'][0]['id'] == 'a'
     assert events['rerank.filtered']['output_ids'] == ['a']
     assert events['rerank.selected']['output_ids'] == ['a']
     delivered = events['context.delivery']['candidates'][0]
@@ -57,7 +57,7 @@ def test_two_attempts_quality_boundary_and_retry_are_linked(monkeypatch):
     from unittest.mock import Mock
     workflow = agent_workflow.AgentWorkflow.__new__(agent_workflow.AgentWorkflow)
     outputs = [json.dumps({'context': '', 'citations': [], 'retrieval_status': 'NO_RESULTS'}),
-               json.dumps({'context': 'x' * 2100, 'citations': [{'id': 'a'}], 'retrieval_status': 'SUCCESS'})]
+               json.dumps({'context': 'x' * 2100, 'citations': [{'chunk_id': 'a', 'content': 'x' * 2100}], 'retrieval_status': 'SUCCESS'})]
     seen = []
     async def invoke(args, config):
         seen.append((retrieval_tool.retrieval_attempt.get(), args['query']))
@@ -86,7 +86,7 @@ def test_two_attempts_quality_boundary_and_retry_are_linked(monkeypatch):
     assert quality[0]['score_valid'] is None and quality[0]['reason'] == 'NO_CITATIONS'
     assert quality[1]['score_valid'] is True and quality[1]['score_parsed'] == .9
     assert quality[1]['context_chars_examined'] == 2000 and quality[1]['context_clipped']
-    assert quality[1]['context_sent_sha256'] == hashlib.sha256(('x' * 2000).encode()).hexdigest()
+    assert quality[1]['context_sent_sha256'] == hashlib.sha256(state['rag_context'][:2000].encode()).hexdigest()
     assert [d['action'] for d in decisions] == ['SCHEDULED', 'NOT_SCHEDULED']
     assert decisions[1]['retrieval_attempt_count'] == 2
 

@@ -1202,15 +1202,15 @@ class FileParser:
             for run in para.runs:
                 # 1. 提取文本
                 if run.text:
-                    if self.chunk_mode == "structure" or self.chunk_mode == "semantic":
-                         # 结构化/语义模式：累积到全文 buffer
-                         full_text_buffer += run.text
-                    
+                    if self.chunk_mode == "semantic":
+                        full_text_buffer += run.text
+
                     if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
                         page_text_buffer += run.text
-                    else:
+                    elif self.chunk_mode != "structure":
                         current_text_buffer += run.text
-                    para_text += run.text
+                    if self.chunk_mode == "structure":
+                        para_text += run.text
                 
                 # 2. 检查图片
                 # 查找 run 元素下的 drawing 标签
@@ -1552,51 +1552,44 @@ class FileParser:
         return chunks
 
     def _parse_excel(self, file_path: str) -> List[ParsedChunk]:
-        """解析 Excel 文件"""
-        print(f"🔍 [Excel Parser] 开始解析: {file_path}")
+        """Read a workbook and bind locators to the exact bytes parsed."""
+        from io import BytesIO
+        from pathlib import Path
+        from app.services.pdf_provenance import digest_bytes, write_manifest
+
+        source = Path(file_path).read_bytes()
         chunks = []
-        try:
-            xlsx = pd.ExcelFile(file_path)
-            print(f"🔍 [Excel Parser] 工作表数量: {len(xlsx.sheet_names)}, 名称: {xlsx.sheet_names}")
-
-            for sheet_name in xlsx.sheet_names:
-                print(f"🔍 [Excel Parser] 正在处理工作表: {sheet_name}")
-                df = pd.read_excel(xlsx, sheet_name=sheet_name)
-                print(f"🔍 [Excel Parser] 工作表 '{sheet_name}' 行数: {len(df)}, 列数: {len(df.columns)}")
-
-                # Excel 通常按行切分，不使用通用 TextSplitter
-                chunk_size = 20
-                for i in range(0, len(df), chunk_size):
-                    chunk_df = df.iloc[i:i + chunk_size]
-                    md_table = chunk_df.to_markdown(index=False)
-
+        with pd.ExcelFile(BytesIO(source)) as workbook:
+            for sheet in workbook.sheet_names:
+                df = pd.read_excel(workbook, sheet_name=sheet)
+                for i in range(0, len(df), 20):
+                    rows = df.iloc[i:i + 20]
+                    locator = {"sheet": sheet, "row_start": i + 2, "row_end": i + len(rows) + 1,
+                               "column_start": 1, "column_end": len(rows.columns)}
                     chunks.append(ParsedChunk(
-                        content=f"[工作表: {sheet_name}]\n{md_table}",
-                        page_number=i // chunk_size + 1,
-                        content_type="table",
+                        content=f"[工作表: {sheet}]\n{rows.to_markdown(index=False)}",
+                        page_number=i // 20 + 1, content_type="table",
+                        metadata={"source_locator": locator},
                     ))
-                print(f"🔍 [Excel Parser] 工作表 '{sheet_name}' 处理完成，当前总块数: {len(chunks)}")
-
-            print(f"✅ [Excel Parser] 解析完成，总块数: {len(chunks)}")
-        except Exception as e:
-            print(f"❌ [Excel Parser] 解析异常: {e}")
-            import traceback
-            traceback.print_exc()
-            raise e
+        write_manifest(settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1")
         return chunks
 
     def _parse_csv(self, file_path: str) -> List[ParsedChunk]:
-        """解析 CSV 文件"""
-        chunks = []
-        df = pd.read_csv(file_path)
-        chunk_size = 20
-        for i in range(0, len(df), chunk_size):
-            chunk_df = df.iloc[i:i + chunk_size]
-            md_table = chunk_df.to_markdown(index=False)
+        from io import BytesIO
+        from pathlib import Path
+        from app.services.pdf_provenance import digest_bytes, write_manifest
 
+        source = Path(file_path).read_bytes()
+        df = pd.read_csv(BytesIO(source))
+        chunks = []
+        for i in range(0, len(df), 20):
+            rows = df.iloc[i:i + 20]
+            # CSV records may contain embedded newlines. These are data records after the header.
+            locator = {"record_start": i + 1, "record_end": i + len(rows),
+                       "column_start": 1, "column_end": len(rows.columns)}
             chunks.append(ParsedChunk(
-                content=md_table,
-                page_number=i // chunk_size + 1,
-                content_type="table",
+                content=rows.to_markdown(index=False), page_number=i // 20 + 1,
+                content_type="table", metadata={"source_locator": locator},
             ))
+        write_manifest(settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1")
         return chunks

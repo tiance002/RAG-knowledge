@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Non-streamed answer generation only; streaming and Agent retain provider defaults.
     LLM_ANSWER_MAX_TOKENS: int = 4096
 
+    # Optional PEM trust bundle for Embedding/VLM HTTPS endpoints.
+    PROVIDER_CA_BUNDLE: str | None = None
+
     # Embedding 配置
     EMBEDDING_BASE_URL: str = "http://localhost:11434/v1"
     EMBEDDING_API_KEY: str = "ollama"
@@ -83,10 +86,6 @@ class Settings(BaseSettings):
     CONTEXT_WINDOW_SIZE: int = 1            # 前后上下文 chunk 数
     MAX_PARENT_LENGTH: int = 4000           # 父文档最大拼接长度（字符）
 
-    # ==================== 缓存配置 ====================
-    RETRIEVAL_CACHE_TTL: int = 300          # 检索缓存 TTL（秒）
-    RETRIEVAL_CACHE_ENABLED: bool = True    # 是否启用检索缓存
-
     # ==================== 对话配置 ====================
     MAX_CHAT_HISTORY_ROUNDS: int = 20       # 最大保留历史对话轮数
 
@@ -94,6 +93,13 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
+
+
+def provider_tls_context():
+    """HTTPX accepts either its default verified trust store or a custom CA context."""
+    import ssl
+    ca_bundle = get_settings().PROVIDER_CA_BUNDLE
+    return ssl.create_default_context(cafile=ca_bundle) if ca_bundle else True
 
 
 @lru_cache()

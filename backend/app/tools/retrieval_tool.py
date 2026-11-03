@@ -1,17 +1,18 @@
 
 from langchain_core.tools import tool
-from typing import List, Optional, Literal, Dict, Any
+from typing import List, Optional, Literal
 from sqlmodel import Session, select
 from app.core.database import engine
 from app.models import KnowledgeBase, CustomModel
 from app.services.retrieval import get_retrieval_service
-from app.services.rerank import RerankService, expand_context
+from app.services.rerank import RerankService, expand_context, batch_rerank
 from app.services.llm import is_unknown_provider_error
 
 import json
 import uuid
+import re
 from app.services.observability import retrieval_attempt
-from app.services.observability import event, snapshot, enabled, fingerprint
+from app.services.observability import event, snapshot, enabled
 
 # The caller supplies this through task-local context, never through the tool schema.
 
@@ -110,172 +111,102 @@ async def search_knowledge_base(
                 "citations": [], "retrieval_status": retrieval_status
             }, ensure_ascii=False)
             
-        # 3. Execute Reranking (Optional)
+        # Use the shared batch fallback contract for every retrieval consumer.
         if use_rerank and results:
             try:
-                rerank_service = RerankService(session)
-                # Resolve Rerank Model
-                rerank_model = None
-                if rerank_model_id:
-                    rerank_model = session.get(CustomModel, rerank_model_id)
-
-                # Prepare candidates for rerank
-                candidates = [r["content"] for r in results]
-                
-                event("rerank.batch_input", retrieval_attempt_id=attempt_id,
-                      query=_content_ref(query), model_id=rerank_model_id,
-                      candidates=[{"id": r.get("id"), "content_sha256": fingerprint(r.get("content", "")),
-                                   "rank": i + 1} for i, r in enumerate(results)])
-                # Execute rerank
-                reranked = rerank_service.rerank(query, candidates, model=rerank_model)
-
-                event("rerank.batch_output", retrieval_attempt_id=attempt_id,
-                      results=[{"index": item.get("index"), "score": item.get("score"),
-                                "id": results[item["index"]].get("id")
-                                if isinstance(item, dict) and isinstance(item.get("index"), int)
-                                and 0 <= item["index"] < len(results) else None}
-                               for item in reranked if isinstance(item, dict)] if isinstance(reranked, list) else [],
-                      status="RETURNED" if reranked else "UNKNOWN")
-                # The existing service returns [] both for an unavailable reranker
-                # and for an empty response. Preserve real retrieval evidence and
-                # do not report either case as a confirmed absence of documents.
-                if not reranked:
-                    retrieval_status = "UNKNOWN"
-                    reranked = None
-                
-                # Filter and map back to results
-                final_results = []
-                threshold_removed = []
-                for item in reranked or []:
-                    idx = item["index"]
-                    score = item["score"]
-                    if score >= rerank_score_threshold:
-                        res = results[idx]
-                        res["rerank_score"] = score
-                        # Update main score to rerank score for consistency
-                        res["score"] = score 
-                        final_results.append(res)
-                    else:
-                        threshold_removed.append({"id": results[idx].get("id") if isinstance(idx, int) and -len(results) <= idx < len(results) else None, "index": idx, "score": score,
-                                                  "reason_code": "below_threshold"})
-                
-                if reranked is not None:
-                    event("rerank.filtered", retrieval_attempt_id=attempt_id,
-                          threshold=rerank_score_threshold,
-                          input_ids=[r.get("id") for r in results],
-                          output_ids=[r.get("id") for r in final_results], removed=threshold_removed)
-                    event('rag.candidate_transition', operation='threshold_filter', retrieval_attempt_id=attempt_id,
-                          input_ids=[r.get('id') for r in results], output_ids=[r.get('id') for r in final_results],
-                          threshold=rerank_score_threshold, score_kind='rerank', rule_version='tool_rerank_threshold_v1',
-                          removed=[dict(r, candidate_id=r.get('id'), threshold=rerank_score_threshold) for r in threshold_removed])
-                else:
-                    event('rerank.fallback', retrieval_attempt_id=attempt_id, execution_status='UNKNOWN',
-                          fallback_score_origin='original_retrieval_score', reason_code='rerank_fallback',
-                          input_ids=[r.get('id') for r in results], output_ids=[r.get('id') for r in results])
-                # Sort and slice
-                before_sort = [r.get('id') for r in final_results] if enabled() else None
-                final_results.sort(key=lambda x: x["score"], reverse=True)
-                if reranked is not None:
-                    event('rag.candidate_transition', operation='sort', retrieval_attempt_id=attempt_id,
-                          input_ids=before_sort, output_ids=[r.get('id') for r in final_results],
-                          sort_key='rerank_score_desc', removed=[], rule_version='tool_rerank_sort_v1')
-                    event("rerank.selected", retrieval_attempt_id=attempt_id,
-                          top_k=rerank_top_k, input_ids=[r.get("id") for r in final_results],
-                          output_ids=[r.get("id") for r in final_results[:rerank_top_k]],
-                          removed=[{"id": r.get("id"), "reason_code": "outside_topk"}
-                                   for r in final_results[rerank_top_k:]])
-                    event('rag.candidate_transition', operation='topk', retrieval_attempt_id=attempt_id,
-                          input_ids=[r.get('id') for r in final_results], output_ids=[r.get('id') for r in final_results[:rerank_top_k]],
-                          top_k=rerank_top_k, score_kind='rerank', rule_version='tool_rerank_topk_v1',
-                          removed=[{'candidate_id': r.get('id'), 'reason_code': 'outside_topk', 'rank_before': i}
-                                   for i, r in enumerate(final_results, 1) if i > rerank_top_k])
-                    results = final_results[:rerank_top_k]
-                    if not results and retrieval_status == "SUCCESS":
-                        retrieval_status = "LOW_RELEVANCE"
-                
-            except Exception as e:
-                if is_unknown_provider_error(e):
+                service = RerankService(session)
+                model = session.get(CustomModel, rerank_model_id) if rerank_model_id else None
+                before_ids = [r.get('id') for r in results]
+                results = batch_rerank(query=query, candidates=results, rerank_service=service,
+                                       model=model, top_k=rerank_top_k,
+                                       score_threshold=rerank_score_threshold)
+                if any(r.get('rerank_score') is None for r in results):
+                    retrieval_status = 'UNKNOWN'
+                elif not results and retrieval_status == 'SUCCESS':
+                    retrieval_status = 'LOW_RELEVANCE'
+                event('rerank.batch_output', retrieval_attempt_id=attempt_id,
+                      results=[{'id': r.get('id'), 'score': r.get('rerank_score'),
+                                'rerank_status': r.get('rerank_status')} for r in results])
+                event('rerank.filtered', retrieval_attempt_id=attempt_id,
+                      input_ids=before_ids, output_ids=[r.get('id') for r in results],
+                      threshold=rerank_score_threshold)
+                event('rerank.selected', retrieval_attempt_id=attempt_id,
+                      output_ids=[r.get('id') for r in results], top_k=rerank_top_k)
+            except Exception as error:
+                if is_unknown_provider_error(error):
                     raise
-                retrieval_status = "RETRIEVAL_ERROR"
+                retrieval_status = 'RETRIEVAL_ERROR'
+                event('agent.rerank_failed', retrieval_attempt_id=attempt_id, error_type=type(error).__name__)
         else:
-            # If not reranking, just ensure we respect top_k
             results = results[:top_k]
 
         # 4. Context Expansion (Optional)
+        expansion_failed = False
         if context_window > 0 and results:
             try:
                 results = expand_context(
                     top_chunks=results,
                     session=session,
-                    window_size=context_window
+                    window_size=context_window, allowed_kb_ids=target_kb_ids,
+                    include_source_members=True
                 )
             except Exception as e:
-                # Log error but continue with unexpanded results
-                print(f"Context expansion failed: {e}")
+                expansion_failed = True
+                retrieval_status = 'UNKNOWN'
+                event('agent.expansion_failed', error_type=type(e).__name__,
+                      retrieval_attempt_id=attempt_id, expansion_delivery_status='SEED_ONLY')
 
-        # 5. Format Output
-        formatted_results = []
-        citations = []
-        
-        omitted_expanded = False
-        delivery = []
-        for r in results:
-            from pathlib import PurePath
-            import re
-            source = r.get("file_name", "Unknown File")
-            kb_name = r.get("kb_name", "Unknown KB")
-            score = r.get("score", 0.0)
-            expanded = r.get("is_expanded") or (r.get("metadata") or {}).get("is_expanded")
-            content = r.get("original_content") if expanded else r.get("content")
-            if expanded and (not isinstance(content, str) or not content.strip()):
-                delivery.append({"id": r.get("id"), "content_role": "context_sent", "content_field": "original_content", "reason_code": "missing_source", "delivered": False})
-                omitted_expanded = True
-                continue
-            if not r.get("id") or not isinstance(content, str) or not content.strip():
-                delivery.append({"id": r.get("id"), "reason": "missing_id_or_content", "delivered": False})
-                continue
-            content = content.strip()
-            delivery.append({"id": r.get("id"), "content_role": "context_sent", "content_field": "original_content" if expanded else "content",
-                             "expanded": bool(expanded), "expanded_content_sha256": fingerprint(r.get("content", "")),
-                             "content_sha256": fingerprint(content),
-                             "delivered": True, "rank": len(citations) + 1})
+        # Share source-member delivery with ordinary chat; never collapse a
+        # hit into neighbours and then send only its original seed.
+        from pathlib import PurePath
+        from app.services.context_builder import build_chat_context
+        def format_citation(row, text):
+            source = row.get('file_name', 'Unknown File')
             extension = PurePath(source).suffix.lower()
-            page_number = r.get('page_number') if extension == '.pdf' else None
+            metadata = row.get('source_metadata') or {}
             if extension in {'.xlsx', '.xls'}:
-                metadata = r.get('source_metadata') or {}
                 sheet = metadata.get('sheet') or metadata.get('sheet_name')
                 if not sheet:
-                    match = re.match(r'^\s*\[工作表:\s*([^\]\r\n]+)\]', content)
+                    match = re.match(r'^\s*\[工作表:\s*([^\]\r\n]+)\]', text)
                     sheet = match.group(1).strip() if match else None
                 location = f'工作表: {sheet}' if sheet else '未知位置'
             elif extension == '.pdf':
-                location = r.get('location_info', '')
+                page = row.get('page_number')
+                location = f'第 {page} 页' if page is not None else row.get('location_info', '')
             else:
-                location = r.get('heading_text') or '未知位置'
-            i = len(citations) + 1
-            
-            formatted_results.append(
-                f"Document {i} (Source: {source}, KB: {kb_name}, Score: {score:.4f}):\n{content}\n"
-            )
-            
-            citations.append({
-                "fileName": source,
-                "fileId": r.get("file_id"),
-                "page_number": page_number,
-                "content_type": r.get("content_type"),
-                "source_metadata": r.get("source_metadata", {}),
-                "kb_name": kb_name,
-                "score": score,
-                "content": content,
-                "chunk_id": r.get("id"),
-                "location": location
-            })
-            
-        event("context.delivery", retrieval_attempt_id=attempt_id, delivery_target="tool_response",
+                location = row.get('heading_text') or '未知位置'
+            return {'fileName': source, 'fileId': row.get('file_id'),
+                    'kb_id': row.get('kb_id'), 'page_number': row.get('page_number') if extension == '.pdf' else None,
+                    'content_type': row.get('content_type'), 'source_metadata': metadata,
+                    'kb_name': row.get('kb_name', 'Unknown KB'), 'score': row.get('score'),
+                    'rerank_score': row.get('rerank_score'), 'rerank_status': row.get('rerank_status'),
+                    'chunk_id': row.get('id'), 'location': location}
+        citations, summary = build_chat_context(results, format_citation)
+        # Preserve unsupported image presence/locators for the final guard, but
+        # do not send generated captions as verified source text.
+        for row in results:
+            if row.get('content_type') == 'image' and row.get('id'):
+                citations.append({**format_citation(row, ''), 'content': '',
+                                  'evidence_status': 'UNVERIFIED_IMAGE'})
+        if expansion_failed:
+            summary['expansion_delivery_status'] = 'SEED_ONLY'
+        formatted_results = [f"Document {i} (Source: {c['fileName']}, KB: {c['kb_name']}):\n{c['content']}\n"
+                             for i, c in enumerate(citations, 1) if c.get('content_type') != 'image']
+        delivery = []
+        for change in summary['changes']:
+            row = next((r for r in results if r.get('id') == change['candidate_id']), {})
+            original = change['used_original_content']
+            delivery.append({'id': change['candidate_id'], 'content_role': 'context_sent',
+                             'content_field': 'original_content' if original else 'content',
+                             'expanded': bool(row.get('is_expanded')), 'delivered': not change['omitted_from_llm'],
+                             'content_sha256': change['delivered_content_sha256'],
+                             'delivered_evidence_ids': change['delivered_evidence_ids']})
+        event('context.delivery', retrieval_attempt_id=attempt_id, delivery_target='tool_response',
               is_final_model_delivery=False, candidates=delivery)
-        if omitted_expanded and retrieval_status in ("SUCCESS", "NO_RESULTS", "LOW_RELEVANCE"):
-            retrieval_status = "UNKNOWN"
-        return json.dumps({
-            "context": "\n".join(formatted_results),
-            "citations": citations, "retrieval_status": retrieval_status
-        }, ensure_ascii=False)
+        if summary['source_mapping_status'] == 'UNKNOWN' and retrieval_status in ('SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE'):
+            retrieval_status = 'UNKNOWN'
+        return json.dumps({'context': '\n'.join(formatted_results), 'citations': citations,
+                           'retrieval_status': retrieval_status,
+                           'omitted_images': summary['omitted_images'],
+                           'source_mapping_status': summary['source_mapping_status'],
+                           'expansion_delivery_status': summary.get('expansion_delivery_status', 'UNKNOWN')}, ensure_ascii=False)

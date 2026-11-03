@@ -80,7 +80,7 @@ def test_normal_image_only_requires_verification(monkeypatch):
     answer = next(data["content"] for kind, data in events if kind == "answer_chunk")
     assert "图片内容需要进一步核验" in answer and "[图片:" not in answer
     assert next(data["citations"] for kind, data in events if kind == "rag_result") == []
-def test_empty_rerank_preserves_evidence_and_marks_unknown(monkeypatch):
+def test_empty_scored_rerank_marks_low_relevance(monkeypatch):
     from unittest.mock import AsyncMock
     from app.services import chat
     service = chat.ChatService.__new__(chat.ChatService)
@@ -93,8 +93,8 @@ def test_empty_rerank_preserves_evidence_and_marks_unknown(monkeypatch):
         search_mode='fulltext', vector_weight=0.7, bm25_weight=0.3,
         rerank_enabled=True, rerank_score_threshold=0, rerank_model_id=None,
         rerank_top_k=3, context_window=0))
-    assert results == [candidate]
-    assert metrics['retrieval_status'] == 'UNKNOWN'
+    assert results == []
+    assert metrics['retrieval_status'] == 'LOW_RELEVANCE'
 
 
 def test_normal_no_kb_uploaded_document_request_is_guarded(monkeypatch):

@@ -117,7 +117,11 @@ const ChunkPreview: React.FC = () => {
   // 确认入库 / 提交解析
   const handleConfirm = async () => {
     if (!fileId) return;
-    
+    if (!isPreviewMode && Object.keys(editingChunks).length > 0) {
+      message.warning('请先保存所有修改');
+      return;
+    }
+
     // 如果是预览模式，提交当前 Chunks 入库
     if (isPreviewMode) {
          try {
@@ -130,7 +134,8 @@ const ChunkPreview: React.FC = () => {
               }
               
               return {
-                  content: c.content,
+                  id: c.id,
+                  content: editingChunks[c.id] ?? c.content,
                   page_number: c.pageNumber,
                   image_path: imagePath,
                   content_type: c.contentType,
@@ -149,12 +154,6 @@ const ChunkPreview: React.FC = () => {
     }
 
     // 正常模式
-    // 检查是否有未保存的编辑
-    if (Object.keys(editingChunks).length > 0) {
-      message.warning('请先保存所有修改');
-      return;
-    }
-
     try {
         // 正常模式：触发向量化（如果需要）
         await vectorizeFile(fileId);
@@ -224,7 +223,8 @@ const ChunkPreview: React.FC = () => {
           message.success({ content: '解析完成', key: 'reparsing' });
           setReconfigVisible(false);
       } catch (error) {
-          message.error({ content: '解析失败', key: 'reparsing' });
+          const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+          message.error({ content: typeof detail === 'string' ? detail : '解析失败', key: 'reparsing' });
       } finally {
           setReparsing(false);
       }

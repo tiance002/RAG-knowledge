@@ -1,4 +1,4 @@
-from app.services.observability import native_span, observe, event as trace_event, candidates as observe_candidates, snapshot, enabled, fingerprint
+from app.services.observability import native_span, observe, event as trace_event, candidates as observe_candidates
 """
 对话服务 (Agent 实现)
 
@@ -6,24 +6,19 @@ from app.services.observability import native_span, observe, event as trace_even
 """
 
 from typing import List, Dict, Any, AsyncGenerator, Tuple
-from app.schemas import Message, RecallResult
+from app.schemas import Message
 from app.services.llm import LLMService, is_unknown_provider_error, should_abort_provider_error, provider_error_payload
-from app.services.embedding import EmbeddingService
-from app.services.vector_store import VectorStoreService
+
 from app.services.rerank import RerankService, batch_rerank, expand_context
 from app.services.retrieval import get_retrieval_service
-from app.services.agent_workflow import AgentWorkflow
-from langchain_core.messages import HumanMessage, AIMessage
+
 from sqlmodel import Session, select
 from app.core.database import engine
 from app.models import KnowledgeBase, CustomModel, FileDocument, FileStatus, DocumentChunk, ChunkIndex
 
 
 import os
-import base64
 import time
-import json
-import re
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -54,46 +49,13 @@ def _scope_preflight(kb_ids: List[str]):
         # An unavailable or inconsistent database is not proof of emptiness.
         return None
 
-# 图片处理策略：caption = 先用 VLM 转文字再参与回答；off = 完全不使用图片
-IMAGE_MODE = os.environ.get("AMRAG_IMAGE_MODE", "caption").lower()
-# 单次回答最多消费几张图片，防止图表题把整页图都塞进来导致超长与高延迟
-MAX_IMAGES = int(os.environ.get("AMRAG_MAX_IMAGES", "4"))
-# 图片描述缓存目录，避免同一张图在多题、多次实验中重复调用 VLM（省时省钱）
-_CAPTION_DIR = os.path.join(settings.IMAGE_DIR, "_captions")
-
-
-async def _load_or_caption(vlm, image_key: str, full_path: str) -> str:
-    """优先读磁盘缓存，未命中时调用 VLM 生成描述并落盘。"""
-    import hashlib
-
-    digest = hashlib.md5(image_key.encode("utf-8")).hexdigest()
-    cache_path = os.path.join(_CAPTION_DIR, f"{digest}.txt")
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, "r", encoding="utf-8") as fh:
-                cached = fh.read().strip()
-            if cached:
-                return cached
-        except OSError:
-            pass
-    text = await vlm.describe_image(full_path)
-    if text and text != "图片解析失败":
-        os.makedirs(_CAPTION_DIR, exist_ok=True)
-        with open(cache_path, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        return text.strip()
-    return ""
-
 
 class ChatService:
     """对话服务"""
 
     def __init__(self):
         self.llm_service = LLMService()
-        self.embedding_service = EmbeddingService()
-        self.vector_service = VectorStoreService()
         self.retrieval_service = get_retrieval_service()
-        self.agent_workflow = AgentWorkflow()
 
     async def _retrieve_with_new_service(
         self,
@@ -150,133 +112,28 @@ class ChatService:
                 score_threshold=rerank_score_threshold
             )
             metrics["rerank_count"] = len(results)
-            if not results:
-                # Empty can mean either unavailable reranking or filtered
-                # candidates. Keep the evidence and report uncertainty.
-                results = original_results
-                metrics["retrieval_status"] = "UNKNOWN"
-                trace_event('rerank.fallback', execution_status='UNKNOWN', reason_code='rerank_fallback',
-                            fallback_score_origin='original_retrieval_score', input_ids=[],
-                            output_ids=[r.get('id', r.get('chunk_id')) for r in results])
+            if any(r.get('rerank_status') == 'UNKNOWN' for r in results):
+                metrics['retrieval_status'] = 'UNKNOWN'
+            elif not results:
+                # A valid scored response may legitimately filter every hit.
+                metrics['retrieval_status'] = 'LOW_RELEVANCE'
 
         # 3. 上下文扩展
         if results and context_window > 0:
-            results = expand_context(
-                top_chunks=results,
-                session=session,
-                window_size=context_window,
-                include_source_members=True,
-            )
-            metrics["expanded"] = True
+            try:
+                results = expand_context(
+                    top_chunks=results, session=session, window_size=context_window,
+                    include_source_members=True, allowed_kb_ids=kb_ids,
+                )
+                metrics["expanded"] = True
+            except Exception as exc:
+                # Retrieval already resolved and authorized these seed rows.
+                trace_event('retrieval.expansion_failed', error_type=type(exc).__name__)
+                metrics['expansion_delivery_status'] = 'SEED_ONLY'
+                if metrics.get('retrieval_status') != 'RETRIEVAL_ERROR':
+                    metrics['retrieval_status'] = 'UNKNOWN'
 
         return results, metrics
-
-    async def _chat_stream_agent(
-        self,
-        messages: List[Message],
-        kb_ids: List[str],
-        top_k: int,
-        score_threshold: float,
-        model_id: str,
-        rerank_enabled: bool,
-        rerank_score_threshold: float,
-        rerank_model_id: str,
-        search_mode: str = "hybrid",
-        vector_weight: float = 0.7,
-        bm25_weight: float = 0.3,
-        rerank_top_k: int = 20,
-        context_window: int = 1,
-    ) -> AsyncGenerator[Tuple[str, Dict[str, Any]], None]:
-        """
-        Agent 模式流式对话 (LangGraph 实现)
-        """
-        # 1. 构造初始状态
-        langchain_messages = []
-        for msg in messages:
-             if msg.role.value == "user":
-                 langchain_messages.append(HumanMessage(content=msg.content))
-             elif msg.role.value == "assistant":
-                 langchain_messages.append(AIMessage(content=msg.content))
-        
-        search_params = {
-            "top_k": top_k,
-            "score_threshold": score_threshold,
-            "search_mode": search_mode,
-            "rerank_enabled": rerank_enabled,
-            "rerank_score_threshold": rerank_score_threshold,
-            "rerank_model_id": rerank_model_id,
-            "rerank_top_k": rerank_top_k,
-            "vector_weight": vector_weight,
-            "bm25_weight": bm25_weight,
-            "context_window": context_window
-        }
-
-        # 确保初始状态包含必要字段
-        last_user_content = langchain_messages[-1].content if langchain_messages else ""
-
-        initial_state = {
-            "messages": langchain_messages,
-            "kb_ids": kb_ids,
-            "search_params": search_params,
-            "retry_count": 0,
-            "citations": [],
-            "agent_steps": [],
-            "original_query": last_user_content,
-            "intent": "",
-            "current_plan": "",
-            "rag_context": "",
-            "retrieved_docs": [],
-            "execution_history": [],
-            "last_score": 0.0,
-            "final_system_prompt": "",
-            "model_config": model_config
-        }
-
-        print(f"DEBUG_CHAT: Starting LangGraph Agent with params: {search_params}")
-
-        try:
-            async for event in self.agent_workflow.app.astream_events(initial_state, version="v1"):
-                kind = event["event"]
-                name = event["name"]
-                data = event["data"]
-                
-                # 1. 处理流式 Token (Answer Chunk)
-                if kind == "on_chat_model_stream":
-                    # 过滤掉 intent_analysis 和 grading 的输出
-                    node_name = event.get("metadata", {}).get("langgraph_node")
-                    if node_name in ["agent", "generate_chat"]:
-                         chunk = data["chunk"]
-                         if chunk.content:
-                             yield ("answer_chunk", {"content": chunk.content})
-
-                # 2. 处理节点状态更新 (Steps & Citations)
-                elif kind == "on_chain_end":
-                    node_name = event.get("metadata", {}).get("langgraph_node")
-                    if node_name in ["intent_analysis", "agent", "process_tool_output", "grading", "generate_chat"]:
-                        outputs = data["output"]
-                        if isinstance(outputs, dict):
-                            # 发送步骤
-                            if "agent_steps" in outputs:
-                                for step in outputs["agent_steps"]:
-                                     yield ("agent_thought", step)
-                            
-                            # 发送引用
-                            if "citations" in outputs:
-                                 observe_candidates("qa.citations", outputs["citations"])
-                                 yield ("rag_result", {"citations": outputs["citations"]})
-                
-                # 3. 处理工具开始 (Action)
-                elif kind == "on_tool_start":
-                    if name == "search_knowledge_base":
-                        yield ("agent_thought", {
-                            "step": "action", 
-                            "content": f"调用检索工具..." 
-                        })
-
-            yield ("done", {"usage": {}})
-            
-        except Exception as e:
-            yield ("error", provider_error_payload(e, stage="agent_workflow"))
 
     async def _chat_stream_normal(
         self,
@@ -477,6 +334,8 @@ class ChatService:
             # Agent has a different builder and retains its existing behavior.
             citations, context_summary = build_chat_context(final_results, format_citation,
                 strategy=os.getenv('RAG_CHAT_CONTEXT_STRATEGY', 'EXPANDED_CONTENT'))
+            if metrics.get('expansion_delivery_status') == 'SEED_ONLY':
+                context_summary['expansion_delivery_status'] = 'SEED_ONLY'
             omitted_images = context_summary['omitted_images']
             omitted_expanded = context_summary['omitted_expanded']
             trace_event('context.build.summary', **context_summary)
@@ -489,7 +348,10 @@ class ChatService:
 
         yield ("rag_result", {
             "citations": citations,
-            "original_citations": []
+            "original_citations": [],
+            "source_mapping_status": context_summary['source_mapping_status'],
+            "expansion_delivery_status": context_summary['expansion_delivery_status'],
+            "validation_status": "NOT_RUN"
         })
 
         status = metrics.get("retrieval_status", "UNKNOWN")
@@ -596,7 +458,7 @@ class ChatService:
                             semantic_relevance='UNKNOWN', answer_completeness='UNKNOWN')
                 disclosure = '\n\n另有图片资料，其内容需要进一步核验。' if omitted_images else ''
                 yield ('answer_chunk', {'content': candidate + disclosure})
-                yield ('done', {'usage': usage or {}, 'retrieval_status': status, 'answer_mode': 'GROUNDED_GENERATION', 'generation_status': generation_status})
+                yield ('done', {'usage': usage or {}, 'retrieval_status': status, 'answer_mode': 'GROUNDED_GENERATION', 'generation_status': generation_status, 'validation_status': 'NOT_RUN', 'source_mapping_status': context_summary['source_mapping_status'], 'expansion_delivery_status': context_summary['expansion_delivery_status']})
                 return
         if citations:
             if status in {"RETRIEVAL_ERROR", "UNKNOWN"}:
@@ -633,7 +495,7 @@ class ChatService:
         mode = 'EXTRACTIVE_FALLBACK' if citations else ('RETRIEVAL_ERROR' if status == 'RETRIEVAL_ERROR' else 'UNKNOWN' if status == 'UNKNOWN' else 'INSUFFICIENT_EVIDENCE')
         trace_event('qa.answer', answer_mode=mode, retrieval_status=status, generation_status=generation_status)
         yield ("answer_chunk", {"content": answer})
-        yield ("done", {"usage": generation_usage or {}, "retrieval_status": status, 'answer_mode': mode, 'generation_status': generation_status})
+        yield ("done", {"usage": generation_usage or {}, "retrieval_status": status, 'answer_mode': mode, 'generation_status': generation_status, 'validation_status': 'NOT_RUN', 'source_mapping_status': context_summary['source_mapping_status'], 'expansion_delivery_status': context_summary['expansion_delivery_status']})
 
     async def _chat_stream_langgraph(
         self,
@@ -714,6 +576,9 @@ class ChatService:
         has_streamed = False
         last_retrieval_status = None
         last_answer_mode = None
+        final_metadata = {'validation_status': 'NOT_RUN', 'grading_status': 'NOT_RUN',
+                          'source_mapping_status': 'UNKNOWN', 'expansion_delivery_status': 'UNKNOWN'}
+        model_usage_records = []
         
         try:
             async for event in workflow.app.astream_events(initial_state, version="v1"):
@@ -742,9 +607,14 @@ class ChatService:
                     node_name = event.get("metadata", {}).get("langgraph_node")
                     
                     # 监听所有关键节点的输出
-                    if node_name in ["intent_analysis", "agent", "process_tool_output", "generate_chat"]:
+                    if node_name in ["intent_analysis", "agent", "tools", "grading", "process_tool_output", "generate_chat"]:
                         output = data.get("output")
                         if output and isinstance(output, dict):
+                            for key in ('validation_status', 'grading_status', 'grading_scope',
+                                        'source_mapping_status', 'expansion_delivery_status'):
+                                if key in output:
+                                    final_metadata[key] = output[key]
+                            model_usage_records.extend(output.get('model_usage_records', []))
                             if node_name == 'agent' and output.get('answer_mode'):
                                 last_answer_mode = output['answer_mode']
                             if node_name == "process_tool_output" and output.get("retrieval_status"):
@@ -779,7 +649,8 @@ class ChatService:
                                              has_streamed = True # 避免重复
                             
                             # 处理 citations (只有变化时才发送)
-                            citations = output.get("citations")
+                            citations = (output.get('source_registry') if node_name == 'tools' else
+                                         output.get('citations') if node_name == 'agent' else None)
                             if citations and citations != last_citations:
                                 yield ("rag_result", {
                                     "citations": citations,
@@ -795,7 +666,15 @@ class ChatService:
             yield ("error", provider_error_payload(e, stage="agent_workflow"))
             return
             
-        yield ("done", {"usage": {}, "retrieval_status": last_retrieval_status, 'answer_mode': last_answer_mode})
+        usage = {}
+        if model_usage_records and all(isinstance(record, dict) for record in model_usage_records):
+            usage = {key: sum(record[key] for record in model_usage_records)
+                     for key in ('input', 'output', 'total')
+                     if all(type(record.get(key)) is int for record in model_usage_records)}
+        yield ("done", {"usage": usage, 'usage_status': 'OBSERVED' if len(usage) == 3 else 'UNKNOWN',
+                        'usage_scope': 'AGENT_NODE_CALLS',
+                        "retrieval_status": last_retrieval_status, 'answer_mode': last_answer_mode,
+                        **final_metadata})
 
     @observe("qa.request")
     async def chat_stream(

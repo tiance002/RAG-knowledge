@@ -23,7 +23,10 @@ def test_request_scope_settings_and_safe_telemetry(monkeypatch):
     asyncio.run(workflow.run_tools(state, {}))
     assert invoke.await_args.args[0] == {'query':'sensitive query', 'kb_ids':['allowed'], 'search_mode':'fulltext', 'top_k':9, 'score_threshold':0.22, 'vector_weight':0.4, 'bm25_weight':0.6, 'use_rerank':True, 'rerank_top_k':4, 'rerank_score_threshold':0.25, 'rerank_model_id':'private-model', 'context_window':2}
     data = next(data for name, data in events if name == 'agent.actual_query')
-    assert data['requested_parameters'] == data['actual_parameters']
+    assert data['requested_parameters']['score_threshold'] == 0.9
+    assert data['actual_parameters']['score_threshold'] == 0.22
+    assert data['requested_parameters']['use_rerank'] is False
+    assert data['actual_parameters']['use_rerank'] is True
     assert data['query'] == {'sha256': 'query-hash'}
     assert len(data['kb_scope_sha256']) == 64
     assert all(secret not in str(data) for secret in ('sensitive query', 'allowed', 'private-model'))

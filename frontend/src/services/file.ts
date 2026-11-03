@@ -7,7 +7,6 @@ import type {
   FileInfo,
   FileUploadResponse,
   ChunkInfo,
-  ChunkListResponse,
   UpdateChunkRequest,
   ApiResponse,
 } from '@/types';
@@ -50,8 +49,27 @@ export const deleteFile = (fileId: string): Promise<ApiResponse<void>> => {
 };
 
 /** 获取文件的 Chunks */
-export const getFileChunks = (fileId: string): Promise<ApiResponse<ChunkListResponse>> => {
-  return request.get(`/files/${fileId}/chunks`);
+export const getFileChunks = async (fileId: string): Promise<ApiResponse<ChunkInfo[]>> => {
+  const response = await request.get<never, ApiResponse<Record<string, any>[]>>(`/files/${fileId}/chunks`);
+  return {
+    ...response,
+    data: (response.data || []).map((c) => ({
+      ...c,
+      id: c.id,
+      content: c.content,
+      fileId: c.fileId ?? c.file_id,
+      fileName: c.fileName ?? c.file_name ?? '',
+      pageNumber: c.pageNumber ?? c.page_number,
+      contentType: c.contentType ?? c.content_type,
+      imageUrl: c.imageUrl ?? (c.image_path ? `/static/images/${c.image_path}` : undefined),
+      vlmDescription: c.vlmDescription ?? c.vlm_description,
+      tokenCount: c.tokenCount ?? c.token_count,
+      parentId: c.parentId ?? c.parent_id,
+      headingLevel: c.headingLevel ?? c.heading_level,
+      headingText: c.headingText ?? c.heading_text,
+      chunkType: c.chunkType ?? c.chunk_type,
+    })),
+  };
 };
 
 /** 更新 Chunk 内容 */

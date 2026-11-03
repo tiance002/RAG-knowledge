@@ -225,11 +225,9 @@ async def parse_file_manually(
             detail={"code": 40401, "message": "文件不存在"},
         )
 
-    # 打印接收到的配置
-    print(f"📥 [API] Parse Request: file_id={file_id}, config={config}", flush=True)
 
     # 提取 config 中的参数
-    # config is a dict because of Body(default=None) type hint Optional[dict]
+    config = config or {}
     chunk_mode = config.get('chunk_mode')
     chunk_size = config.get('chunk_size')
     chunk_overlap = config.get('chunk_overlap')
@@ -238,11 +236,12 @@ async def parse_file_manually(
     embedding_model = config.get('embedding_model')
     vector_model = config.get('vector_model')
 
-    # 更新文件状态为解析中，确保前端轮询可以检测到变化
-    file_doc.status = FileStatus.PARSING
-    file_doc.progress = 0
-    session.add(file_doc)
-    session.commit()
+    if not auto_vectorize:
+        from app.services.vector_store import VectorStoreService
+        collection = VectorStoreService()._existing_collection(file_doc.kb_id)
+        if collection is not None and collection.get(where={"file_id": file_id}, limit=1)["ids"]:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="文件已有有效向量，暂不支持保留索引的手动重解析；请选择自动入库")
 
     # 触发后台任务，传递参数
     background_tasks.add_task(
@@ -284,9 +283,29 @@ async def submit_file_chunks(
             detail={"code": 40003, "message": "分块数据为空"},
         )
 
+    # Existing IDs are resolved only within this file; the client may edit content
+    # but cannot substitute another file's structure or provenance.
+    existing_ids = [item.get("id") for item in chunks if isinstance(item, dict) and item.get("id")]
+    originals = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id, DocumentChunk.id.in_(existing_ids))).all() if existing_ids else []
+    by_id = {chunk.id: chunk for chunk in originals}
+    normalized = []
+    for item in chunks:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="无效的分块数据")
+        chunk_id = item.get("id")
+        if chunk_id:
+            original = by_id.get(chunk_id)
+            if original is None:
+                raise HTTPException(status_code=400, detail="分块不属于当前文件或已失效")
+            item = {**item, "page_number": original.page_number, "content_type": original.content_type.value,
+                    "image_path": original.image_path, "parent_id": original.parent_id,
+                    "heading_level": original.heading_level, "heading_text": original.heading_text,
+                    "chunk_type": original.chunk_type, "token_count": original.token_count}
+        normalized.append(item)
+
     # 触发后台任务：process_submitted_chunks
     from app.tasks.parse_tasks import process_submitted_chunks
-    background_tasks.add_task(track_background_task("index")(process_submitted_chunks), file_id, chunks, vector_model=vector_model)
+    background_tasks.add_task(track_background_task("index")(process_submitted_chunks), file_id, normalized, vector_model=vector_model)
 
     return ApiResponse(message="已提交分块，开始后台入库")
 
@@ -323,6 +342,11 @@ async def vectorize_file_manually(
             "content_type": c.content_type.value,
             "image_path": c.image_path,
             "vlm_description": c.vlm_description if hasattr(c, "vlm_description") else None,
+            "parent_id": c.parent_id,
+            "heading_level": c.heading_level,
+            "heading_text": c.heading_text,
+            "chunk_type": c.chunk_type,
+            "token_count": c.token_count,
         }
         for c in chunks
     ]
@@ -397,26 +421,27 @@ async def delete_file(
             detail={"code": 40401, "message": "文件不存在"},
         )
 
-    # 删除物理文件
-    if os.path.exists(file_doc.local_path):
-        os.remove(file_doc.local_path)
-
-    # 从向量库删除相关数据
-    try:
-        from app.services.vector_store import VectorStoreService
-        vector_service = VectorStoreService()
-        vector_service.delete_by_file_id(file_doc.kb_id, file_id)
-    except Exception:
-        pass
+    # Keep the source and its SQL records if vector cleanup cannot run.
+    source_path = file_doc.local_path
+    from app.services.vector_store import VectorStoreService
+    VectorStoreService().delete_by_file_id(file_doc.kb_id, file_id)
 
     # 删除数据库记录
     # 级联删除 chunks
     from app.models import DocumentChunk
     chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).all()
+    from app.services.bm25 import get_bm25_index
+    bm25_index = get_bm25_index()
     for chunk in chunks:
+        bm25_index.delete_chunk_index(session, chunk.id, file_doc.kb_id)
         session.delete(chunk)
-        
+
+    kb = session.get(KnowledgeBase, file_doc.kb_id)
     session.delete(file_doc)
+    session.flush()
+    if kb:
+        kb.chunk_count = session.exec(select(func.count(DocumentChunk.id)).join(FileDocument).where(FileDocument.kb_id == kb.id)).one()
     session.commit()
-    
+    if os.path.exists(source_path):
+        os.remove(source_path)
     return ApiResponse(message="删除成功")

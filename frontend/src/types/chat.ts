@@ -16,6 +16,7 @@ export interface ChatMessage {
   timestamp: string;
   isStreaming?: boolean;
   error?: string;
+  validationStatus?: string;
 }
 
 /** 引用信息 */
@@ -108,6 +109,7 @@ export interface AnswerChunkData {
 
 /** SSE 完成事件数据 */
 export interface DoneData {
+  validation_status?: string;
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;

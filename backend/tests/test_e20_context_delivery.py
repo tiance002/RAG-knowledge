@@ -169,6 +169,7 @@ def test_corrupt_member_mapping_fails_closed_instead_of_forging_evidence(db):
     assert 'SIBLING_GOLD' not in str(citations)
     assert [c['chunk_id'] for c in citations]==['seed']
     assert summary['source_mapping_status']=='UNKNOWN'
+    assert summary['expansion_delivery_status']=='SEED_ONLY'
 
 
 def test_incomplete_mapping_never_invents_spreadsheet_locator(db):
@@ -258,6 +259,8 @@ def test_chat_path_sends_actual_expanded_members_to_provider(db, monkeypatch, en
     assert sibling['source_metadata']['page']==8 and sibling['location']=='第 8 页'
     assert len({c['chunk_id'] for c in new_c})==len(new_c)
     assert old[-1][0]=='done' and new[-1][0]=='done'
+    assert new[-1][1]['validation_status']=='NOT_RUN'
+    assert new[-1][1]['expansion_delivery_status']=='DELIVERED'
 
 
 def test_observation_on_off_does_not_change_provider_request_or_sse(db, monkeypatch):

@@ -7,7 +7,7 @@ import httpx
 from typing import Optional
 from app.services.llm import invoke_provider_http_async
 
-from app.core.config import get_settings
+from app.core.config import get_settings, provider_tls_context
 
 settings = get_settings()
 
@@ -39,7 +39,7 @@ class VLMService:
             }.get(ext, "image/png")
 
             # 构建请求
-            async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=120.0, verify=provider_tls_context()) as client:
                 response = await invoke_provider_http_async(lambda: client.post(
                     f"{self.base_url}/chat/completions",
                     headers={
@@ -76,5 +76,5 @@ class VLMService:
                 return result["choices"][0]["message"]["content"]
 
         except Exception as e:
-            print(f"VLM 调用失败: {e}")
+            print(f"VLM 调用失败: {type(e).__name__}")
             return "图片解析失败"

@@ -2,16 +2,17 @@
 import asyncio
 import sys
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 sys.modules.setdefault('chromadb', MagicMock())
 sys.modules.setdefault('chromadb.config', MagicMock())
-from app.services.retrieval import RetrievalService, RetrievalCache
+from app.services.retrieval import RetrievalService
 
 
 def make_service():
     service = RetrievalService.__new__(RetrievalService)
-    service.cache = RetrievalCache(enabled=True)
+    # A legacy-looking object must never be consulted by the current path.
+    service.cache = Mock()
     return service
 
 
@@ -26,14 +27,15 @@ def test_repeated_success_reexecutes_and_preserves_status_and_metrics():
     service._hybrid_search = AsyncMock(return_value=([{'id':'fresh','content':'evidence','score':0.8}],
                                                       {'vector_count': 1, 'bm25_count': 1}, False))
     # Even a legacy cache entry with the same key cannot override current work.
-    service.cache.set('question', ['kb'], 'hybrid', 5, [{'id':'old','content':'stale','score':1.0}])
+    service.cache.get.return_value = [{'id':'old','content':'stale','score':1.0}]
     first, m1 = run(service, None)
     second, m2 = run(service, None)
     assert [r['id'] for r in first] == [r['id'] for r in second] == ['fresh']
     assert m1['retrieval_status'] == m2['retrieval_status'] == 'SUCCESS'
     assert m1['vector_count'] == m2['vector_count'] == 1
     assert service._hybrid_search.await_count == 2
-    assert service.cache.get('question', ['kb'], 'hybrid', 5)[0]['id'] == 'old'
+    service.cache.get.assert_not_called()
+    service.cache.set.assert_not_called()
 
 
 def test_changes_in_scope_parameters_model_and_index_are_not_reused():
@@ -64,7 +66,7 @@ def test_partial_failure_and_unknown_do_not_poison_later_success():
                                                       (rows, {'vector_count':1}, False)])
     _, failed = run(service, None)
     _, recovered = run(service, None)
-    assert failed['retrieval_status'] == 'RETRIEVAL_ERROR'
+    assert failed['retrieval_status'] == 'UNKNOWN'
     assert recovered['retrieval_status'] == 'SUCCESS'
     assert service._hybrid_search.await_count == 2
     service._hybrid_search = AsyncMock(side_effect=TimeoutError('provider outcome unknown'))

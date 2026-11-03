@@ -1,3 +1,4 @@
+import math
 from app.services.observability import event, candidates as observe_candidates, observe, model_response, enabled, snapshot
 """
 Rerank 服务模块
@@ -321,7 +322,7 @@ def batch_rerank(
     candidates_with_tokens = []
     for c in candidates:
         tokens = estimate_tokens(c.get("content", ""))
-        candidates_with_tokens.append({**c, "_tokens": tokens})
+        candidates_with_tokens.append({**c, "_tokens": tokens, "_original_content": c.get("content", "")})
 
     # 2. 分批
     batches = []
@@ -371,20 +372,41 @@ def batch_rerank(
         try:
             rerank_results = rerank_service.rerank(query, batch_texts, model=model)
             mapped = []
+            mapped_indices = set()
 
             if not rerank_results:
                 event("rerank.empty", status="UNKNOWN", batch_index=batch_idx, reason="empty_response_no_score_fallback")
-            for rr in rerank_results:
+                for candidate in batch:
+                    result = {**candidate, 'content': candidate['_original_content'],
+                              'rerank_score': None, 'rerank_status': 'UNKNOWN'}
+                    result.pop('_tokens', None)
+                    result.pop('_original_content', None)
+                    all_results.append(result)
+            for rr in rerank_results or []:
                 idx = rr.get("index")
-                if idx is not None and 0 <= idx < len(batch):
+                if isinstance(idx, int) and 0 <= idx < len(batch) and idx not in mapped_indices:
+                    score = rr.get('score')
+                    if not isinstance(score, (int, float)) or not math.isfinite(score):
+                        continue
+                    mapped_indices.add(idx)
                     result = {**batch[idx]}
                     result["rerank_score"] = rr.get("score", 0)
+                    result['content'] = result.pop('_original_content')
+                    result['rerank_status'] = 'SCORED'
                     # 移除临时字段
                     result.pop("_tokens", None)
                     all_results.append(result)
                     if enabled():
                         mapped.append({"response_index": idx, "candidate_id": result.get("id", result.get("chunk_id")), "rerank_score": result["rerank_score"]})
 
+            if rerank_results:
+                for idx, candidate in enumerate(batch):
+                    if idx not in mapped_indices:
+                        result = {**candidate, 'content': candidate['_original_content'],
+                                  'rerank_score': None, 'rerank_status': 'UNKNOWN'}
+                        result.pop('_tokens', None)
+                        result.pop('_original_content', None)
+                        all_results.append(result)
             if enabled():
                 output_ids = [item["candidate_id"] for item in mapped]
                 event("rag.candidate_transition", operation="batch_rerank", input_ids=ids, output_ids=output_ids, input_candidate_ids=ids, output_candidate_ids=output_ids, batch_index=batch_idx, response_mapping=mapped, execution_status="RETURNED" if rerank_results else "UNKNOWN", removed=[], rule_version="batch_rerank_output_v1")
@@ -393,19 +415,21 @@ def batch_rerank(
         except Exception as e:
             if is_unknown_provider_error(e):
                 raise
-            print(f"⚠️ [Rerank] 批次 {batch_idx + 1} 失败: {e}")
-            event('rerank.fallback', status='FALLBACK', batch_index=batch_idx, reason='original_score_retained', fallback_score_origin='original_score', input_ids=[c.get('id', c.get('chunk_id')) for c in batch], error_type=type(e).__name__)
+            print(f"⚠️ [Rerank] 批次 {batch_idx + 1} 失败: {type(e).__name__}")
+            event('rerank.fallback', status='FALLBACK', batch_index=batch_idx, reason='rerank_score_unknown', fallback_score_origin='none', input_ids=[c.get('id', c.get('chunk_id')) for c in batch], error_type=type(e).__name__)
             # 批次失败时，保留原始分数
             for c in batch:
                 result = {**c}
-                result["rerank_score"] = c.get("score", 0)
+                result["rerank_score"] = None
+                result["rerank_status"] = 'UNKNOWN'
+                result['content'] = result.pop('_original_content')
                 result.pop("_tokens", None)
                 all_results.append(result)
 
     observe_candidates("rerank.batch_output", all_results)
     # 4. 按 rerank_score 排序
     before_sort = [r.get("id", r.get("chunk_id")) for r in all_results] if enabled() else []
-    all_results.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
+    all_results.sort(key=lambda x: (x.get("rerank_score") is not None, x.get("rerank_score") or 0), reverse=True)
     if enabled():
         after_sort = [r.get("id", r.get("chunk_id")) for r in all_results]
         event("rag.candidate_transition", operation="sort", input_ids=before_sort, output_ids=after_sort, input_candidate_ids=before_sort, output_candidate_ids=after_sort, sort_key="rerank_score_desc", removed=[], rule_version="rerank_sort_v1")
@@ -413,14 +437,14 @@ def batch_rerank(
     # 5. 过滤低于阈值的结果
     filtered_results = [
         r for r in all_results
-        if r.get("rerank_score", 0) >= score_threshold
+        if r.get("rerank_score") is None or r["rerank_score"] >= score_threshold
     ]
 
     observe_candidates("rerank.filtered", filtered_results)
     if enabled():
         before = [r.get("id", r.get("chunk_id")) for r in all_results]
         after = [r.get("id", r.get("chunk_id")) for r in filtered_results]
-        event("rag.candidate_transition", operation="threshold_filter", input_ids=before, output_ids=after, input_candidate_ids=before, output_candidate_ids=after, threshold=score_threshold, score_kind="rerank_score", rule_version="rerank_threshold_gte_v1", removed=[{"candidate_id": r.get("id", r.get("chunk_id")), "reason_code": "below_threshold", "rank_before": i, "threshold": score_threshold} for i, r in enumerate(all_results, 1) if r.get("rerank_score", 0) < score_threshold])
+        event("rag.candidate_transition", operation="threshold_filter", input_ids=before, output_ids=after, input_candidate_ids=before, output_candidate_ids=after, threshold=score_threshold, score_kind="rerank_score", rule_version="rerank_threshold_gte_v1", removed=[{"candidate_id": r.get("id", r.get("chunk_id")), "reason_code": "below_threshold", "rank_before": i, "threshold": score_threshold} for i, r in enumerate(all_results, 1) if r.get("rerank_score") is not None and r["rerank_score"] < score_threshold])
         selected = after[:top_k]
         event("rag.candidate_transition", operation="topk", input_ids=after, output_ids=selected, input_candidate_ids=after, output_candidate_ids=selected, top_k=top_k, score_kind="rerank_score", rule_version="rerank_topk_v1", removed=[{"candidate_id": cid, "reason_code": "outside_topk", "rank_before": i} for i, cid in enumerate(after, 1) if i > len(selected)])
     # 6. 返回 top_k
@@ -435,6 +459,7 @@ def expand_context(
     window_size: int = None,
     max_parent_length: int = None,
     include_source_members: bool = False,
+    allowed_kb_ids=None,
 ) -> List[Dict[str, Any]]:
     """
     扩展上下文窗口
@@ -453,7 +478,7 @@ def expand_context(
         扩展后的结果列表
     """
     from sqlmodel import select
-    from app.models import DocumentChunk
+    from app.models import DocumentChunk, FileDocument
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -472,8 +497,16 @@ def expand_context(
         db_chunk = session.get(DocumentChunk, chunk_id)
         if not db_chunk:
             # 如果数据库中没有，直接使用原始数据
-            expanded.append({**chunk, 'source_mapping_status': 'UNKNOWN'} if include_source_members else chunk)
+            if allowed_kb_ids is None:
+                expanded.append({**chunk, 'source_mapping_status': 'UNKNOWN'} if include_source_members else chunk)
             seen_ids.add(chunk_id)
+            continue
+
+        db_file = session.get(FileDocument, db_chunk.file_id)
+        if (not db_file or (chunk.get('file_id') and chunk['file_id'] != db_chunk.file_id)
+                or (chunk.get('kb_id') and chunk['kb_id'] != db_file.kb_id)
+                or (allowed_kb_ids is not None and db_file.kb_id not in allowed_kb_ids)):
+            event('retrieval.context_rejected', reason='source_scope_mismatch', chunk_id=chunk_id)
             continue
 
         # 2. 父文档拼接
@@ -490,14 +523,14 @@ def expand_context(
             # 获取同一父 chunk 下的所有子 chunk
             siblings = session.exec(
                 select(DocumentChunk)
-                .where(DocumentChunk.parent_id == parent_id)
+                .where(DocumentChunk.parent_id == parent_id, DocumentChunk.file_id == db_chunk.file_id)
                 .order_by(DocumentChunk.original_index)
             ).all()
 
             sibling_ids = [s.id for s in siblings]
             included_sibling_ids = list(sibling_ids)
             member_rows = [(s, 'parent_sibling') for s in siblings]
-            seen_ids.update(sibling_ids)
+
 
             # 拼接内容，注意长度限制
             sibling_contents = [s.content for s in siblings]
@@ -505,38 +538,38 @@ def expand_context(
 
             if len(parent_content) > max_parent_length:
                 parent_clipped = True
-                # 截断，保留当前 chunk 所在的部分
-                # 找到当前 chunk 在兄弟中的位置
-                current_idx = next((i for i, s in enumerate(siblings) if s.id == chunk_id), 0)
-
-                # 保留当前 chunk 前后的内容
-                kept_siblings = []
-                included_sibling_ids = []
-                current_len = 0
-                for i, s in enumerate(siblings):
-                    if current_len + len(s.content) > max_parent_length:
-                        break
-                    if abs(i - current_idx) <= 2:  # 保留附近的
-                        kept_siblings.append(s.content)
-                        included_sibling_ids.append(s.id)
-                        current_len += len(s.content)
-                    elif i < current_idx and current_len < max_parent_length // 2:
-                        kept_siblings.append(s.content)
-                        included_sibling_ids.append(s.id)
-                        current_len += len(s.content)
-
-                parent_content = "\n".join(kept_siblings)
-                member_rows = [(s, 'parent_sibling') for s in siblings if s.id in included_sibling_ids]
+                # Reserve the seed before adding whole siblings. Never label a
+                # partial chunk as a complete source member.
+                current_idx = next((i for i, s in enumerate(siblings) if s.id == chunk_id), None)
+                selected = set()
+                used = 0
+                if current_idx is not None and len(siblings[current_idx].content) <= max_parent_length:
+                    selected.add(current_idx)
+                    used = len(siblings[current_idx].content)
+                    for i in sorted((i for i in range(len(siblings)) if i != current_idx),
+                                    key=lambda i: (abs(i-current_idx), i)):
+                        extra = len(siblings[i].content) + 1
+                        if used + extra <= max_parent_length:
+                            selected.add(i)
+                            used += extra
+                chosen = [s for i, s in enumerate(siblings) if i in selected]
+                included_sibling_ids = [s.id for s in chosen]
+                parent_content = "\n".join(s.content for s in chosen)
+                member_rows = [(s, 'parent_sibling') for s in chosen]
         else:
-            parent_content = db_chunk.content
-            member_rows = [(db_chunk, 'seed')]
+            if len(db_chunk.content) > max_parent_length:
+                parent_clipped = True
+            else:
+                parent_content = db_chunk.content
+                member_rows = [(db_chunk, 'seed')]
+                included_sibling_ids = [chunk_id]
             seen_ids.add(chunk_id)
 
         # 3. 前后上下文窗口
         prev_contents = []
         next_contents = []
 
-        if window_size > 0:
+        if window_size > 0 and (not parent_clipped or chunk_id in included_sibling_ids):
             # 获取前面的 chunks
             prev_chunks = session.exec(
                 select(DocumentChunk)
@@ -559,16 +592,15 @@ def expand_context(
                 .limit(window_size)
             ).all()
 
+            # Parent siblings already appear in parent_content.
+            prev_chunks = [c for c in prev_chunks if c.id not in included_sibling_ids]
+            next_chunks = [c for c in next_chunks if c.id not in included_sibling_ids]
             previous_ids = [str(c.id) for c in reversed(prev_chunks)]
             next_ids = [str(c.id) for c in next_chunks]
             prev_contents = [c.content for c in reversed(prev_chunks)]
             next_contents = [c.content for c in next_chunks]
             member_rows = ([(c, 'previous_neighbor') for c in reversed(prev_chunks)]
                            + member_rows + [(c, 'next_neighbor') for c in next_chunks])
-
-            # 标记这些 chunk 已处理
-            seen_ids.update(c.id for c in prev_chunks)
-            seen_ids.update(c.id for c in next_chunks)
 
         # 4. 组合完整上下文
         all_parts = []
@@ -588,10 +620,11 @@ def expand_context(
         expanded_row = {
             "id": chunk_id,
             "content": full_context,
-            "original_content": chunk.get("content", db_chunk.content),  # 保留原始内容
+            "original_content": (db_chunk.content if not parent_clipped or chunk_id in included_sibling_ids else ""),  # 保留原始内容
             "source_metadata": chunk.get("source_metadata", {}),
             "score": chunk.get("score", 0),
-            "rerank_score": chunk.get("rerank_score", 0),
+            "rerank_score": chunk.get("rerank_score"),
+            "rerank_status": chunk.get("rerank_status"),
             "kb_id": chunk.get("kb_id", ""),
             "kb_name": chunk.get("kb_name", ""),
             "file_id": chunk.get("file_id", db_chunk.file_id),
@@ -614,9 +647,9 @@ def expand_context(
                 'context_group_id': 'group:' + str(chunk_id),
                 'seed_evidence_ids': [chunk_id],
                 'expanded_evidence_ids': list(dict.fromkeys(str(c.id) for c, _ in member_rows if c.id != chunk_id)),
-                'source_members': [source_member(c, chunk, relation) for c, relation in member_rows],
+                'source_members': [source_member(c, chunk, relation, db_file.local_path) for c, relation in member_rows],
                 'original_expanded_hash': content_hash(full_context),
-                'truncation_status': 'CHAR_LIMIT_APPLIED' if parent_clipped else 'NOT_APPLIED',
+                'truncation_status': ('SEED_OMITTED_OVER_LIMIT' if parent_clipped and chunk_id not in included_sibling_ids else 'CHAR_LIMIT_APPLIED' if parent_clipped else 'NOT_APPLIED'),
             }
         expanded.append(expanded_row)
 

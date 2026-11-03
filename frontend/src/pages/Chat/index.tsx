@@ -401,7 +401,7 @@ const Chat: React.FC = () => {
               });
           }
         },
-        onDone: () => {
+        onDone: (data) => {
           if (animationFrameId) {
              cancelAnimationFrame(animationFrameId);
              animationFrameId = 0;
@@ -417,7 +417,8 @@ const Chat: React.FC = () => {
              setter(prev => prev.map(msg => msg.id === assistantMessage.id ? { 
                  ...msg, 
                  content: accumulatedContent,
-                 isStreaming: false 
+                 validationStatus: data.validation_status,
+                 isStreaming: false
              } : msg));
 
              // 清理生成状态
@@ -437,12 +438,12 @@ const Chat: React.FC = () => {
              cancelAnimationFrame(animationFrameId);
              animationFrameId = 0;
           }
-          console.error('Chat Error:', error);
+
           
           const setter = capturedChatMode === 'normal' ? setNormalMessages : setAgentMessages;
           setter(prev => prev.map(msg => msg.id === assistantMessage.id ? { 
              ...msg, 
-             content: `发生错误，请重试: ${error.message || '未知错误'}`,
+             content: accumulatedContent,
              error: error.message,
              isStreaming: false 
           } : msg));
@@ -661,7 +662,8 @@ const Chat: React.FC = () => {
               </div>
             ) : msg.error ? (
               <div className={styles.error}>
-                <span>{msg.content}</span>
+                {msg.content && <MarkdownRenderer content={msg.content} />}
+                <span>{msg.error}</span>
                 <Button
                   type="link"
                   size="small"
@@ -678,6 +680,7 @@ const Chat: React.FC = () => {
 
           {!isUser && (
               <>
+                  {msg.validationStatus === 'NOT_RUN' && <span>回答及引用未经逐项核验</span>}
                   {msg.citations && renderCitations(msg.citations, msg.original_citations?.length ? "参考来源 (Rerank)" : "参考来源")}
                   {msg.original_citations && msg.original_citations.length > 0 && renderCitations(msg.original_citations, "初排结果 (Embedding)")}
               </>
