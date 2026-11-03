@@ -131,6 +131,16 @@ def sanitize(value, key='', *, final_export=False):
         return value
     if key == 'search_mode' and value in ('vector', 'fulltext', 'hybrid'):
         return value
+    preference_enums = {
+        'answer_style': ('concise', 'normal', 'detailed'),
+        'knowledge_level': ('beginner', 'intermediate', 'expert'),
+        'output_preferences': ('step_by_step', 'table', 'code_example', 'principle_first'),
+        'answer_style_origin': ('default', 'explicit', 'current_turn'),
+        'knowledge_level_origin': ('default', 'explicit', 'current_turn'),
+        'output_preferences_origin': ('default', 'explicit', 'current_turn'),
+    }
+    if key in preference_enums and value in preference_enums[key]:
+        return value
     if key == 'answer_mode' and value in ('GROUNDED_GENERATION', 'EXTRACTIVE_FALLBACK', 'INSUFFICIENT_EVIDENCE', 'RETRIEVAL_ERROR', 'UNKNOWN'):
         return value
     if key == 'validation_status' and value in ('VERIFIED', 'UNKNOWN', 'UNSUPPORTED', 'INVALID', 'NOT_RUN'):

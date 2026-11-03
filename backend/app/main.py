@@ -13,6 +13,7 @@ import os
 from app.core.config import get_settings, ensure_directories
 from app.core.database import init_db
 from app.api import api_router
+from app.api.memory import router as memory_router
 from app.services.metrics import HTTPMetricsMiddleware, render_metrics, enabled as metrics_enabled
 
 settings = get_settings()
@@ -61,6 +62,7 @@ app.add_middleware(
 
 # 注册 API 路由
 app.include_router(api_router)
+app.include_router(memory_router)
 
 # 调试：中间件记录请求
 @app.middleware("http")

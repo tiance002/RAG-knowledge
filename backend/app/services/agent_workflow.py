@@ -105,6 +105,7 @@ class AgentState(TypedDict):
     
     # 流程控制
     retry_count: int
+    retrieval_retry_scheduled: bool
     router_escalations_used: int
     retrieval_attempt_id: str
     retrieval_attempt_count: int
@@ -113,6 +114,7 @@ class AgentState(TypedDict):
     
     agent_steps: Annotated[List[dict], operator.add] # Append only
     final_system_prompt: str
+    preference_policy: str
     answer_mode: str
     
     # LLM 配置 (动态注入)
@@ -523,6 +525,14 @@ Output ONLY one word: "chat" or "qa".
         llm = self._get_llm_service(state)
         llm, route, router_config = self._route_post_retrieval_model(
             state, llm, invocation_messages, return_decision=True)
+        # This workflow combines tool selection and final composition in one
+        # model call. Keep preferences out of routing/tool state and constrain
+        # this independent segment to visible final answer composition only.
+        forced_retry = state.get('retrieval_retry_scheduled', False)
+        answer_possible = (bool(state.get('source_registry') or state.get('citations'))
+                           and state.get('retrieval_status') == 'SUCCESS' and not forced_retry)
+        if state.get('preference_policy') and answer_possible:
+            invocation_messages = [system_msg, SystemMessage(content=state['preference_policy'])] + messages
         # Use streaming=False to prevent crashes on local models
         from app.services.grounded_generation import _routed_chat_model, _routed_response_identity, _router_outcome
         model = _routed_chat_model(llm, self.tools)
@@ -902,7 +912,7 @@ Output ONLY one word: "chat" or "qa".
                          'scope': 'CURRENT_TOOL_ROUND_PREFIX', 'max_chars': 2000}
         if quality_fallback or state.get('retrieval_status') in ('UNKNOWN', 'RETRIEVAL_ERROR'):
             event('agent.retry_decision', action='NOT_SCHEDULED', reason_code='QUALITY_OR_RETRIEVAL_UNKNOWN')
-            return {'last_score': None, 'grading_status': 'UNKNOWN',
+            return {'last_score': None, 'grading_status': 'UNKNOWN', 'retrieval_retry_scheduled': False,
                     'grading_scope': grading_scope, 'agent_steps': steps}
         if score < 0.8: # 阈值 0.8
             if retry_count < 3:
@@ -922,6 +932,7 @@ Output ONLY one word: "chat" or "qa".
                 
                 return {
                     "last_score": score, "grading_status": "VALID", "grading_scope": grading_scope,
+                    "retrieval_retry_scheduled": True,
                     "retry_count": new_retry_count,
                     "messages": messages,
                     "agent_steps": steps
@@ -942,6 +953,7 @@ Output ONLY one word: "chat" or "qa".
                 
                 return {
                     "last_score": score, "grading_status": "VALID", "grading_scope": grading_scope,
+                    "retrieval_retry_scheduled": False,
                     "messages": messages,
                     "agent_steps": steps
                 }
@@ -949,7 +961,8 @@ Output ONLY one word: "chat" or "qa".
         event("agent.retry_decision", action="NOT_SCHEDULED", previous_attempt_id=state.get("retrieval_attempt_id"),
               decision="NOT_SCHEDULED", reason_code="SCORE_AT_OR_ABOVE_THRESHOLD", retry_count=retry_count,
               next_action="ANSWER", retrieval_attempt_count=state.get("retrieval_attempt_count", 0))
-        return {"last_score": score, "grading_status": "VALID", "grading_scope": grading_scope, "agent_steps": steps}
+        return {"last_score": score, "grading_status": "VALID", "grading_scope": grading_scope,
+                "retrieval_retry_scheduled": False, "agent_steps": steps}
 
     @observe("agent.generate_chat")
     async def generate_chat(self, state: AgentState, config: RunnableConfig):
@@ -966,6 +979,8 @@ Output ONLY one word: "chat" or "qa".
         # Use streaming=False to ensure compatibility
         model = llm.get_chat_model(streaming=False)
         invocation_messages = [SystemMessage(content=system_prompt)] + messages
+        if state.get('preference_policy'):
+            invocation_messages.insert(1, SystemMessage(content=state['preference_policy']))
         _observe_model_request("agent_chat", invocation_messages, llm.model, provider_model=model)
         response = await invoke_provider_model(model, invocation_messages, config=config, stage="agent_chat", model_name=llm.model)
         _observe_model_response("agent_chat", response, llm.model)

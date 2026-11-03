@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # 数据库与存储。运行时数据默认保存在当前部署目录，不进入 Git。
     DATABASE_URL: str = "sqlite:///./local.db"
     REDIS_URL: str = "redis://localhost:6379/0"
+    MEMORY_REDIS_URL: str | None = None
     CHROMA_DB_DIR: str = "./storage/chroma_db"
     UPLOAD_DIR: str = "./storage/uploads"
     IMAGE_DIR: str = "./storage/images"

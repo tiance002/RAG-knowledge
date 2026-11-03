@@ -144,6 +144,7 @@ Parser -> Chunk -> Index    Intent -> Retrieve -> Observe -> Retry
 - Node.js 18+
 - Ollama 或其他 OpenAI-compatible 模型服务
 - Redis（可选，用于后台解析与向量化任务）
+- [长期回答偏好与 Redis 恢复](docs/user-preference-memory.md)。在“系统设置 → 长期回答偏好”管理，或在聊天中明确说“以后回答都简洁一点”。
 - NVIDIA GPU（可选，仅本地模型推理或本地 Rerank 加速时使用）
 
 ### 1. 克隆项目

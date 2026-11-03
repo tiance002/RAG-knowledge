@@ -148,7 +148,7 @@ def delivered_evidence_records(citations):
     return output
 
 
-async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS"):
+async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS", preference_policy=''):
     """Return content, finish reason and usage; the caller checks completion."""
     evidence = '\n\n'.join(
         f"[{i}] 来源：{c.get('fileName', '未知')} {c.get('location', '')}\n{c['content']}"
@@ -167,6 +167,8 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
     request_messages = [{'role': 'system', 'content': prompt}] + list(messages)
     llm, target, route, router_config = _route_generation(
         llm, model_id, request_messages, citations, retrieval_status=retrieval_status, return_decision=True)
+    if preference_policy:
+        request_messages.insert(1, {'role': 'system', 'content': preference_policy})
     observe_model_history(request_messages)
     identity_status = 'UNKNOWN'
     async def _generate_once(current_llm, target):

@@ -10,6 +10,7 @@ import { getSettings, updateSettings, getModelList, createCustomModel, updateCus
 import { useAppStore } from '@/stores';
 import type { SystemSettings, UpdateSettingsRequest, CustomModel } from '@/types';
 import styles from './Settings.module.css';
+import PreferenceCard from './PreferenceCard';
 
 const Settings: React.FC = () => {
   const { models, setModels } = useAppStore();
@@ -294,6 +295,7 @@ const Settings: React.FC = () => {
         subtitle="配置系统参数和模型选项"
       />
 
+      <PreferenceCard />
       <div className={styles.content}>
         {/* 系统参数设置 */}
         <div className={styles.mainPanel} style={{ marginBottom: 24 }}>

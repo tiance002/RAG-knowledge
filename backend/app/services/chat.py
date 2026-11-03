@@ -151,6 +151,7 @@ class ChatService:
         rerank_top_k: int = 20,
         context_window: int = 1,
         use_rewrite: bool = False,
+        preference_policy: str = '',
     ) -> AsyncGenerator[Tuple[str, Dict[str, Any]], None]:
         """
         普通模式：
@@ -198,6 +199,8 @@ class ChatService:
             })
 
             chat_messages = [{"role": msg.role.value, "content": msg.content} for msg in messages]
+            if preference_policy:
+                chat_messages.insert(0, {'role': 'system', 'content': preference_policy})
             try:
                 async for chunk in current_llm_service.generate_stream(
                     messages=chat_messages,
@@ -433,6 +436,8 @@ class ChatService:
             try:
                 chat_messages = [{"role": msg.role.value, "content": msg.content} for msg in messages]
                 generation_options = {'model_id': actual_model_id}
+                if preference_policy:
+                    generation_options['preference_policy'] = preference_policy
                 if spreadsheet_context is not None:
                     generation_options['spreadsheet_context'] = spreadsheet_context
                 if pdf_context is not None:
@@ -559,6 +564,7 @@ class ChatService:
             "kb_ids": kb_ids,
             "search_params": search_params,
             "retry_count": 0,
+            "retrieval_retry_scheduled": False,
             "agent_steps": [],
             "intent": "qa", # Default, will be analyzed
             "original_query": langchain_messages[-1].content if langchain_messages else "",
@@ -568,6 +574,7 @@ class ChatService:
             "last_score": 0.0,
             "rag_context": "",
             "final_system_prompt": "",
+            "preference_policy": kwargs.get('preference_policy', ''),
             "model_config": model_config
         }
         
@@ -694,6 +701,7 @@ class ChatService:
         bm25_weight: float = 0.3,
         rerank_top_k: int = 20,
         context_window: int = 1,
+        memory_scope=None,
     ) -> AsyncGenerator[Tuple[str, Dict[str, Any]], None]:
         """
         流式对话
@@ -724,6 +732,48 @@ class ChatService:
         import sys
         print(f"DEBUG_CHAT: Start chat_stream. Mode: {mode}, SearchMode: {search_mode}, TopK: {top_k}", flush=True)
         sys.stdout.flush()
+
+        from app.services.memory import get_memory_service, MemoryUnavailable
+        from app.services.memory_commands import parse_preference_commands, apply_preference_commands, resolve_display_preferences, normalize_preference_history
+        memory_service = get_memory_service()
+        # Only an active user turn may issue writes. Never replay a historical
+        # command when a client sends history ending with an assistant reply.
+        latest_user = len(messages) - 1 if messages and messages[-1].role.value == 'user' else None
+        commands, question = parse_preference_commands(messages[latest_user].content) if latest_user is not None else ([], '')
+        preference_snapshot = None
+        if commands:
+            for command in commands:
+                try:
+                    preference_snapshot, acknowledgements = await apply_preference_commands(memory_service, [command], scope=memory_scope)
+                    for acknowledgement in acknowledgements:
+                        yield ('answer_chunk', {'content': acknowledgement + '\n\n'})
+                except MemoryUnavailable as exc:
+                    # Earlier completed commands stay acknowledged truthfully.
+                    trace_event('memory.write_failed', preferences_read=False, redis_fallback=True)
+                    preference_snapshot = None
+                    failure_message = ('偏好变更已提交，但未能确认当前值，请稍后查看设置。'
+                                       if getattr(exc, 'write_acknowledged', False) else
+                                       '长期偏好保存失败，操作结果未确认；记忆服务暂不可用，请稍后查看设置或重试。')
+                    if not question:
+                        yield ('error', {'code': 'MEMORY_UNAVAILABLE', 'message': failure_message, 'stage': 'memory_write', 'retryable': True})
+                        return
+                    yield ('answer_chunk', {'content': failure_message + '\n\n'})
+                    break
+            if not question:
+                if preference_snapshot is not None:
+                    trace_event('memory.preferences', preferences_read=True, redis_fallback=preference_snapshot.redis_fallback,
+                                preference_values=preference_snapshot.values.model_dump(),
+                                preference_sources={key + '_origin': value for key, value in preference_snapshot.sources.items()})
+                yield ('done', {'usage': {}})
+                return
+            messages = list(messages)
+            messages[latest_user] = messages[latest_user].model_copy(update={'content': question})
+        messages = normalize_preference_history(messages)
+        if preference_snapshot is None:
+            preference_snapshot = await memory_service.get_preferences(scope=memory_scope)
+        preference_policy, preference_values, preference_sources = resolve_display_preferences(preference_snapshot, question)
+        trace_event('memory.preferences', preferences_read=True, redis_fallback=preference_snapshot.redis_fallback,
+                    preference_values=preference_values, preference_sources={key + '_origin': value for key, value in preference_sources.items()})
 
         from app.services.agent_workflow import explicitly_requests_sources
         user_message = next((msg.content for msg in reversed(messages) if msg.role.value == "user"), None)
@@ -757,7 +807,8 @@ class ChatService:
                 vector_weight=vector_weight,
                 bm25_weight=bm25_weight,
                 rerank_top_k=rerank_top_k,
-                context_window=context_window
+                context_window=context_window,
+                preference_policy=preference_policy,
             ):
                 yield item
         else:
@@ -777,5 +828,6 @@ class ChatService:
                 rerank_top_k=rerank_top_k,
                 context_window=context_window,
                 use_rewrite=use_rewrite,
+                preference_policy=preference_policy,
             ):
                 yield item

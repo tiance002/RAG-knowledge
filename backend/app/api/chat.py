@@ -18,6 +18,7 @@ from app.schemas import (
 )
 from app.services.chat import ChatService
 from app.services.llm import LLMService
+from app.services.memory import get_preference_scope, PreferenceScope
 
 router = APIRouter(tags=["Chat"])
 
@@ -40,6 +41,7 @@ async def rewrite_query(data: RewriteRequest):
 async def chat_completions(
     data: ChatRequest,
     session: Session = Depends(get_session),
+    memory_scope: PreferenceScope = Depends(get_preference_scope),
 ):
     """对话接口 (SSE 流式响应)"""
     # 验证知识库存在
@@ -73,6 +75,7 @@ async def chat_completions(
                 bm25_weight=data.bm25_weight,
                 rerank_top_k=data.rerank_top_k,
                 context_window=data.context_window,
+                memory_scope=memory_scope,
             ):
                 from app.services.metrics import sse_event
                 sse_event(event_type, event_data)
