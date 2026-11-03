@@ -50,6 +50,24 @@ def test_pair_allows_candidate_request_difference_without_mutating_records(runne
     assert (left, right) == before
 
 
+def test_selector_view_excludes_other_sources_and_evaluator_annotations(runner):
+    case = {"question": "color", "allowed_kb_ids": ["allowed"], "seed_ids": ["hit"], "expected_seed_count": 1,
+            "qid": "scoring-only", "answer": "secret", "files": [
+                {"id": "a", "name": "a.pdf", "kb_id": "allowed", "necessary": True},
+                {"id": "b", "name": "b.pdf", "kb_id": "outside"}],
+            "chunks": [{"id": "hit", "file_id": "a", "content": "green", "gold": "secret",
+                        "source_locator": {"page": 1, "audit": "secret"}},
+                       {"id": "off", "file_id": "b", "content": "off-scope"}]}
+    prepared = runner.checked_case(case)
+    assert "secret" not in json.dumps(prepared)
+    expanded = [{"context_group": {"source_members": [{"id": "hit"}]}}]
+    view = runner.execution_view({**prepared, "expanded": expanded})
+    assert [r["id"] for r in view["files"]] == ["a"]
+    assert [r["id"] for r in view["chunks"]] == ["hit"]
+    assert "off-scope" not in json.dumps(view)
+    assert len(case["chunks"]) == 2
+
+
 def test_common_runner_import_does_not_mutate_environment_or_socket():
     code = '''
 import os, runpy, socket, sys
@@ -152,4 +170,5 @@ def test_mismatched_snapshot_excluded_from_pair_denominator(runner, synthetic_ma
     assert summary['status'] == 'FAIL'
     row = runner.load(out / 'case-001/result.json')
     assert row['status'] == 'FAILED' and 'frozen inputs' in row['error']
+    assert row['failure_stage'] == 'pairing'
     assert (out / 'case-001/B/capture.json').is_file()

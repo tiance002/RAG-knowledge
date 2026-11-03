@@ -1,0 +1,84 @@
+[
+  {
+    "qid": "engineering-selection",
+    "case": {
+      "question": "Synthetic engineering fixture: report the row.",
+      "allowed_kb_ids": [
+        "public"
+      ],
+      "files": [
+        {
+          "id": "f1",
+          "kb_id": "public",
+          "name": "report.pdf"
+        }
+      ],
+      "chunks": [
+        {
+          "id": "header",
+          "file_id": "f1",
+          "content": "季度 | 收入（单位：万元）",
+          "content_type": "text",
+          "page_number": 1,
+          "original_index": 0,
+          "parent_id": "chunk_1",
+          "heading_text": "Quarterly totals",
+          "heading_level": 1,
+          "source_locator": {
+            "page": 1,
+            "bbox": [
+              20,
+              20,
+              300,
+              40
+            ]
+          }
+        },
+        {
+          "id": "row",
+          "file_id": "f1",
+          "content": "春季 | 120",
+          "content_type": "text",
+          "page_number": 1,
+          "original_index": 1,
+          "parent_id": "chunk_1",
+          "heading_text": "Quarterly totals",
+          "heading_level": 1,
+          "source_locator": {
+            "page": 1,
+            "bbox": [
+              20,
+              50,
+              300,
+              70
+            ]
+          }
+        },
+        {
+          "id": "copy",
+          "file_id": "f1",
+          "content": "春季 | 120",
+          "content_type": "text",
+          "page_number": 1,
+          "original_index": 2,
+          "parent_id": "chunk_1",
+          "heading_text": "Quarterly totals",
+          "heading_level": 1,
+          "source_locator": {
+            "page": 1,
+            "bbox": [
+              20,
+              50,
+              300,
+              70
+            ]
+          }
+        }
+      ],
+      "seed_ids": [
+        "row"
+      ],
+      "expected_seed_count": 1
+    }
+  }
+]

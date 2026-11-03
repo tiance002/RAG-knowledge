@@ -1,0 +1,34 @@
+{
+  "engineering-selection": {
+    "status": "PAIRED",
+    "members": {
+      "A": [
+        "header",
+        "row"
+      ],
+      "B": [
+        "header",
+        "row"
+      ]
+    },
+    "facts": [
+      {
+        "kind": "field",
+        "file_id": "f1",
+        "text": "春季 | 120"
+      },
+      {
+        "kind": "header",
+        "file_id": "f1",
+        "text": "季度 | 收入"
+      },
+      {
+        "kind": "unit",
+        "file_id": "f1",
+        "text": "单位：万元"
+      }
+    ],
+    "forbidden": [],
+    "length_change": "equal"
+  }
+}
