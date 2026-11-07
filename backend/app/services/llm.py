@@ -1,4 +1,4 @@
-from app.services.observability import observe, event, snapshot, enabled, model_response, capture, span, observe_model_history
+from app.services.observability import observe, event, snapshot, enabled, model_response, capture, span, observe_model_history, trace_response_usage
 from app.services.metrics import record_provider_attempt
 """
 LLM 服务
@@ -13,6 +13,9 @@ import logging
 import json
 import time
 import uuid
+import asyncio
+from pathlib import Path
+from datetime import datetime
 from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 from openai import APIStatusError
@@ -21,6 +24,7 @@ from app.core.config import get_settings
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
 
 class ProviderStreamError(Exception):
     def __init__(self, status, finish_reason=None):
@@ -235,11 +239,20 @@ def invoke_provider_http(send, *, stage, model_name, check_status=True, messages
         return response
 
 
-async def invoke_provider_model(model, messages, *, config, stage, model_name):
+async def invoke_provider_model(model, messages, *, config, stage, model_name, timeout_seconds=None):
     from app.services.observability import native_enabled, generation, langchain_callback_config
+
+    async def invoke_once(invocation_config):
+        call = model.ainvoke(messages, config=invocation_config)
+        if timeout_seconds is None:
+            return await call
+        # Keep the deadline inside provider_attempt so an expired request is
+        # recorded as UNKNOWN, rather than a successful call or a retry trigger.
+        return await asyncio.wait_for(call, timeout=timeout_seconds)
+
     if not native_enabled():
         with provider_attempt(stage, model_name) as attempt:
-            response = await model.ainvoke(messages, config=config)
+            response = await invoke_once(config)
             attempt["provider_request_id"] = _provider_id(response)
             from app.services.metrics import record_provider_usage
             record_provider_usage(stage, getattr(response, "usage_metadata", None))
@@ -255,14 +268,16 @@ async def invoke_provider_model(model, messages, *, config, stage, model_name):
     with manual as observation:
         try:
             with _provider_attempt_recorded(stage, model_name) as attempt:
-                response = await model.ainvoke(messages, config=invocation_config)
+                response = await invoke_once(invocation_config)
                 attempt["provider_request_id"] = _provider_id(response)
                 from app.services.metrics import record_provider_usage
                 record_provider_usage(stage, getattr(response, "usage_metadata", None))
                 response_metadata = getattr(response, 'response_metadata', {}) or {}
+                trace_usage, usage_status = trace_response_usage(response)
                 _update_generation(observation,
                     output=capture(_visible_provider_content(getattr(response, 'content', None)), content_role='provider_response'),
-                    usage=_response_usage(response), finish_reason=response_metadata.get('finish_reason'),
+                    usage=_response_usage(SimpleNamespace(usage=trace_usage)), usage_status=usage_status,
+                    finish_reason=response_metadata.get('finish_reason'),
                     execution_status=_completion_status(response_metadata.get('finish_reason')))
                 return response
         except BaseException as exc:
@@ -313,25 +328,49 @@ class LLMService:
         return self._client
 
     @observe("llm.rewrite_query")
-    async def rewrite_query(self, query: str) -> str:
-        """问题改写"""
-        system_prompt = """你是一个问题优化助手。请将用户输入的口语化问题改写为更清晰、更完整的查询语句。
-要求：
-1. 保持原意不变
-2. 补充缺失的上下文
-3. 使用更专业的表述
-4. 直接返回改写后的问题，不要添加解释"""
+    async def understand_query(self, query: str, history: List[Dict[str, str]] = None,
+                               images=None) -> dict:
+        """Run WeKnora's default query understanding prompt in a single call."""
+        # Use original conversational turns as data, never saved output preferences
+        # or system instructions. Keep the same history bound as chat/Agent.
+        from app.services.conversation_history import bound_rewrite_history
+        from app.services.runtime_settings import get_runtime_settings
+        rounds = getattr(self, 'history_rounds', None)
+        if rounds is None:
+            rounds = get_runtime_settings().max_chat_history_rounds
+        conversation_history = bound_rewrite_history(history, rounds)
 
+        prompt_dir = Path(__file__).resolve().parent.parent / 'prompts'
+        now = datetime.now().astimezone()
+        query_content = query + (f'\n\n<images_uploaded count="{len(images)}" />'
+                                 if images else '\n\n<no_image_attached />')
+        query_content += '\n<no_document_attached />'
+        values = {'conversation': json.dumps(conversation_history, ensure_ascii=False),
+                  'query': query_content, 'language': 'the original request language',
+                  'current_time': now.isoformat(timespec='seconds'), 'current_week': now.strftime('%A')}
+        def render(name):
+            result = (prompt_dir / name).read_text(encoding='utf-8')
+            for key, value in values.items():
+                result = result.replace('{{' + key + '}}', value)
+            return result
+        user_content = render('weknora_rewrite_user.txt')
+        if images:
+            user_content = [{'type': 'text', 'text': user_content}] + [
+                {'type': 'image_url', 'image_url': {'url': url}} for url in images]
         client = self._get_client()
-        
+        max_tokens = 2048 if images else 200
         try:
-            request_messages = [{"role": "system", "content": system_prompt},
-                                {"role": "user", "content": query}]
-            with provider_generation("rewrite", self.model, request_messages, max_tokens=200, temperature=0.3) as (attempt, observation):
+            request_messages = [{"role": "system", "content": render('weknora_rewrite_system.txt')},
+                                {"role": "user", "content": user_content}]
+            trace_messages = request_messages if not images else [
+                request_messages[0], {'role': 'user', 'content': [
+                    {'type': 'text', 'text': render('weknora_rewrite_user.txt')},
+                    {'type': 'image', 'count': len(images), 'content': '[REDACTED]'}]}]
+            with provider_generation("rewrite", self.model, trace_messages, max_tokens=max_tokens, temperature=0.3) as (attempt, observation):
                 response = await client.chat.completions.create(
                     model=self.model,
                     messages=request_messages,
-                    max_tokens=200,
+                    max_tokens=max_tokens,
                     temperature=0.3,
                 )
                 attempt["provider_request_id"] = _provider_id(response)
@@ -345,19 +384,43 @@ class LLMService:
                 if reason == 'length':
                     event('query.rewrite_result', status='TRUNCATED', finish_reason=reason,
                           fallback='original_query')
-                    return ''
+                    return {'rewrite_query': '', 'intent': '', 'image_description': ''}
                 if reason != 'stop':
                     raise ProviderStreamError('UNKNOWN', reason)
                 if not content.strip():
                     event('query.rewrite_result', status='EMPTY', finish_reason=reason,
                           fallback='original_query')
-                    return ''
+                    return {'rewrite_query': '', 'intent': '', 'image_description': ''}
+                cleaned = content.strip()
+                if cleaned.startswith('```'):
+                    cleaned = cleaned.split('\n', 1)[-1].rsplit('```', 1)[0].strip()
+                if cleaned.startswith('{'):
+                    try:
+                        data = json.loads(cleaned)
+                    except (ValueError, TypeError):
+                        event('query.rewrite_result', status='INVALID_OUTPUT', fallback='original_query')
+                        return {'rewrite_query': '', 'intent': '', 'image_description': ''}
+                    candidate = data.get('rewrite_query') if isinstance(data, dict) else None
+                    if not isinstance(candidate, str) or not candidate.strip():
+                        event('query.rewrite_result', status='INVALID_OUTPUT', fallback='original_query')
+                        return {'rewrite_query': '', 'intent': '', 'image_description': ''}
+                    content = candidate.strip()
+                    intent = data.get('intent') if isinstance(data.get('intent'), str) else ''
+                    image_description = data.get('image_description') if isinstance(data.get('image_description'), str) else ''
+                else:
+                    intent, image_description = '', ''
                 event('query.rewrite_result', status='COMPLETED', finish_reason=reason)
                 event("query.rewritten", query=snapshot(content) if enabled() else None)
-                return content.strip()
+                return {'rewrite_query': content.strip(), 'intent': intent.strip(),
+                        'image_description': image_description.strip()}
         except Exception as e:
             logger.warning("Rewrite query failed: %s", type(e).__name__)
             raise e
+
+    async def rewrite_query(self, query: str, history: List[Dict[str, str]] = None) -> str:
+        """Backward-compatible rewrite-only API."""
+        result = await self.understand_query(query, history=history)
+        return result['rewrite_query']
 
     @observe("llm.generate_stream")
     async def generate_stream(
@@ -473,8 +536,10 @@ class LLMService:
              logger.warning("LLM generation failed: %s", type(e).__name__)
              raise e
 
-    def get_chat_model(self, temperature: float = 0.5, streaming: bool = True, max_tokens: int = None) -> ChatOpenAI:
+    def get_chat_model(self, temperature: float = 0.5, streaming: bool = True, max_tokens: int = None,
+                       *, timeout: float | None = None) -> ChatOpenAI:
         """获取 LangChain ChatOpenAI 实例"""
+        options = {} if timeout is None else {"timeout": timeout}
         return ChatOpenAI(
             model=self.model,
             openai_api_key=self.api_key,
@@ -482,5 +547,6 @@ class LLMService:
             temperature=temperature,
             streaming=streaming,
             max_retries=0,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            **options,
         )

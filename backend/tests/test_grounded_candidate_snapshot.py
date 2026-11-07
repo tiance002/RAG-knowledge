@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -41,5 +42,11 @@ def test_candidate_snapshot_is_opt_in_and_events_do_not_contain_raw_text(monkeyp
     assert asyncio.run(run())[0] == secret_text
     candidate_event = next(data for name, data in captured if name == 'grounded.candidate')
     ref = candidate_event['candidate']['snapshot_id']
-    assert ref and (tmp_path / (ref + '.txt')).read_text(encoding='utf-8') == secret_text
+    if os.name == 'posix':
+        assert ref and (tmp_path / (ref + '.txt')).read_text(encoding='utf-8') == secret_text
+    else:
+        # Windows 未验证 ACL，产品明确拒绝私有快照；验收只要求“拒绝且不落盘”，
+        # 不能为了拿到 snapshot_id 关掉保护或伪造内容。
+        assert ref is None
+        assert not list(tmp_path.iterdir())
     assert secret_text not in json.dumps(candidate_event)

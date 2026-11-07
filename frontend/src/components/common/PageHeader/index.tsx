@@ -16,6 +16,9 @@ interface BreadcrumbItem {
 interface PageHeaderProps {
   title: string;
   subtitle?: string;
+  subTitle?: string;
+  className?: string;
+  onBack?: () => void | Promise<void>;
   breadcrumbs?: BreadcrumbItem[];
   showBack?: boolean;
   extra?: React.ReactNode;
@@ -24,6 +27,9 @@ interface PageHeaderProps {
 const PageHeader: React.FC<PageHeaderProps> = ({
   title,
   subtitle,
+  subTitle,
+  className,
+  onBack,
   breadcrumbs,
   showBack = false,
   extra,
@@ -31,11 +37,12 @@ const PageHeader: React.FC<PageHeaderProps> = ({
   const navigate = useNavigate();
 
   const handleBack = () => {
-    navigate(-1);
+    if (onBack) void onBack();
+    else navigate(-1);
   };
 
   return (
-    <div className={styles.pageHeader}>
+    <div className={[styles.pageHeader, className].filter(Boolean).join(' ')}>
       {breadcrumbs && breadcrumbs.length > 0 && (
         <Breadcrumb
           className={styles.breadcrumb}
@@ -51,7 +58,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
 
       <div className={styles.titleRow}>
         <div className={styles.titleSection}>
-          {showBack && (
+          {(showBack || onBack) && (
             <Button
               type="text"
               icon={<ArrowLeftOutlined />}
@@ -61,7 +68,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
           )}
           <div>
             <h1 className={styles.title}>{title}</h1>
-            {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+            {(subtitle || subTitle) && <p className={styles.subtitle}>{subtitle || subTitle}</p>}
           </div>
         </div>
 

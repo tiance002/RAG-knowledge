@@ -102,14 +102,13 @@ def test_http_duration_stops_at_final_body_not_background_completion(monkeypatch
 
 
 def test_context_reaches_handler_through_starlette_base_http_middleware(monkeypatch):
-    from starlette.applications import Starlette
+    from fastapi import FastAPI, Request
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import StreamingResponse
-    from starlette.routing import Route
     from starlette.testclient import TestClient
 
     rows = install_fake_metrics(monkeypatch)
-    async def handler(request):
+    async def handler(request: Request):
         async def content():
             metrics.sse_event("answer_chunk", {"content": "one"})
             metrics.sse_event("done", {})
@@ -118,7 +117,10 @@ def test_context_reaches_handler_through_starlette_base_http_middleware(monkeypa
     async def pass_through(request, call_next):
         return await call_next(request)
 
-    app = Starlette(routes=[Route("/chat", handler, methods=["POST"])])
+    # 生产是 FastAPI 路由（会写入 scope['route']）；普通 Starlette Route 不写，
+    # 这里必须用真实 FastAPI 入口，否则测的只是 unmatched 分支。
+    app = FastAPI()
+    app.add_api_route("/chat", handler, methods=["POST"])
     client = TestClient(BaseHTTPMiddleware(metrics.HTTPMetricsMiddleware(app), dispatch=pass_through))
     response = client.post("/chat")
     assert response.status_code == 200

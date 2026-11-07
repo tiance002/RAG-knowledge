@@ -19,9 +19,10 @@ import {
   Statistic,
   Row,
   Col,
+  Modal,
+  Select,
 } from 'antd';
 import {
-  UploadOutlined,
   DeleteOutlined,
   EyeOutlined,
   FileTextOutlined,
@@ -61,6 +62,11 @@ const KnowledgeBaseDetail: React.FC = () => {
   const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBase | null>(null);
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadConflict, setUploadConflict] = useState<{
+    options: Parameters<NonNullable<UploadProps['customRequest']>>[0];
+    detail: { same_sha256: boolean; duplicate_file_id?: string; existing_files: { file_id: string; display_name: string; status: string }[] };
+  } | null>(null);
+  const [replaceTarget, setReplaceTarget] = useState<string>();
   const [activeTab, setActiveTab] = useState('files');
 
   // 解析弹窗相关
@@ -154,24 +160,29 @@ const KnowledgeBaseDetail: React.FC = () => {
     };
   }, [files, loadFiles, autoProcessFileId]);
 
-  // 处理文件上传
-  const handleUpload: UploadProps['customRequest'] = async (options) => {
-    const { file, onSuccess, onError } = options;
+  // Ask for an explicit identity/version choice whenever a name already exists.
+  const performUpload = async (options: Parameters<NonNullable<UploadProps['customRequest']>>[0], decision = { action: 'check', target_file_id: undefined as string | undefined }) => {
     if (!kbId) return;
-
     setUploading(true);
     try {
-      await uploadFile(kbId, file as File);
-      message.success('上传成功，请手动解析文件');
-      onSuccess?.(null);
-      loadFiles();
-    } catch (error) {
-      message.error('上传失败');
-      onError?.(error as Error);
-    } finally {
-      setUploading(false);
-    }
+      const response = await uploadFile(kbId, options.file as File, undefined, decision);
+      const result = response.data;
+      message.success(result.duplicate ? `已复用已有文件，当前状态：${result.status}` : result.outcome === 'replacement_staged' ? '已创建替换版本；新版本成功入库后用于检索，历史数据保留' : '上传成功，请手动解析文件');
+      setUploadConflict(null);
+      options.onSuccess?.(result);
+      await loadFiles();
+    } catch (error: any) {
+      const detail = error.response?.data?.detail;
+      if (detail?.code === 'FILE_NAME_CONFLICT') {
+        setUploadConflict({ options, detail });
+        setReplaceTarget(detail.existing_files[0]?.file_id);
+      } else {
+        message.error(typeof detail === 'string' ? detail : '上传失败');
+        options.onError?.(error as Error);
+      }
+    } finally { setUploading(false); }
   };
+  const handleUpload: UploadProps['customRequest'] = options => { void performUpload(options); };
 
   // 处理删除文件
   const handleDeleteFile = async (fileId: string) => {
@@ -336,10 +347,10 @@ const KnowledgeBaseDetail: React.FC = () => {
       title: '文件名',
       dataIndex: 'name',
       key: 'name',
-      render: (name: string) => (
+      render: (name: string, record: FileInfo) => (
         <span className={styles.fileName}>
           <FileTextOutlined />
-          {name}
+          {record.display_name || name}
         </span>
       ),
     },
@@ -570,6 +581,16 @@ const KnowledgeBaseDetail: React.FC = () => {
         />
       </Card>
 
+      <Modal open={!!uploadConflict} title="已有同名文件" onCancel={() => { uploadConflict?.options.onError?.(new Error('用户取消上传')); setUploadConflict(null); }} footer={null}>
+        <p>{uploadConflict?.detail.same_sha256 ? '上传内容与已有文件相同，可复用已有记录；也可另建独立条目或创建替换版本。' : '上传内容与已有文件不同，请另建条目或选择要替换的旧版本。'}新版本成功入库后用于检索，历史文件和索引保留。</p>
+        <Select style={{ width: '100%', marginBottom: 16 }} value={replaceTarget} onChange={setReplaceTarget} options={uploadConflict?.detail.existing_files.map(row => ({ value: row.file_id, label: `${row.display_name} · ${row.status}` }))} aria-label="选择替换目标" />
+        <Space wrap>
+          {uploadConflict?.detail.same_sha256 && <Button disabled={uploading} onClick={() => void performUpload(uploadConflict.options, { action: 'reuse', target_file_id: uploadConflict.detail.duplicate_file_id })}>复用已有文件</Button>}
+          <Button disabled={uploading || !uploadConflict} onClick={() => uploadConflict && void performUpload(uploadConflict.options, { action: 'new', target_file_id: undefined })}>另建条目</Button>
+          <Button type="primary" disabled={uploading || !replaceTarget || !uploadConflict} onClick={() => uploadConflict && void performUpload(uploadConflict.options, { action: 'replace', target_file_id: replaceTarget })}>创建替换版本</Button>
+        </Space>
+      </Modal>
+
       <ParseModal
         open={parseModalVisible}
         onCancel={() => setParseModalVisible(false)}
@@ -577,6 +598,7 @@ const KnowledgeBaseDetail: React.FC = () => {
         onDirectProcess={handleParseProcess}
         loading={parseLoading}
         models={models}
+        kbEmbeddingModel={knowledgeBase?.embedding_model}
       />
     </div>
   );

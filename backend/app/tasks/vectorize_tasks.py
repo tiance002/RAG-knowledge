@@ -5,6 +5,7 @@
 import asyncio
 from datetime import datetime
 from sqlmodel import Session, select
+from sqlalchemy import update
 
 from app.tasks.celery_app import celery_app
 from app.core.database import engine
@@ -24,9 +25,9 @@ def run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=3)
+@celery_app.task(bind=True, max_retries=0)
 @track_background_task("vectorize")
-def vectorize_file_task(self, file_id: str):
+def vectorize_file_task(self, file_id: str, expected_revision: str = None):
     """
     向量化文件任务
 
@@ -43,19 +44,55 @@ def vectorize_file_task(self, file_id: str):
 
         if file_doc.status != FileStatus.EMBEDDING:
             return {"error": "文件状态不正确"}
+        # This legacy task currently has no producer. Any future producer must
+        # capture the revision after marking its own EMBEDDING job. A queued
+        # message without that generation cannot safely claim a newer job.
+        if not expected_revision or file_doc.updated_at.isoformat() != expected_revision:
+            return {"error": "任务已过期或缺少版本标识"}
+        old_revision = file_doc.updated_at
+        claimed_revision = datetime.utcnow()
+        if claimed_revision <= old_revision:
+            from datetime import timedelta
+            claimed_revision = old_revision + timedelta(microseconds=1)
+        claimed = session.execute(
+            update(FileDocument)
+            .where(FileDocument.id == file_id, FileDocument.status == FileStatus.EMBEDDING,
+                   FileDocument.updated_at == old_revision)
+            .values(updated_at=claimed_revision)
+            .execution_options(synchronize_session=False)
+        )
+        session.commit()
+        if claimed.rowcount != 1:
+            return {"error": "任务已被领取或已过期"}
+        session.refresh(file_doc)
+        expected_revision = claimed_revision.isoformat()
+
+        def still_owned():
+            session.refresh(file_doc)
+            return file_doc.status == FileStatus.EMBEDDING and file_doc.updated_at == claimed_revision
+
+        def update_if_owned(**values):
+            result = session.execute(
+                update(FileDocument)
+                .where(FileDocument.id == file_id, FileDocument.status == FileStatus.EMBEDDING,
+                       FileDocument.updated_at == claimed_revision)
+                .values(**values)
+                .execution_options(synchronize_session=False)
+            )
+            return result.rowcount == 1
 
         try:
             # 获取所有 Chunks
             chunks = session.exec(
                 select(DocumentChunk)
-                .where(DocumentChunk.file_id == file_id)
+                .where(DocumentChunk.file_id == file_id, DocumentChunk.chunk_type != "parent")
                 .order_by(DocumentChunk.original_index)
             ).all()
 
             if not chunks:
-                file_doc.status = FileStatus.READY
-                file_doc.progress = 100
-                session.add(file_doc)
+                if not update_if_owned(status=FileStatus.READY, progress=100, updated_at=datetime.utcnow()):
+                    session.rollback()
+                    return {"error": "任务已过期"}
                 session.commit()
                 return {"file_id": file_id, "chunk_count": 0}
 
@@ -63,21 +100,13 @@ def vectorize_file_task(self, file_id: str):
             kb = session.get(KnowledgeBase, file_doc.kb_id)
             embedding_model_id = kb.embedding_model if kb else None
 
-            # 初始化服务
-            # 检查是否使用了自定义模型
-            custom_model = session.get(CustomModel, embedding_model_id) if embedding_model_id else None
-            
-            if custom_model:
-                embedding_service = EmbeddingService(
-                    base_url=custom_model.base_url,
-                    api_key=custom_model.api_key,
-                    model=custom_model.model_name
-                )
-                # 使用实际的模型名称而不是 ID
-                target_model_id = custom_model.model_name
-            else:
-                embedding_service = EmbeddingService()
-                target_model_id = embedding_model_id
+            from app.services.model_bindings import resolve_model
+            if kb is None:
+                raise ValueError("KNOWLEDGE_BASE_NOT_FOUND")
+            binding = resolve_model(session, "embedding", embedding_model_id, use_default=False)
+            embedding_service = EmbeddingService(base_url=binding.base_url,
+                api_key=binding.api_key, model=binding.model_name)
+            target_model_id = binding.model_name
 
             vector_service = VectorStoreService()
 
@@ -112,13 +141,10 @@ def vectorize_file_task(self, file_id: str):
                 embeddings = run_async(embedding_service.embed_documents(batch, model_id=target_model_id))
                 all_embeddings.extend(embeddings)
 
-                # 更新进度
-                progress = int((i + len(batch)) / total * 90)
-                file_doc.progress = progress
-                session.add(file_doc)
-                session.commit()
 
-            # 存入向量库
+            # Do not write after a newer generation has replaced this claim.
+            if not still_owned():
+                return {"error": "任务已过期"}
             vector_service.add_documents(
                 kb_id=file_doc.kb_id,
                 documents=documents,
@@ -126,10 +152,9 @@ def vectorize_file_task(self, file_id: str):
             )
 
             # 更新文件状态
-            file_doc.status = FileStatus.READY
-            file_doc.progress = 100
-            file_doc.updated_at = datetime.utcnow()
-            session.add(file_doc)
+            if not update_if_owned(status=FileStatus.READY, progress=100, updated_at=datetime.utcnow()):
+                session.rollback()
+                return {"error": "任务已过期"}
 
             # 更新知识库统计
             kb = session.get(KnowledgeBase, file_doc.kb_id)
@@ -148,12 +173,8 @@ def vectorize_file_task(self, file_id: str):
             }
 
         except Exception as e:
-            # 更新状态为失败
-            file_doc.status = FileStatus.FAILED
-            file_doc.error_message = str(e)
-            file_doc.updated_at = datetime.utcnow()
-            session.add(file_doc)
-            session.commit()
-
-            # 重试
-            raise self.retry(exc=e, countdown=60)
+            if update_if_owned(status=FileStatus.FAILED, error_message=type(e).__name__, updated_at=datetime.utcnow()):
+                session.commit()
+            else:
+                session.rollback()
+            raise

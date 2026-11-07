@@ -148,13 +148,40 @@ def delivered_evidence_records(citations):
     return output
 
 
-async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS"):
+def build_grounded_prompt(evidence, *, addendum=''):
+    """Build the ordinary answer prompt; an optional factory-owned addition is explicit.
+
+    Empty additions preserve the existing prompt byte for byte. This hook does
+    not select evidence, resolve preferences, route models or validate answers.
+    """
+    prompt = ('请根据以下参考资料回答用户问题，可以做与问题有关的综合解释。新增具体事实、单位或归因应有资料依据，推断请说明依据。关键结论注明对应的来源编号，例如 [1]；资料不足时说明缺少的部分，不把常识补充当作资料结论。\n\n资料：\n' + evidence)
+    return prompt + '\n\n' + addendum if addendum else prompt
+
+
+def enforce_request_budget(messages, tools=None):
+    """Count complete application messages/tool schemas in Unicode characters.
+
+    Provider framing/tokenization is not known here; the provider token limit is
+    an additional constraint. Fail before a paid call rather than lose evidence.
+    """
+    import json
+    rows = [m if isinstance(m, dict) else m.model_dump() for m in messages]
+    request_chars = len(json.dumps({'messages': rows, 'tools': tools or []}, ensure_ascii=False, default=str))
+    request_limit = get_settings().GROUNDED_REQUEST_MAX_CHARS
+    if request_chars > request_limit:
+        event('context.budget_exceeded', request_chars=request_chars, limit_chars=request_limit,
+              degradation_reason='FINAL_REQUEST_OVER_CHAR_BUDGET')
+        raise ValueError('FINAL_REQUEST_OVER_CHAR_BUDGET')
+    return request_chars
+
+
+async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS", preference_policy=''):
     """Return content, finish reason and usage; the caller checks completion."""
     evidence = '\n\n'.join(
         f"[{i}] 来源：{c.get('fileName', '未知')} {c.get('location', '')}\n{c['content']}"
         for i, c in enumerate(citations, 1)
     )
-    prompt = ('请根据以下参考资料回答用户问题。资料不足时请如实说明，并适当引用来源。\n\n资料：\n' + evidence)
+    prompt = build_grounded_prompt(evidence, addendum=getattr(llm, '_grounded_prompt_addendum', ''))
     if spreadsheet_context is not None:
         proof = spreadsheet_context.proof
         footnotes = '\n'.join(item['text'] for item in proof['footnotes'].values())
@@ -167,10 +194,17 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
     request_messages = [{'role': 'system', 'content': prompt}] + list(messages)
     llm, target, route, router_config = _route_generation(
         llm, model_id, request_messages, citations, retrieval_status=retrieval_status, return_decision=True)
+    if preference_policy:
+        request_messages[0] = {'role': 'system', 'content': prompt + '\n\n' + preference_policy}
+    # Enforce the final serialized request, including source labels, history,
+    # supplementary proofs and preference prompt. This is a character budget,
+    # not a claim about any provider's tokenizer or output-token allowance.
+    enforce_request_budget(request_messages)
     observe_model_history(request_messages)
     identity_status = 'UNKNOWN'
     async def _generate_once(current_llm, target):
         nonlocal identity_status
+        event('memory.delivery', stage='grounded_answer', preference_policy_applied=bool(preference_policy))
         extra_body = getattr(current_llm, '_router_extra_body', None)
         provider_parameters = {'extra_body': extra_body} if extra_body is not None else {}
         event('grounded.request', model=target, prompt=snapshot(request_messages), evidence_count=len(citations))
@@ -257,3 +291,41 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
     _router_outcome(route, upgraded.model if calls_used > 1 else target,
                     finish=result[1], content=result[0], escalations=calls_used - 1)
     return result
+
+
+async def generate_no_results_fallback(llm, question):
+    """Return (text, strategy, finish_reason, usage) for confirmed NO_RESULTS.
+
+    The caller must authorize the provider call and must never invoke this for
+    failed/unknown retrieval, omitted images, or existing usable evidence.
+    Provider errors propagate unchanged; no retry is performed.
+    """
+    settings = get_settings()
+    strategy = settings.FALLBACK_STRATEGY.strip().lower()
+    fixed = settings.FALLBACK_RESPONSE.strip() or "未在所选知识库中找到可用于回答的相关资料。"
+    if strategy == 'fixed':
+        return fixed, 'fixed', None, None
+    if strategy != 'model':
+        raise ValueError('FALLBACK_STRATEGY must be fixed or model')
+    messages = [
+        {'role': 'system', 'content': (settings.FALLBACK_PROMPT + '\n知识库未检索到证据。明确区分通用知识与知识库资料，不得声称知识库支持任何结论；如果用户要求仅依据知识库回答，请说明无法证实，不得编造知识库内容。')},
+        {'role': 'user', 'content': question},
+    ]
+    target = llm.model
+    with provider_generation('no_results_fallback', target, messages, max_tokens=settings.LLM_ANSWER_MAX_TOKENS, temperature=0.7) as (attempt, observation):
+        response = await llm._get_client().chat.completions.create(
+            model=target, messages=messages, max_tokens=settings.LLM_ANSWER_MAX_TOKENS,
+            temperature=0.7, stream=False)
+        attempt['provider_request_id'] = _provider_id(response)
+        choice = response.choices[0]
+        content = choice.message.content or ''
+        finish = getattr(choice, 'finish_reason', None)
+        usage = getattr(response, 'usage', None)
+        usage = usage.model_dump() if hasattr(usage, 'model_dump') else usage
+        if observation is not None:
+            _update_generation(observation, usage=_response_usage(response), finish_reason=finish,
+                               execution_status=_completion_status(finish))
+        if finish != 'stop' or not content.strip():
+            return fixed, 'model', 'empty' if finish == 'stop' and not content.strip() else finish, usage
+        return ('未在知识库中找到相关资料；以下为模型基于通用知识的回答：\n\n' + content.strip(),
+                'model', finish, usage)

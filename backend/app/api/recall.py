@@ -18,11 +18,30 @@ from app.schemas import (
     RetrievalLogResponse, RetrievalLogListResponse
 )
 from app.services.retrieval import get_retrieval_service
+from app.services.llm import is_unknown_provider_error
 from app.services.rerank import RerankService, batch_rerank, expand_context
 import time
 import re
+from pathlib import PurePath
 
 router = APIRouter(tags=["Recall"])
+
+
+def _recall_source(row):
+    """Describe actual composite members without duplicating their bodies."""
+    group = row.get('context_group')
+    if not group:
+        return row.get('source_metadata'), False
+    from app.services.context_builder import _verified_members
+    members = _verified_members(row)
+    if members is None:
+        raise ValueError('unverified_context_members')
+    origins = [{'chunk_id': m['id'], 'page_number': m.get('page_number'),
+                'source_metadata': m.get('source_metadata') or {}} for m in members]
+    composite = len(origins) > 1
+    if composite:
+        return {'source_type': 'context_group', 'members': origins}, True
+    return (origins[0]['source_metadata'] if origins else None), False
 
 
 @router.post(
@@ -101,20 +120,29 @@ async def recall_test(
                 print(f"📊 [Recall] Rerank 完成: count={len(results)}, latency={rerank_latency:.1f}ms")
 
             except Exception as e:
-                print(f"⚠️ [Recall] Rerank 执行失败: {e}")
+                if is_unknown_provider_error(e):
+                    raise
+                print(f"⚠️ [Recall] Rerank 执行失败: {type(e).__name__}")
                 # 出错时保留原结果
 
         # 3. 上下文扩展
-        if data.context_window > 0 and results:
+        expansion_delivery_status = 'NOT_REQUESTED'
+        if results and (data.context_window > 0 or any(r.get("chunk_type") == "child" for r in results)):
             try:
                 results = expand_context(
                     top_chunks=results,
                     session=session,
-                    window_size=data.context_window
+                    window_size=data.context_window,
+                    include_source_members=True,
+                    allowed_kb_ids=[kb_id]
                 )
+                expansion_delivery_status = ('SEED_ONLY' if any(r.get('expansion_delivery_status') in ('SEED_ONLY', 'OMITTED') for r in results) else 'DELIVERED')
                 print(f"📊 [Recall] Context Expanded: window_size={data.context_window}")
             except Exception as e:
-                print(f"⚠️ [Recall] Context Expansion Failed: {e}")
+                print(f"⚠️ [Recall] Context Expansion Failed: {type(e).__name__}")
+                expansion_delivery_status = 'SEED_ONLY'
+                if metrics.get('retrieval_status') != 'RETRIEVAL_ERROR':
+                    metrics['retrieval_status'] = 'UNKNOWN'
 
         # 4. 格式化返回结果
         result_list = []
@@ -137,15 +165,30 @@ async def recall_test(
                         image_url = path_in_content
 
             # 位置信息
+            source, composite = _recall_source(r)
             location = ""
             page_number = r.get("page_number")
-            if page_number:
+            if page_number and not composite and PurePath(r.get('file_name') or '').suffix.lower() == '.pdf':
                 location = f"第 {page_number} 页"
 
+            source = source or {}
+            if not location and not (r.get('metadata') or {}).get('is_expanded'):
+                if source.get('sheet'):
+                    location = f"工作表: {source['sheet']}"
+                    if source.get('row_start') is not None and source.get('row_end') is not None:
+                        location += f"，第 {source['row_start']}-{source['row_end']} 行"
+                elif source.get('record_start') is not None and source.get('record_end') is not None:
+                    location = f"记录 {source['record_start']}-{source['record_end']}"
             result_list.append(RecallResult(
                 chunkId=r.get("id"),
+                seed_child_ids=r.get("seed_child_ids", []), parent_chunk_id=r.get("parent_chunk_id"),
+                context_group=r.get("context_group"), score_origin=r.get("score_origin"),
+                source_mapping_status=r.get("source_mapping_status"),
+                expansion_delivery_status=r.get("expansion_delivery_status"),
                 score=r.get("score", 0),
                 rerank_score=r.get("rerank_score"),
+                rerank_status=r.get("rerank_status"),
+                source_metadata=source,
                 vector_score=r.get("vector_score"),
                 bm25_score=r.get("bm25_score"),
                 content=r.get("content", ""),
@@ -162,15 +205,16 @@ async def recall_test(
 
         return ApiResponse(data=RecallTestResponse(
             results=result_list,
-            query_time=query_time
+            query_time=query_time,
+            retrieval_status=metrics.get('retrieval_status', 'UNKNOWN'),
+            expansion_delivery_status=expansion_delivery_status,
         ))
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        print(f"⚠️ [Recall] 请求失败: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": 50001, "message": f"召回测试失败: {str(e)}"},
+            detail={"code": 50001, "message": "召回测试失败"},
         )
 
 
@@ -228,15 +272,22 @@ async def recall_test_multi(
             )
 
         # 3. 上下文扩展
-        if data.context_window > 0 and results:
+        expansion_delivery_status = 'NOT_REQUESTED'
+        if results and (data.context_window > 0 or any(r.get("chunk_type") == "child" for r in results)):
             try:
                 results = expand_context(
                     top_chunks=results,
                     session=session,
-                    window_size=data.context_window
+                    window_size=data.context_window,
+                    include_source_members=True,
+                    allowed_kb_ids=kb_ids
                 )
+                expansion_delivery_status = ('SEED_ONLY' if any(r.get('expansion_delivery_status') in ('SEED_ONLY', 'OMITTED') for r in results) else 'DELIVERED')
             except Exception as e:
-                print(f"⚠️ [Recall] Context Expansion Failed: {e}")
+                print(f"⚠️ [Recall] Context Expansion Failed: {type(e).__name__}")
+                expansion_delivery_status = 'SEED_ONLY'
+                if metrics.get('retrieval_status') != 'RETRIEVAL_ERROR':
+                    metrics['retrieval_status'] = 'UNKNOWN'
 
         # 格式化结果
         result_list = []
@@ -245,14 +296,29 @@ async def recall_test_multi(
             if r.get("image_path"):
                 image_url = f"/static/images/{r['image_path']}"
 
+            source, composite = _recall_source(r)
             location = ""
-            if r.get("page_number"):
+            if r.get("page_number") and not composite and PurePath(r.get('file_name') or '').suffix.lower() == '.pdf':
                 location = f"第 {r['page_number']} 页"
 
+            source = source or {}
+            if not location and not (r.get('metadata') or {}).get('is_expanded'):
+                if source.get('sheet'):
+                    location = f"工作表: {source['sheet']}"
+                    if source.get('row_start') is not None and source.get('row_end') is not None:
+                        location += f"，第 {source['row_start']}-{source['row_end']} 行"
+                elif source.get('record_start') is not None and source.get('record_end') is not None:
+                    location = f"记录 {source['record_start']}-{source['record_end']}"
             result_list.append(RecallResult(
                 chunkId=r.get("id"),
+                seed_child_ids=r.get("seed_child_ids", []), parent_chunk_id=r.get("parent_chunk_id"),
+                context_group=r.get("context_group"), score_origin=r.get("score_origin"),
+                source_mapping_status=r.get("source_mapping_status"),
+                expansion_delivery_status=r.get("expansion_delivery_status"),
                 score=r.get("score", 0),
                 rerank_score=r.get("rerank_score"),
+                rerank_status=r.get("rerank_status"),
+                source_metadata=source,
                 vector_score=r.get("vector_score"),
                 bm25_score=r.get("bm25_score"),
                 content=r.get("content", ""),
@@ -268,15 +334,16 @@ async def recall_test_multi(
 
         return ApiResponse(data=RecallTestResponse(
             results=result_list,
-            query_time=query_time
+            query_time=query_time,
+            retrieval_status=metrics.get('retrieval_status', 'UNKNOWN'),
+            expansion_delivery_status=expansion_delivery_status,
         ))
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        print(f"⚠️ [Recall] 请求失败: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": 50001, "message": f"召回测试失败: {str(e)}"},
+            detail={"code": 50001, "message": "召回测试失败"},
         )
 
 
@@ -327,11 +394,10 @@ async def get_retrieval_logs(
         ))
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        print(f"⚠️ [Recall] 请求失败: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": 50002, "message": f"获取历史记录失败: {str(e)}"},
+            detail={"code": 50002, "message": "获取历史记录失败"},
         )
 
 
@@ -405,9 +471,8 @@ async def clear_retrieval_logs(
         return ApiResponse(message="清空成功")
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        print(f"⚠️ [Recall] 请求失败: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": 50003, "message": f"清空历史记录失败: {str(e)}"},
+            detail={"code": 50003, "message": "清空历史记录失败"},
         )

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import math
 import os
 import re
+import json
 from typing import Mapping, Optional
 
 
@@ -270,6 +271,17 @@ def extract_features(question, citations, messages=None, *, completeness=None, c
                 modality_captured = False
                 load_captured = False
             load_chars += message_chars
+            calls = message.get('tool_calls') if isinstance(message, dict) else getattr(message, 'tool_calls', None)
+            if calls:
+                # Tool arguments also consume input; this remains a character
+                # estimate, not a tokenizer or a model context-window contract.
+                try:
+                    call_chars = len(json.dumps(calls, ensure_ascii=False, sort_keys=True))
+                    load_chars += call_chars
+                    if is_history:
+                        history_chars += call_chars
+                except (TypeError, ValueError):
+                    load_captured = False
             if is_history:
                 history_chars += message_chars
                 history_count += 1

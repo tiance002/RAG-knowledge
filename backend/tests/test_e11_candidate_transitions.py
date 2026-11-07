@@ -68,7 +68,7 @@ def test_hybrid_to_rerank_transitions_and_observability_equivalence(monkeypatch)
     async def embed(*args):
         return [0.1]
     service._embed_query_for_kb = embed
-    service._enrich_results = lambda session, rows: [{**r, "file_id": r["id"], "content": f"evidence {r['id']}"} for r in rows]
+    service._enrich_results = lambda session, rows, kb_ids=None: [{**r, "file_id": r["id"], "content": f"evidence {r['id']}"} for r in rows]
 
     def run():
         rows, metrics = asyncio.run(service.search(SimpleNamespace(), "query", ["kb"], search_mode="hybrid", top_k=3, score_threshold=0.0, vector_weight=.7, bm25_weight=.3, log_retrieval=False))
@@ -85,21 +85,22 @@ def test_hybrid_to_rerank_transitions_and_observability_equivalence(monkeypatch)
     monkeypatch.setattr(rerank, "event", lambda name, **kw: events.append((name, kw)))
     observed = run()
     assert observed == baseline
-    assert [r["id"] for r in observed[0]] == ["a", "b", "c"]
-    assert [r["id"] for r in observed[1]] == ["c"]
+    assert [r["id"] for r in observed[0]] == ["b", "c", "a"]
+    assert [r["id"] for r in observed[1]] == ["a"]
     transitions = [data for name, data in events if name == "rag.candidate_transition"]
     fusion = next(e for e in transitions if e["operation"] == "weighted_fusion")
-    assert fusion["method"] == "weighted_normalized_sum"
-    assert {v["candidate_id"]: v["fusion_score"] for v in fusion["scores"]} == {"a": .7, "b": .5, "c": .3, "d": 0.0}
+    assert fusion["method"] == "weighted_rrf"
+    assert fusion["rrf_k"] == 60
+    assert {v["candidate_id"]: v["fusion_score"] for v in fusion["scores"]} == {"a": .7 / 61, "b": .7 / 62 + .3 / 62, "c": .7 / 63 + .3 / 61, "d": .3 / 63}
     fusion_topk = next(e for e in transitions if e.get("rule_version") == "fusion_topk_v1")
-    assert fusion_topk["output_ids"] == ["a", "b", "c"]
+    assert fusion_topk["output_ids"] == ["b", "c", "a"]
     assert fusion_topk["removed"][0]["candidate_id"] == "d"
     mapping = next(e for e in transitions if e.get("rule_version") == "batch_rerank_output_v1")
-    assert [(m["response_index"], m["candidate_id"]) for m in mapping["response_mapping"]] == [(1, "b"), (2, "c"), (0, "a")]
+    assert [(m["response_index"], m["candidate_id"]) for m in mapping["response_mapping"]] == [(1, "c"), (2, "a"), (0, "b")]
     sort = next(e for e in transitions if e.get("rule_version") == "rerank_sort_v1")
-    assert sort["input_ids"] == ["b", "c", "a"]
-    assert sort["output_ids"] == ["c", "a", "b"]
+    assert sort["input_ids"] == ["c", "a", "b"]
+    assert sort["output_ids"] == ["a", "b", "c"]
     filtered = next(e for e in transitions if e["operation"] == "threshold_filter")
-    assert filtered["output_ids"] == ["c", "a"] and filtered["removed"][0]["candidate_id"] == "b"
+    assert filtered["output_ids"] == ["a", "b"] and filtered["removed"][0]["candidate_id"] == "c"
     selected = next(e for e in transitions if e.get("rule_version") == "rerank_topk_v1")
-    assert selected["output_ids"] == ["c"] and selected["removed"][0]["candidate_id"] == "a"
+    assert selected["output_ids"] == ["a"] and selected["removed"][0]["candidate_id"] == "b"

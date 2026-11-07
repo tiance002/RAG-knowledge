@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, message, Spin, Empty, Modal, Space, Input, Tag, Image } from 'antd';
+import { Menu, Button, message, Spin, Empty, Modal, Input, Tag, Image } from 'antd';
 import { PageHeader } from '@/components/common';
 import { 
   FileTextOutlined, 
   RocketOutlined, 
   SettingOutlined,
   CheckCircleOutlined,
-  SyncOutlined,
   SaveOutlined,
   FileImageOutlined,
   TableOutlined,
@@ -18,7 +17,8 @@ import type { FileInfo, ChunkInfo } from '@/types';
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
 const IMAGE_FOLDER_ID = 'standalone_images';
-import { getFileList, parseFile, submitChunks, getFileDetail, getFileChunks, updateChunk, vectorizeFile } from '@/services';
+import { useAppStore } from '@/stores';
+import { getModelList, getKnowledgeBaseDetail, getFileList, parseFile, getFileDetail, getFileChunks, updateChunk, vectorizeFile } from '@/services';
 import ChunkCard from '@/components/ChunkCard';
 import ParseModal, { ParseConfig } from '../Detail/ParseModal';
 import styles from './MultiFilePreview.module.css';
@@ -30,13 +30,25 @@ const MultiFilePreview: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const initialConfig = (location.state as { config?: ParseConfig })?.config;
+  const {models, setModels} = useAppStore();
+  const [kbEmbeddingModel, setKbEmbeddingModel] = useState<string>();
+  useEffect(() => {
+    if (!kbId) return;
+    let active = true;
+    Promise.all([getKnowledgeBaseDetail(kbId), getModelList()]).then(([kb, list]) => {
+      if (!active) return;
+      setKbEmbeddingModel(kb.data.embedding_model);
+      const values = Array.isArray(list) ? list : list.data || [];
+      setModels(values);
+    }).catch(() => message.error('加载知识库模型失败，请刷新后操作'));
+    return () => { active = false; };
+  }, [kbId]);
 
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [imageFiles, setImageFiles] = useState<FileInfo[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string>('');
   const [chunks, setChunks] = useState<ChunkInfo[]>([]);
   const [loading, setLoading] = useState(false);
-  const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   
   // 详情编辑相关
@@ -47,10 +59,8 @@ const MultiFilePreview: React.FC = () => {
 
   // 当前解析配置
   const [parseConfig, setParseConfig] = useState<ParseConfig>(initialConfig || {
-    chunk_size: 500,
-    chunk_overlap: 50,
-    separators: ['\n\n'],
-    chunking_mode: 'hierarchical'
+    chunk_mode: 'custom',
+    separator: '\n\n'
   });
   const [isConfigModalVisible, setIsConfigModalVisible] = useState(false);
 
@@ -69,7 +79,7 @@ const MultiFilePreview: React.FC = () => {
       const res = await getFileList(kbId!);
       const fileList = res.data || [];
       
-      let validFiles = fileList.filter(f => f.status !== 'deleted');
+      let validFiles = fileList.filter(f => (f.status as string) !== 'deleted');
       
       // 如果是“统一查看”模式，展示 pending_confirm 或 parsed 的文件
       if (isViewMode) {
@@ -220,7 +230,8 @@ const MultiFilePreview: React.FC = () => {
 
     } catch (error: any) {
       console.error(error);
-      message.error(error.message || '预览解析失败');
+      const detail = error.response?.data?.detail;
+      message.error(typeof detail === 'string' ? detail : error.message || '预览解析失败');
     } finally {
       setLoading(false);
     }
@@ -635,6 +646,9 @@ const MultiFilePreview: React.FC = () => {
         onPreview={handleConfigPreview}
         onDirectProcess={handleConfigDirectProcess}
         loading={false}
+        models={models}
+        kbEmbeddingModel={kbEmbeddingModel}
+        initialConfig={parseConfig}
       />
     </div>
   );

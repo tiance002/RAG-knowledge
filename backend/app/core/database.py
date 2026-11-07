@@ -36,6 +36,8 @@ if "sqlite" in settings.DATABASE_URL:
 def init_db():
     """初始化数据库表"""
     SQLModel.metadata.create_all(engine)
+    from app.core.schema_migrations import migrate_schema
+    migrate_schema(engine)
 
 
 def get_session():

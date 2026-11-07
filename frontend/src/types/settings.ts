@@ -13,9 +13,13 @@ export interface ModelInfo {
 
 /** 系统设置 */
 export interface SystemSettings {
-  defaultEmbeddingModel: string;
-  defaultVlmModel: string;
-  defaultLlmModel: string;
+  defaultEmbeddingModel: string | null;
+  defaultVlmModel: string | null;
+  defaultLlmModel: string | null;
+  revision: number;
+  degraded?: boolean;
+  configError?: string | null;
+  restartRequired?: string[];
   maxConcurrency: number;
   chunkSize: number;
   chunkOverlap: number;
@@ -24,9 +28,10 @@ export interface SystemSettings {
 
 /** 设置更新请求 */
 export interface UpdateSettingsRequest {
-  default_embedding_model?: string;
-  default_vlm_model?: string;
-  default_llm_model?: string;
+  expected_revision: number;
+  default_embedding_model?: string | null;
+  default_vlm_model?: string | null;
+  default_llm_model?: string | null;
   max_concurrency?: number;
   chunk_size?: number;
   chunk_overlap?: number;

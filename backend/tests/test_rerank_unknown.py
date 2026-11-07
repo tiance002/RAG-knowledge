@@ -57,10 +57,12 @@ def test_unknown_batch_stops_before_next_paid_call():
     assert service.rerank.call_count == 1
 
 
-def test_known_batch_failure_retains_original_scores():
+def test_known_batch_failure_keeps_candidate_and_marks_rerank_unknown():
     service = SimpleNamespace(rerank=Mock(side_effect=ValueError("known failure")))
     results = rerank.batch_rerank("q", [{"content": "document", "score": 0.7}], service, MODEL)
-    assert results[0]["rerank_score"] == 0.7
+    assert results[0]["score"] == 0.7
+    assert results[0]["rerank_score"] is None
+    assert results[0]["rerank_status"] == "UNKNOWN"
 
 
 def test_known_preconnect_failure_records_status_before_fallback(monkeypatch):

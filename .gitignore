@@ -30,6 +30,8 @@ debug_run.log
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend-weknora/node_modules/
+frontend-weknora/dist/
 *.tsbuildinfo
 
 # Local-only diagrams and reports
@@ -38,3 +40,9 @@ frontend/.vite/
 # Local development and private evaluation artifacts
 .venv/
 var/
+
+# Local runtime credentials shared by RAG and RSI (template is safe to commit)
+/config/runtime-secrets.env
+
+# Source-derived manifests and private image-description receipts
+/storage/pdf_manifests/

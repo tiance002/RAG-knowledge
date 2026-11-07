@@ -3,6 +3,7 @@
  */
 
 import request from './request';
+import { useAppStore } from '@/stores/app';
 import type {
   ModelInfo,
   SystemSettings,
@@ -19,15 +20,19 @@ export const getModelList = (): Promise<ApiResponse<ModelInfo[]>> => {
 };
 
 /** 获取系统设置 */
-export const getSettings = (): Promise<ApiResponse<SystemSettings>> => {
-  return request.get('/settings');
+export const getSettings = async (): Promise<ApiResponse<SystemSettings>> => {
+  const response = await request.get<ApiResponse<SystemSettings>, ApiResponse<SystemSettings>>('/settings');
+  useAppStore.getState().setSettings(response.data);
+  return response;
 };
 
 /** 更新系统设置 */
-export const updateSettings = (
+export const updateSettings = async (
   data: UpdateSettingsRequest
 ): Promise<ApiResponse<SystemSettings>> => {
-  return request.put('/settings', data);
+  const response = await request.put<ApiResponse<SystemSettings>, ApiResponse<SystemSettings>>('/settings', data);
+  useAppStore.getState().setSettings(response.data);
+  return response;
 };
 
 // ==================== 自定义模型管理 ====================

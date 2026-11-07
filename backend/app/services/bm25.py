@@ -91,7 +91,7 @@ def tokenize(text: str) -> List[str]:
         # - 长度 > 1（过滤单字符，但保留中文双字词）
         # - 不是纯标点
         # - 不是停用词
-        if t and len(t) > 1 and not re.match(r'^[\s\W]+$', t) and t.lower() not in STOP_WORDS:
+        if t and (len(t) > 1 or (not use_jieba and re.fullmatch(r'[\u4e00-\u9fff]', t))) and not re.match(r'^[\s\W]+$', t) and t.lower() not in STOP_WORDS:
             all_tokens.append(t.lower())
 
     return all_tokens
@@ -135,6 +135,10 @@ class BM25Index:
             content: chunk 内容
             kb_id: 知识库 ID
         """
+        # Parents are context-only even when called by a generic index rebuild.
+        chunk = session.get(DocumentChunk, chunk_id)
+        if chunk is not None and chunk.chunk_type == "parent":
+            return
         # 分词
         tokens = tokenize(content)
         if not tokens:
@@ -252,7 +256,7 @@ class BM25Index:
         chunks = session.exec(
             select(DocumentChunk)
             .join(FileDocument)
-            .where(FileDocument.kb_id == kb_id)
+            .where(FileDocument.kb_id == kb_id, DocumentChunk.chunk_type != "parent")
         ).all()
 
         # 3. 重建索引

@@ -38,7 +38,7 @@ def test_fulltext_empty_and_failure(monkeypatch, error, expected):
     assert [kw["outcome"] for name, kw in events if name == "retrieval.outcome"] == [expected]
 
 
-def test_hybrid_empty_preserves_vector_fallback(monkeypatch):
+def test_hybrid_empty_does_not_repeat_vector_call(monkeypatch):
     svc = service()
     svc.vector_store.query.return_value = []
     svc.bm25_index.search.return_value = []
@@ -46,8 +46,10 @@ def test_hybrid_empty_preserves_vector_fallback(monkeypatch):
     events = []
     monkeypatch.setattr(retrieval, "event", lambda name, **kw: events.append((name, kw)))
     results, metrics = run_search(svc, "hybrid")
-    assert results == [] and metrics["fallback_used"] is True
-    svc._vector_search.assert_awaited_once()
+    assert results == [] and metrics["fallback_used"] is False
+    svc._vector_search.assert_not_awaited()
+    svc.vector_store.query.assert_called_once()
+    svc._embed_query_for_kb.assert_awaited_once()
     assert [kw["outcome"] for name, kw in events if name == "retrieval.outcome"] == ["NO_RESULTS"]
 
 

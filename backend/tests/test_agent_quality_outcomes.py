@@ -16,8 +16,8 @@ from app.services import agent_workflow
     [
         ([{"id": "candidate"}], "0.65", None, 0.65, True),
         ([], None, None, 0.0, False),
-        ([{"id": "candidate"}], "not a score", None, 0.5, False),
-        ([{"id": "candidate"}], "-0.5", None, 0.5, False),
+        ([{"id": "candidate"}], "not a score", None, None, False),
+        ([{"id": "candidate"}], "-0.5", None, None, False),
         ([{"id": "candidate"}], None, RuntimeError("unavailable"), 0.5, False),
         ([{"id": "candidate"}], "0.8", None, 0.8, False),
     ],

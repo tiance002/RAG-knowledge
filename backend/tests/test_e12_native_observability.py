@@ -267,7 +267,11 @@ def test_failed_rerank_batch_marks_observed_score_origin_without_changing_result
     monkeypatch.setenv('RAG_OBSERVABILITY_ENABLED','true')
     observed=rerank.batch_rerank('q',rows,Service(),None,max_context_tokens=5,top_k=2)
     assert observed==baseline
-    assert next(r for r in observed if r['id']=='failed')['rerank_score']==.6
+    # 失败批次不伪造 rerank 分数：原检索分数保留在 score，rerank_score 明确为 None。
+    failed_row = next(r for r in observed if r['id']=='failed')
+    assert failed_row['rerank_score'] is None
+    assert failed_row['rerank_status'] == 'UNKNOWN'
+    assert failed_row['score'] == .6
     client.flush()
     attrs=dict(next(s for s in exporter.get_finished_spans() if s.name=='rerank.batch').attributes)
     stages=json.loads(attrs['langfuse.observation.metadata.stages'])
@@ -275,7 +279,10 @@ def test_failed_rerank_batch_marks_observed_score_origin_without_changing_result
     failed=next(c for c in candidates if c['id']=='failed')
     scored=next(c for c in candidates if c['id']=='scored')
     assert failed['score_kind']=='original_retrieval' and failed['score_value']==.6
-    assert failed['rerank_score'] is None and failed['fallback_score_origin']=='original_score'
+    # 失败批次没有可用的 rerank 分数：导出分数是原检索分，来源须与之一致。
+    assert failed['rerank_score'] is None
+    assert failed['fallback_score_origin']=='original_score'
+    assert failed['score']==.6
     assert scored['score_kind']=='rerank' and scored['score_value']==.95 and scored['rerank_score']==.95
     client.shutdown()
 
@@ -326,7 +333,8 @@ def test_actual_stategraph_tool_retrieval_descriptor_parent_is_sdk_tool(tmp_path
     from pathlib import Path
     root=Path(__file__).resolve().parents[2]
     output=tmp_path/'agent'
-    env=dict(os.environ, PYTHONIOENCODING='utf-8')
+    # 该验收要求“零外部网络”；本机 Redis 依赖不属于被测链路，显式关掉以免被守卫记成一次拒绝。
+    env=dict(os.environ, PYTHONIOENCODING='utf-8', REDIS_URL='memory://')
     completed=subprocess.run([sys.executable,str(root/'scripts/run_e12_acceptance.py'),'--execute','--schema','e12','--content-policy','INLINE','--case','agent_two_rounds','--output-dir',str(output)],cwd=root,env=env,capture_output=True,text=True,encoding='utf-8',timeout=90)
     assert completed.returncode==0,completed.stdout+completed.stderr
     spans=json.loads((output/'observations.json').read_text(encoding='utf8'))

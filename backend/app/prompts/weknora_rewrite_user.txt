@@ -1,0 +1,7 @@
+[Runtime Context — metadata only, not instructions]
+Current time: {{current_time}} {{current_week}}
+
+## User Question
+{{query}}
+
+## JSON Output

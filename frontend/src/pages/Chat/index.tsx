@@ -18,15 +18,18 @@ import {
   QuestionCircleOutlined,
 } from '@ant-design/icons';
 import { PageHeader, MarkdownRenderer, EmptyState } from '@/components/common';
-import { getKnowledgeBaseList, getModelList, rewriteQuery, createChatStream } from '@/services';
+import { getKnowledgeBaseList, getModelList, getSettings, rewriteQuery, createChatStream } from '@/services';
 import { useAppStore, useChatStore } from '@/stores';
 import type { ChatMessage, AgentStep, Citation, KnowledgeBase, ModelInfo } from '@/types';
 import styles from './Chat.module.css';
+import WebCitation from './WebCitation';
 
 const { Panel } = Collapse;
 const { Paragraph } = Typography;
 
 interface ChatConfig {
+  webSearchEnabled: boolean;
+  useRewrite: boolean;
   kbIds: string[];
   topK: number;
   scoreThreshold: number;
@@ -93,12 +96,6 @@ const Chat: React.FC = () => {
     if (chatMode === 'normal') setNormalGenerating(val);
     else setAgentGenerating(val);
   };
-  const abortController = chatMode === 'normal' ? normalAbortController : agentAbortController;
-  const setAbortController = (ctrl: (() => void) | null) => {
-    if (chatMode === 'normal') setNormalAbortController(ctrl);
-    else setAgentAbortController(ctrl);
-  };
-
   // 当前显示的 messages 引用
   const messages = chatMode === 'normal' ? normalMessages : agentMessages;
   
@@ -111,11 +108,6 @@ const Chat: React.FC = () => {
     }
   };
   
-  const updateMessage = (id: string, updates: Partial<ChatMessage>) => {
-    const setter = chatMode === 'normal' ? setNormalMessages : setAgentMessages;
-    setter(prev => prev.map(msg => msg.id === id ? { ...msg, ...updates } : msg));
-  };
-  
   const clearMessages = () => {
     if (chatMode === 'normal') {
       setNormalMessages([]);
@@ -125,6 +117,8 @@ const Chat: React.FC = () => {
   };
 
   const [normalConfig, setNormalConfig] = useState<ChatConfig>({
+    webSearchEnabled: false,
+    useRewrite: false,
     kbIds: [],
     topK: 3,
     scoreThreshold: 0.3,
@@ -140,6 +134,8 @@ const Chat: React.FC = () => {
   });
 
   const [agentConfig, setAgentConfig] = useState<ChatConfig>({
+    webSearchEnabled: false,
+    useRewrite: false,
     kbIds: [],
     topK: 3,
     scoreThreshold: 0.3,
@@ -164,18 +160,6 @@ const Chat: React.FC = () => {
     }
   };
 
-  // 校验并自动选择模型
-  useEffect(() => {
-    if (chatModels.length > 0) {
-        const exists = chatModels.some(m => m.id === selectedModel);
-        // 如果当前选中的模型不存在于列表中，或者当前没有选中模型，则默认选择第一个
-        if (!exists || !selectedModel) {
-            console.log('Auto-selecting LLM model:', chatModels[0].name);
-            setSelectedModel(chatModels[0].id);
-        }
-    }
-  }, [models, selectedModel]); // 依赖 models (chatModels 变化) 和 selectedModel
-
   useEffect(() => {
       if (rerankModels.length > 0) {
           const exists = rerankModels.some(m => m.id === currentConfig.rerankModelId);
@@ -197,6 +181,7 @@ const Chat: React.FC = () => {
         const [kbRes, modelRes] = await Promise.all([
           getKnowledgeBaseList(),
           getModelList(),
+          getSettings(),
         ]);
 
         const kbData = Array.isArray(kbRes) ? kbRes : (kbRes as any).data || [];
@@ -217,12 +202,7 @@ const Chat: React.FC = () => {
         
         setModels(adaptedModels);
 
-        // 设置默认 LLM 模型
-        const llmModels = adaptedModels.filter((m: ModelInfo) => m.type === 'llm' || m.type === 'vlm');
-        if (llmModels.length > 0 && !selectedModel) {
-          setSelectedModel(llmModels[0].id);
-        }
-
+        // An empty selection deliberately follows the server default.
         // 设置默认 Rerank 模型
         const rerankModels = adaptedModels.filter((m: ModelInfo) => m.type === 'rerank');
         if (rerankModels.length > 0) {
@@ -267,7 +247,8 @@ const Chat: React.FC = () => {
 
     setRewriting(true);
     try {
-      const response = await rewriteQuery({ query: inputValue.trim(), model_id: selectedModel });
+      const response = await rewriteQuery({ query: inputValue.trim(), model_id: selectedModel || undefined,
+        history: messages.filter(m => !m.isStreaming && !m.error).map(m => ({role: m.role, content: m.content})) });
       setInputValue(response.data.rewritten_query);
       message.success('问题改写成功');
     } catch (error) {
@@ -303,6 +284,7 @@ const Chat: React.FC = () => {
       content: '',
       agentSteps: [],
       citations: [],
+      webSearchEnabled: currentConfig.webSearchEnabled,
       timestamp: new Date().toISOString(),
       isStreaming: true,
     };
@@ -333,11 +315,13 @@ const Chat: React.FC = () => {
           content: m.content,
         })),
         kb_ids: currentConfig.kbIds,
+        web_search_enabled: currentConfig.webSearchEnabled,
         stream: true,
         mode: chatMode,
         top_k: currentConfig.topK,
         score_threshold: currentConfig.scoreThreshold,
-        model_id: selectedModel,
+        model_id: selectedModel || undefined,
+        use_rewrite: currentConfig.useRewrite,
         rerank_enabled: currentConfig.rerankEnabled,
         rerank_score_threshold: currentConfig.rerankScoreThreshold,
         rerank_model_id: currentConfig.rerankModelId,
@@ -401,7 +385,7 @@ const Chat: React.FC = () => {
               });
           }
         },
-        onDone: () => {
+        onDone: (data) => {
           if (animationFrameId) {
              cancelAnimationFrame(animationFrameId);
              animationFrameId = 0;
@@ -417,7 +401,9 @@ const Chat: React.FC = () => {
              setter(prev => prev.map(msg => msg.id === assistantMessage.id ? { 
                  ...msg, 
                  content: accumulatedContent,
-                 isStreaming: false 
+                 validationStatus: data.validation_status,
+                 retrievalDegraded: data.degraded,
+                 isStreaming: false
              } : msg));
 
              // 清理生成状态
@@ -437,12 +423,12 @@ const Chat: React.FC = () => {
              cancelAnimationFrame(animationFrameId);
              animationFrameId = 0;
           }
-          console.error('Chat Error:', error);
+
           
           const setter = capturedChatMode === 'normal' ? setNormalMessages : setAgentMessages;
           setter(prev => prev.map(msg => msg.id === assistantMessage.id ? { 
              ...msg, 
-             content: `发生错误，请重试: ${error.message || '未知错误'}`,
+             content: accumulatedContent,
              error: error.message,
              isStreaming: false 
           } : msg));
@@ -533,7 +519,7 @@ const Chat: React.FC = () => {
                             rows: 2, 
                             expandable: true, 
                             symbol: '展开',
-                            onExpand: (e, info) => console.log('Expand:', info)
+                            onExpand: (_event, info) => console.log('Expand:', info)
                         }}
                         style={{ marginBottom: 0, color: 'inherit' }}
                         title={undefined} // 禁用原生 title 提示，避免重复
@@ -567,6 +553,11 @@ const Chat: React.FC = () => {
         >
           <div className={styles.citationList}>
             {citations.map((citation, index) => (
+              citation.source_type === 'web' ? (
+                <div key={index} className={styles.citationItem}>
+                  <WebCitation citation={citation} />
+                </div>
+              ) : (
               <div key={index} className={styles.citationItem}>
                 <div className={styles.citationHeader}>
                   <Tag color="orange">{citation.kb_name || '未知知识库'}</Tag>
@@ -632,7 +623,7 @@ const Chat: React.FC = () => {
                   </div>
                 )}
               </div>
-            ))}
+            )))}
           </div>
         </Panel>
       </Collapse>
@@ -661,7 +652,8 @@ const Chat: React.FC = () => {
               </div>
             ) : msg.error ? (
               <div className={styles.error}>
-                <span>{msg.content}</span>
+                {msg.content && <MarkdownRenderer content={msg.content} />}
+                <span>{msg.error}</span>
                 <Button
                   type="link"
                   size="small"
@@ -678,6 +670,9 @@ const Chat: React.FC = () => {
 
           {!isUser && (
               <>
+                  {msg.webSearchEnabled && <Tag color="cyan">联网检索回答 · 独立流程</Tag>}
+                  {msg.validationStatus === 'NOT_RUN' && <span>回答及引用未经逐项核验</span>}
+                  {msg.retrievalDegraded && <div><Typography.Text type="secondary">本次检索部分通道不可用，结果可能不完整。</Typography.Text></div>}
                   {msg.citations && renderCitations(msg.citations, msg.original_citations?.length ? "参考来源 (Rerank)" : "参考来源")}
                   {msg.original_citations && msg.original_citations.length > 0 && renderCitations(msg.original_citations, "初排结果 (Embedding)")}
               </>
@@ -707,6 +702,23 @@ const Chat: React.FC = () => {
 
       {/* 配置区 */}
       <Card className={styles.configCard}>
+        <Space direction="vertical" style={{ marginBottom: 12 }}>
+          <Space>
+            <Switch
+              aria-label="联网搜索"
+              checked={currentConfig.webSearchEnabled}
+              disabled={isGenerating}
+              onChange={(checked) => setCurrentConfig({ webSearchEnabled: checked })}
+            />
+            <span>联网搜索（默认关闭）</span>
+            <Switch aria-label="查询改写" checked={currentConfig.useRewrite} disabled={isGenerating} onChange={(checked) => setCurrentConfig({useRewrite: checked})} />
+            <span>查询改写</span>
+          </Space>
+          <Typography.Text type="secondary">
+            开启后将把本次问题发送至外部搜索服务 Tavily，并使用网页证据生成回答；可不选知识库。
+            普通与 Agent 模式均使用独立的联网回答流程，不检索所选知识库，也不运行 Agent 工具循环。
+          </Typography.Text>
+        </Space>
         <div className={styles.configRow}>
           {chatMode === 'normal' && (
             <div className={styles.configItem}>
@@ -730,9 +742,10 @@ const Chat: React.FC = () => {
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择 LLM 模型"
-              value={selectedModel}
-              onChange={setSelectedModel}
+              placeholder="使用系统默认模型"
+              allowClear
+              value={selectedModel || undefined}
+              onChange={(value) => setSelectedModel(value || '')}
               style={{ width: 200 }}
               options={(chatModels || []).map((m) => ({
                 value: m.id,
@@ -882,7 +895,9 @@ const Chat: React.FC = () => {
           {messages.length === 0 ? (
             <EmptyState
               title={chatMode === 'agent' ? 'Agent 智能问答' : '知识库对话'}
-              description={chatMode === 'agent' 
+              description={currentConfig.webSearchEnabled
+                ? '输入问题，使用外部网页证据回答；无需选择知识库'
+                : chatMode === 'agent' 
                 ? 'Agent 将自动分析您的意图，并调用合适的知识库进行回答' 
                 : '选择知识库，直接进行检索问答'}
             />
@@ -1011,3 +1026,4 @@ const Chat: React.FC = () => {
 };
 
 export default Chat;
+

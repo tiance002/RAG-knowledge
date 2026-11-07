@@ -18,7 +18,7 @@ def test_vector_observation_preserves_results(monkeypatch, tmp_path):
     async def embed(*args):
         return [1.0]
     service._embed_query_for_kb = embed
-    service._enrich_results = lambda session, rows: rows
+    service._enrich_results = lambda session, rows, kb_ids=None: rows
     session = SimpleNamespace(get=lambda *args: SimpleNamespace(name='kb'))
     result, _ = asyncio.run(service.search(session, 'private query', ['kb'], search_mode='vector', use_cache=False, log_retrieval=False))
     assert [r['id'] for r in result] == ['a']

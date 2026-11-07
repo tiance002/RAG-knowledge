@@ -71,7 +71,7 @@ const ChunkCard: React.FC<ChunkCardProps> = ({
    // 渲染头部
    const renderChunkHeader = () => {
        // 检查是否是单独上传的图片文件 (根据 metadata)
-       const isStandaloneImage = chunk.metadata?.is_standalone_image;
+       const isStandaloneImage = chunk.metadata?.is_standalone_image === true;
        const originalName = chunk.metadata?.original_name as string | undefined;
 
        return (

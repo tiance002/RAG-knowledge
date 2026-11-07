@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Row, Col, Spin, message, Modal, Form, Input, Select, Table, Space, Popconfirm, Tooltip, Tag } from 'antd';
+import { Card, Button, Row, Col, Spin, message, Modal, Form, Input, Table, Space, Popconfirm, Tooltip, Tag } from 'antd';
 import {
   PlusOutlined,
   DatabaseOutlined,
@@ -27,7 +27,7 @@ import {
 } from '@/services';
 import { useAppStore } from '@/stores';
 import { formatRelativeTime, formatNumber } from '@/utils';
-import type { KnowledgeBase, ModelInfo, CreateKnowledgeBaseRequest } from '@/types';
+import type { KnowledgeBase, CreateKnowledgeBaseRequest } from '@/types';
 import styles from './List.module.css';
 
 const KnowledgeBaseList: React.FC = () => {
@@ -160,6 +160,7 @@ const KnowledgeBaseList: React.FC = () => {
   const handleCreate = async (values: CreateKnowledgeBaseRequest) => {
     setCreateLoading(true);
     try {
+      // Omitted selections are resolved atomically by the server default.
       await createKnowledgeBase(values);
       message.success('创建成功');
       setCreateModalVisible(false);
@@ -226,8 +227,6 @@ const KnowledgeBaseList: React.FC = () => {
   };
 
   // 获取 embedding 模型列表
-  const embeddingModels = models.filter((m) => m.type?.toLowerCase() === 'embedding');
-  const vlmModels = models.filter((m) => m.type === 'vlm');
 
   return (
     <div className={styles.container}>
@@ -302,23 +301,7 @@ const KnowledgeBaseList: React.FC = () => {
             />
           </Form.Item>
 
-          <Form.Item
-            name="embedding_model"
-            label="Embedding 模型"
-            hidden
-            initialValue="sys_embedding"
-          >
-            <Input />
-          </Form.Item>
-
-          <Form.Item
-            name="vlm_model"
-            label="VLM 模型"
-            hidden
-            initialValue="default"
-          >
-             <Input />
-          </Form.Item>
+          <p>新知识库使用系统设置中的默认模型；已有知识库的绑定保持不变。</p>
 
           <Form.Item className={styles.formActions}>
             <Button

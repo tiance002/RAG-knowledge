@@ -8,11 +8,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, Input, Slider, Button, Row, Col, Spin, Tag, Progress, Image, Switch, Divider, Select, message, Radio, Tooltip, Tabs, Table, Popconfirm, Modal, Space } from 'antd';
+import { Card, Input, Slider, Button, Row, Col, Spin, Tag, Image, Switch, Divider, Select, message, Radio, Tooltip, Tabs, Table, Popconfirm, Modal, Space } from 'antd';
 import { SearchOutlined, FileTextOutlined, InfoCircleOutlined, ThunderboltOutlined, HistoryOutlined, DeleteOutlined, ClearOutlined, EyeOutlined } from '@ant-design/icons';
 import { EmptyState, MarkdownRenderer } from '@/components/common';
 import { executeRecallTest, getCustomModels, getRetrievalLogs, deleteRetrievalLog, clearRetrievalLogs } from '@/services';
-import { DEFAULT_RECALL_PARAMS } from '@/utils';
 import type { RecallResult, CustomModel, RetrievalLog } from '@/types';
 import styles from './RecallTest.module.css';
 import dayjs from 'dayjs';

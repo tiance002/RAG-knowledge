@@ -3,7 +3,7 @@ from app.services.observability import observe, event
 文件管理 API 路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, BackgroundTasks, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Body, Query
 from fastapi.responses import Response
 from typing import Optional
 from sqlmodel import Session, select, func
@@ -16,11 +16,38 @@ from app.core.database import get_session
 from app.core.config import get_settings
 from app.models import KnowledgeBase, FileDocument, FileStatus, generate_uuid, DocumentChunk
 from app.schemas import FileUploadResponse, FileStatusResponse, ApiResponse
-from app.tasks.parse_tasks import process_file_parsing
-from app.services.metrics import track_background_task
+from app.tasks.dispatch import (dispatch_file_task, FileTaskBusy, DispatchUnconfirmed,
+                                FileTaskReceipt, receipt_view)
 
 router = APIRouter(tags=["File"])
 settings = get_settings()
+
+
+def _dispatch(file_id, operation, payload):
+    try:
+        return dispatch_file_task(file_id, operation, payload)
+    except FileTaskBusy as exc:
+        raise HTTPException(status_code=409, detail={"message": str(exc), "task_id": exc.task_id}) from exc
+    except DispatchUnconfirmed as exc:
+        raise HTTPException(status_code=503, detail={"message": str(exc), "task_id": exc.task_id,
+                                                   "status": "PUBLISH_UNKNOWN"}) from exc
+
+
+@router.get("/files/{file_id}/tasks", response_model=ApiResponse)
+def list_file_tasks(file_id: str, session: Session = Depends(get_session)):
+    if session.get(FileDocument, file_id) is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    rows = session.exec(select(FileTaskReceipt).where(FileTaskReceipt.file_id == file_id)
+                        .order_by(FileTaskReceipt.created_at.desc()).limit(20)).all()
+    return ApiResponse(data=[receipt_view(row) for row in rows])
+
+
+@router.get("/files/{file_id}/tasks/{task_id}", response_model=ApiResponse)
+def get_file_task(file_id: str, task_id: str, session: Session = Depends(get_session)):
+    row = session.get(FileTaskReceipt, task_id)
+    if row is None or row.file_id != file_id or session.get(FileDocument, file_id) is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return ApiResponse(data=receipt_view(row))
 
 
 def get_file_extension(filename: str) -> str:
@@ -63,11 +90,12 @@ def read_pdf_source(file_id: str, kb_id: str, sha256: str = Query(pattern=r'^[0-
 @observe("ingest.upload")
 async def upload_file(
     kb_id: str,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
+    action: str = Query(default="auto"),
+    target_file_id: Optional[str] = Query(default=None),
 ):
-    """上传文件"""
+    """上传文件；同名操作显式选择，替换保留历史版本。"""
     # 检查知识库是否存在
     kb = session.get(KnowledgeBase, kb_id)
     if not kb:
@@ -84,46 +112,39 @@ async def upload_file(
             detail={"code": 40001, "message": f"不支持的文件格式: {ext}"},
         )
 
-    # 读取文件内容检查大小
-    content = await file.read()
-    if len(content) > settings.MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": 40002, "message": "文件过大，最大支持 100MB"},
-        )
-
-    # 生成文件 ID 和存储路径
+    # Stream the exact saved bytes; UUID storage keys never contain user paths.
+    import hashlib
+    from pathlib import Path
+    from app.services.file_uploads import register_upload
     file_id = generate_uuid()
-    kb_upload_dir = os.path.join(settings.UPLOAD_DIR, kb_id)
-    os.makedirs(kb_upload_dir, exist_ok=True)
+    directory = Path(settings.UPLOAD_DIR) / kb_id
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{file_id}_source{ext}"
+    digest = hashlib.sha256()
+    size = 0
+    retained = False
+    try:
+        async with aiofiles.open(path, "xb") as handle:
+            while part := await file.read(1024 * 1024):
+                size += len(part)
+                if size > settings.MAX_FILE_SIZE:
+                    raise HTTPException(400, detail={"code": 40002, "message": "文件过大，最大支持 100MB"})
+                digest.update(part)
+                await handle.write(part)
+        result = register_upload(session, kb_id=kb_id, file_id=file_id,
+                                 name=file.filename, path=path, size=size,
+                                 sha256=digest.hexdigest(), action=action,
+                                 target_file_id=target_file_id)
+        retained = not result["duplicate"]
+        event("ingest.uploaded" if retained else "ingest.upload_duplicate",
+              file_id=result["file_id"], kb_id=kb_id, status=result["status"],
+              outcome=result["outcome"])
+        return ApiResponse(data=FileUploadResponse(**result))
+    finally:
+        if not retained:
+            session.rollback()
+            path.unlink(missing_ok=True)
 
-    safe_filename = f"{file_id}_{file.filename}"
-    file_path = os.path.join(kb_upload_dir, safe_filename)
-
-    # 保存文件
-    async with aiofiles.open(file_path, "wb") as f:
-        await f.write(content)
-
-    # 创建文件记录
-    file_doc = FileDocument(
-        id=file_id,
-        kb_id=kb_id,
-        name=file.filename,
-        local_path=file_path,
-        size=len(content),
-        status=FileStatus.PENDING,
-    )
-    session.add(file_doc)
-    session.commit()
-    session.refresh(file_doc)
-    event("ingest.uploaded", file_id=file_doc.id, kb_id=kb_id, status="PENDING")
-
-    # 不再自动触发后台解析任务，等待用户手动触发
-    # background_tasks.add_task(process_file_parsing, file_id)
-
-    return ApiResponse(
-        data=FileUploadResponse(file_id=file_id, status=file_doc.status.value)
-    )
 
 
 @router.get(
@@ -164,6 +185,10 @@ async def list_files(
         FileStatusResponse(
             id=f.id,
             name=f.name,
+            original_name=f.original_name or f.name,
+            display_name=f.display_name or f.name,
+            sha256=f.sha256,
+            supersedes_file_id=f.supersedes_file_id,
             size=f.size,
             status=f.status.value,
             progress=f.progress,
@@ -199,6 +224,10 @@ async def get_file_detail(
         data=FileStatusResponse(
             id=file_doc.id,
             name=file_doc.name,
+            original_name=file_doc.original_name or file_doc.name,
+            display_name=file_doc.display_name or file_doc.name,
+            sha256=file_doc.sha256,
+            supersedes_file_id=file_doc.supersedes_file_id,
             size=file_doc.size,
             status=file_doc.status.value,
             progress=file_doc.progress,
@@ -212,7 +241,6 @@ async def get_file_detail(
 @router.post("/files/{file_id}/parse", response_model=ApiResponse)
 async def parse_file_manually(
     file_id: str,
-    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
     # 使用 Body() 正确解析请求体参数
     config: Optional[dict] = Body(default=None),
@@ -225,11 +253,9 @@ async def parse_file_manually(
             detail={"code": 40401, "message": "文件不存在"},
         )
 
-    # 打印接收到的配置
-    print(f"📥 [API] Parse Request: file_id={file_id}, config={config}", flush=True)
 
     # 提取 config 中的参数
-    # config is a dict because of Body(default=None) type hint Optional[dict]
+    config = config or {}
     chunk_mode = config.get('chunk_mode')
     chunk_size = config.get('chunk_size')
     chunk_overlap = config.get('chunk_overlap')
@@ -238,34 +264,27 @@ async def parse_file_manually(
     embedding_model = config.get('embedding_model')
     vector_model = config.get('vector_model')
 
-    # 更新文件状态为解析中，确保前端轮询可以检测到变化
-    file_doc.status = FileStatus.PARSING
-    file_doc.progress = 0
-    session.add(file_doc)
-    session.commit()
+    if not auto_vectorize:
+        from app.services.vector_store import VectorStoreService
+        collection = VectorStoreService()._existing_collection(file_doc.kb_id)
+        if collection is not None and collection.get(where={"file_id": file_id}, limit=1)["ids"]:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                detail="文件已有有效向量，暂不支持保留索引的手动重解析；请选择自动入库")
 
-    # 触发后台任务，传递参数
-    background_tasks.add_task(
-        track_background_task("parse")(process_file_parsing),
-        file_id,
-        chunk_mode=chunk_mode,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separator=config.get('separator', "\n\n"),
-        heading_level=heading_level,
-        auto_vectorize=auto_vectorize,
-        embedding_model=embedding_model,
-        vector_model=vector_model
-    )
-
-    return ApiResponse(message="已触发解析任务")
+    task = _dispatch(file_id, 'parse', dict(
+        chunk_mode=chunk_mode, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+        separator=config.get('separator', "\n\n"), heading_level=heading_level,
+        auto_vectorize=auto_vectorize, embedding_model=embedding_model,
+        vector_model=vector_model,
+        **{key: config[key] for key in ("parent_child", "parent_chunk_size", "parent_chunk_overlap", "child_chunk_size", "child_chunk_overlap") if key in config},
+    ))
+    return ApiResponse(message="解析任务已入队", data=task)
 
 
 @router.post("/files/{file_id}/chunks/submit", response_model=ApiResponse)
 async def submit_file_chunks(
     file_id: str,
     data: dict, # { "chunks": [...] }
-    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
     """提交确认的分块结果，触发入库"""
@@ -284,17 +303,34 @@ async def submit_file_chunks(
             detail={"code": 40003, "message": "分块数据为空"},
         )
 
-    # 触发后台任务：process_submitted_chunks
-    from app.tasks.parse_tasks import process_submitted_chunks
-    background_tasks.add_task(track_background_task("index")(process_submitted_chunks), file_id, chunks, vector_model=vector_model)
+    # Existing IDs are resolved only within this file; the client may edit content
+    # but cannot substitute another file's structure or provenance.
+    existing_ids = [item.get("id") for item in chunks if isinstance(item, dict) and item.get("id")]
+    originals = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id, DocumentChunk.id.in_(existing_ids))).all() if existing_ids else []
+    by_id = {chunk.id: chunk for chunk in originals}
+    normalized = []
+    for item in chunks:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="无效的分块数据")
+        chunk_id = item.get("id")
+        if chunk_id:
+            original = by_id.get(chunk_id)
+            if original is None:
+                raise HTTPException(status_code=400, detail="分块不属于当前文件或已失效")
+            item = {**item, "page_number": original.page_number, "content_type": original.content_type.value,
+                    "image_path": original.image_path, "parent_id": original.parent_id,
+                    "heading_level": original.heading_level, "heading_text": original.heading_text,
+                    "id": original.id, "chunk_type": original.chunk_type, "token_count": original.token_count,
+                    "start_offset": original.start_offset, "end_offset": original.end_offset}
+        normalized.append(item)
 
-    return ApiResponse(message="已提交分块，开始后台入库")
+    task = _dispatch(file_id, "index", {"chunks_data": normalized, "vector_model": vector_model})
+    return ApiResponse(message="分块入库任务已入队", data=task)
 
 
 @router.post("/files/{file_id}/vectorize", response_model=ApiResponse)
 async def vectorize_file_manually(
     file_id: str,
-    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
     """手动触发向量化入库 (用于正常模式确认)"""
@@ -318,20 +354,23 @@ async def vectorize_file_manually(
     # 构造 chunks 数据格式
     chunks_data = [
         {
+            "id": c.id, "start_offset": c.start_offset, "end_offset": c.end_offset,
             "content": c.content,
             "page_number": c.page_number,
             "content_type": c.content_type.value,
             "image_path": c.image_path,
             "vlm_description": c.vlm_description if hasattr(c, "vlm_description") else None,
+            "parent_id": c.parent_id,
+            "heading_level": c.heading_level,
+            "heading_text": c.heading_text,
+            "chunk_type": c.chunk_type,
+            "token_count": c.token_count,
         }
         for c in chunks
     ]
 
-    # 触发后台任务：process_submitted_chunks (复用提交逻辑)
-    from app.tasks.parse_tasks import process_submitted_chunks
-    background_tasks.add_task(track_background_task("index")(process_submitted_chunks), file_id, chunks_data)
-
-    return ApiResponse(message="已确认，开始后台入库")
+    task = _dispatch(file_id, "index", {"chunks_data": chunks_data})
+    return ApiResponse(message="入库任务已入队", data=task)
 
 
 @router.get("/files/{file_id}/chunks", response_model=ApiResponse)
@@ -397,26 +436,27 @@ async def delete_file(
             detail={"code": 40401, "message": "文件不存在"},
         )
 
-    # 删除物理文件
-    if os.path.exists(file_doc.local_path):
-        os.remove(file_doc.local_path)
-
-    # 从向量库删除相关数据
-    try:
-        from app.services.vector_store import VectorStoreService
-        vector_service = VectorStoreService()
-        vector_service.delete_by_file_id(file_doc.kb_id, file_id)
-    except Exception:
-        pass
+    # Keep the source and its SQL records if vector cleanup cannot run.
+    source_path = file_doc.local_path
+    from app.services.vector_store import VectorStoreService
+    VectorStoreService().delete_by_file_id(file_doc.kb_id, file_id)
 
     # 删除数据库记录
     # 级联删除 chunks
     from app.models import DocumentChunk
     chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).all()
+    from app.services.bm25 import get_bm25_index
+    bm25_index = get_bm25_index()
     for chunk in chunks:
+        bm25_index.delete_chunk_index(session, chunk.id, file_doc.kb_id)
         session.delete(chunk)
-        
+
+    kb = session.get(KnowledgeBase, file_doc.kb_id)
     session.delete(file_doc)
+    session.flush()
+    if kb:
+        kb.chunk_count = session.exec(select(func.count(DocumentChunk.id)).join(FileDocument).where(FileDocument.kb_id == kb.id)).one()
     session.commit()
-    
+    if os.path.exists(source_path):
+        os.remove(source_path)
     return ApiResponse(message="删除成功")

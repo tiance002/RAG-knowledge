@@ -1,0 +1,1 @@
+{"schema_version":"ace-playbook/v1","id":"PB-EXAMPLE-001","revision":1,"previous_sha256":null,"problem":"示例：检索结果可能缺少必要字段","conditions":["仅为公开合成示例，不代表真实实验"],"observation":"示例报告记录字段缺失","strategy":"先检查检索各阶段的证据覆盖","evidence":["docs/examples/rsi-synthetic-evidence-v1.md"],"counterexamples":["尚未在真实资料中验证"],"confidence":"low","status":"candidate","usage_count":0,"success_count":0}

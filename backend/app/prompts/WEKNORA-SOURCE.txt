@@ -1,0 +1,2 @@
+Source: https://github.com/Tencent/WeKnora/blob/e3fb2335bf3f8cadd32142380c60b2677a27bf99/config/prompt_templates/rewrite.yaml
+Template: default_rewrite, content and user; copied without modification.

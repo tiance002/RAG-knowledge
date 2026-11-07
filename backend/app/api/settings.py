@@ -4,8 +4,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
-from pydantic import BaseModel
-from sqlmodel import Session, select
+import json
+from pydantic import BaseModel, Field as PydanticField
+from sqlmodel import Field, Session, SQLModel, select
 
 from app.core.config import get_settings
 from app.core.database import get_session
@@ -17,77 +18,89 @@ models_router = APIRouter(tags=["Meta"]) # 单独的 /models 路由
 settings = get_settings()
 
 
+# Model and configuration identity live in one service, including non-HTTP users.
+from app.services.runtime_settings import (
+    PersistedSystemSettings, get_runtime_settings, update_runtime_settings,
+    RuntimeSettingsUnavailable, SettingsConflict, RuntimeValues,
+)
+from app.services.model_bindings import ModelBindingError, model_references
+
+
+def load_persisted_settings(session: Session):
+    """Compatibility entry point; database settings are the runtime authority."""
+    return get_runtime_settings(session)
+
+
 class ModelInfo(BaseModel):
-    """模型信息（前端期望格式）"""
     id: str
     name: str
-    type: str  # embedding, vlm, llm
+    type: str
     provider: str
 
 
 class SystemSettings(BaseModel):
-    """系统设置（前端格式）"""
-    defaultEmbeddingModel: str
-    defaultVlmModel: str
-    defaultLlmModel: str
+    defaultEmbeddingModel: str | None
+    defaultVlmModel: str | None
+    defaultLlmModel: str | None
     maxConcurrency: int
     chunkSize: int
     chunkOverlap: int
     maxChatHistoryRounds: int
+    revision: int
+    degraded: bool = False
+    configError: str | None = None
+    restartRequired: list[str] = []
 
 
 class UpdateSettingsRequest(BaseModel):
-    """更新设置请求"""
-    default_embedding_model: str = None
-    default_vlm_model: str = None
-    default_llm_model: str = None
-    max_concurrency: int = None
-    chunk_size: int = None
-    chunk_overlap: int = None
-    max_chat_history_rounds: int = None
+    expected_revision: int = PydanticField(ge=1)
+    default_embedding_model: str | None = None
+    default_vlm_model: str | None = None
+    default_llm_model: str | None = None
+    max_concurrency: int | None = PydanticField(default=None, ge=1, le=32)
+    chunk_size: int | None = PydanticField(default=None, ge=128, le=2048)
+    chunk_overlap: int | None = PydanticField(default=None, ge=0, le=512)
+    max_chat_history_rounds: int | None = PydanticField(default=None, ge=1, le=100)
+
+
+def _settings_response(snapshot):
+    return ApiResponse(data=SystemSettings(
+        defaultEmbeddingModel=snapshot.default_embedding_model,
+        defaultVlmModel=snapshot.default_vlm_model,
+        defaultLlmModel=snapshot.default_llm_model,
+        maxConcurrency=snapshot.max_concurrency,
+        chunkSize=snapshot.chunk_size,
+        chunkOverlap=snapshot.chunk_overlap,
+        maxChatHistoryRounds=snapshot.max_chat_history_rounds,
+        revision=snapshot.revision, degraded=snapshot.degraded,
+        configError=snapshot.config_error,
+        # Worker pool concurrency is initialized at Worker startup.
+        restartRequired=['max_concurrency'],
+    ))
 
 
 @router.get("", response_model=ApiResponse[SystemSettings])
-async def get_system_settings():
-    """获取系统设置"""
-    return ApiResponse(data=SystemSettings(
-        defaultEmbeddingModel=settings.EMBEDDING_MODEL,
-        defaultVlmModel=settings.VLM_MODEL,
-        defaultLlmModel=settings.LLM_MODEL,
-        maxConcurrency=settings.MAX_PARSING_WORKERS,
-        chunkSize=settings.CHUNK_SIZE,
-        chunkOverlap=settings.CHUNK_OVERLAP,
-        maxChatHistoryRounds=settings.MAX_CHAT_HISTORY_ROUNDS,
-    ))
+async def get_system_settings(session: Session = Depends(get_session)):
+    try:
+        return _settings_response(get_runtime_settings(session))
+    except (RuntimeSettingsUnavailable, SettingsConflict) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.put("", response_model=ApiResponse[SystemSettings])
-async def update_system_settings(data: UpdateSettingsRequest):
-    """更新系统设置"""
-    if data.default_embedding_model:
-        settings.EMBEDDING_MODEL = data.default_embedding_model
-    if data.default_vlm_model:
-        settings.VLM_MODEL = data.default_vlm_model
-    if data.default_llm_model:
-        settings.LLM_MODEL = data.default_llm_model
-    if data.max_concurrency:
-        settings.MAX_PARSING_WORKERS = data.max_concurrency
-    if data.chunk_size:
-        settings.CHUNK_SIZE = data.chunk_size
-    if data.chunk_overlap:
-        settings.CHUNK_OVERLAP = data.chunk_overlap
-    if data.max_chat_history_rounds:
-        settings.MAX_CHAT_HISTORY_ROUNDS = data.max_chat_history_rounds
-        
-    return ApiResponse(data=SystemSettings(
-        defaultEmbeddingModel=settings.EMBEDDING_MODEL,
-        defaultVlmModel=settings.VLM_MODEL,
-        defaultLlmModel=settings.LLM_MODEL,
-        maxConcurrency=settings.MAX_PARSING_WORKERS,
-        chunkSize=settings.CHUNK_SIZE,
-        chunkOverlap=settings.CHUNK_OVERLAP,
-        maxChatHistoryRounds=settings.MAX_CHAT_HISTORY_ROUNDS,
-    ))
+async def update_system_settings(data: UpdateSettingsRequest, session: Session = Depends(get_session)):
+    changes = data.model_dump(exclude_unset=True)
+    revision = changes.pop('expected_revision')
+    try:
+        snapshot = update_runtime_settings(session, changes, revision)
+    except SettingsConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, ModelBindingError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail='Settings save could not be confirmed; reload before retrying') from exc
+    return _settings_response(snapshot)
 
 
 # ==================== 自定义模型管理 ====================
@@ -127,6 +140,7 @@ async def create_custom_model(
         base_url=model_in.base_url,
         api_key=model_in.api_key,
         model_name=model_in.model_name,
+        context_length=model_in.context_length,
         updated_at=datetime.utcnow(), # Fix: set updated_at
     )
     session.add(db_model)
@@ -145,6 +159,13 @@ async def update_custom_model(
     db_model = session.get(CustomModel, model_id)
     if not db_model:
         raise HTTPException(status_code=404, detail="模型不存在")
+
+    references = model_references(session, model_id)
+    changes_identity = ((model_in.model_type is not None and model_in.model_type != db_model.model_type.value)
+                        or (model_in.model_name is not None and model_in.model_name != db_model.model_name)
+                        or (model_in.base_url is not None and model_in.base_url != db_model.base_url))
+    if references and changes_identity:
+        raise HTTPException(status_code=409, detail={"message": "Model is referenced; migrate its bindings before changing identity", "references": references})
 
     if model_in.name is not None and model_in.name != db_model.name:
         # 检查名称重复 - 已移除限制
@@ -190,6 +211,9 @@ async def delete_custom_model(
     if not db_model:
         raise HTTPException(status_code=404, detail="模型不存在")
     
+    references = model_references(session, model_id)
+    if references:
+        raise HTTPException(status_code=409, detail={"message": "Model is still referenced", "references": references})
     session.delete(db_model)
     session.commit()
     return ApiResponse(message="删除成功")
@@ -226,11 +250,16 @@ async def test_custom_model_connection(
             )
             # 尝试简单对话，只生成 1 token 验证连接
             # 注意：generate_stream 是个 async generator
-            async for _ in service.generate_stream(
-                messages=[{"role": "user", "content": "hi"}], 
+            received = False
+            async for chunk in service.generate_stream(
+                messages=[{"role": "user", "content": "hi"}],
                 model_id=db_model.model_name
             ):
-                break # 只要能收到第一个 chunk 就说明连接成功
+                if chunk:
+                    received = True
+                    break
+            if not received:
+                raise ValueError("模型未返回内容")
                 
         elif db_model.model_type == ModelType.VLM:
              # VLM 暂时没有独立的 Service 类封装，或者复用 LLMService
@@ -241,11 +270,16 @@ async def test_custom_model_connection(
                 api_key=db_model.api_key,
                 model=db_model.model_name
             )
-            async for _ in service.generate_stream(
-                messages=[{"role": "user", "content": "hi"}], 
+            received = False
+            async for chunk in service.generate_stream(
+                messages=[{"role": "user", "content": "hi"}],
                 model_id=db_model.model_name
             ):
-                break
+                if chunk:
+                    received = True
+                    break
+            if not received:
+                raise ValueError("模型未返回内容")
         
         elif db_model.model_type == ModelType.RERANK:
             from app.services.rerank import test_rerank_connection
@@ -272,16 +306,12 @@ async def get_model_list(session: Session = Depends(get_session)):
     models = []
     print("🔍 [GetModelList] 开始获取模型列表...")
 
-    # 1. 系统预设模型 (从 .env 读取)
-    if settings.EMBEDDING_MODEL:
-        sys_model = ModelInfo(
-            id="sys_embedding",
-            name=f"System Embedding ({settings.EMBEDDING_MODEL})",
-            type="embedding",
-            provider="System"
-        )
-        models.append(sys_model)
-        print(f"✅ [GetModelList] 添加系统模型: {sys_model.name}")
+    # Deployment model records remain available through stable system IDs.
+    for role in ('llm', 'embedding', 'vlm'):
+        model_name = getattr(settings, role.upper() + '_MODEL')
+        if model_name:
+            models.append(ModelInfo(id='sys_' + role,
+                name=f'System {role.upper()} ({model_name})', type=role, provider='System'))
 
     # 2. 自定义模型 (从数据库读取)
     try:

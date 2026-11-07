@@ -2,6 +2,8 @@ import json
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
 sys.modules.setdefault("chromadb", MagicMock())
 sys.modules.setdefault("chromadb.config", MagicMock())
 from langchain_core.messages import AIMessage, ToolMessage
@@ -40,12 +42,43 @@ def test_complete_unchecked_candidate_is_sent_without_validator(monkeypatch):
 
 def test_completion_and_retrieval_quality_gates_remain(monkeypatch):
     monkeypatch.setenv("RAG_GROUNDED_GENERATION", "true")
-    for source, response in [(state(), answer(reason=None)), (state(), answer(reason="length")),
-                             (state(), answer(text="")), (state(status="UNKNOWN"), answer()),
-                             (state(status="RETRIEVAL_ERROR"), answer()), (state(status="LOW_RELEVANCE"), answer()),
-                             (state(score=0.5), answer())]:
+    for source, response in [(state(), answer(reason="length")),
+                             (state(), answer(text="")),
+                             (state(status="UNKNOWN"), answer()),
+                             (state(status="RETRIEVAL_ERROR"), answer()),
+                             (state(status="LOW_RELEVANCE"), answer()),
+                             (state(score=0.4), answer())]:
         _, mode = agent_workflow._finalize_knowledge_answer(source, response, include_mode=True)
         assert mode != "GROUNDED_GENERATION"
+
+
+def test_missing_finish_reason_and_partial_score_still_generate(monkeypatch):
+    """网关不返回 finish_reason、或评分只到"部分相关"时，不丢弃已生成的答案。"""
+    monkeypatch.setenv("RAG_GROUNDED_GENERATION", "true")
+    for source, response in [(state(), answer(reason=None)), (state(score=0.5), answer())]:
+        _, mode = agent_workflow._finalize_knowledge_answer(source, response, include_mode=True)
+        assert mode == "GROUNDED_GENERATION"
+
+
+def test_invalid_score_format_does_not_block_generation(monkeypatch):
+    monkeypatch.setenv("RAG_GROUNDED_GENERATION", "true")
+    _, mode = agent_workflow._finalize_knowledge_answer(state(score=None), answer(), include_mode=True)
+    assert mode == "GROUNDED_GENERATION"
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("0.85", 0.85),
+    ("0.85/1.0", 0.85),
+    ("得分：0.85，理由：覆盖了主要信息", 0.85),
+    ("8.5/10", 0.85),
+    ("0.85 out of 1.0", 0.85),
+    ("no error, score 0.9", 0.9),
+    ("完全不相关", None),
+    ("error 500", None),
+    ("0.2 到 0.8 之间", None),
+])
+def test_relevance_score_tolerates_common_wrappers(raw, expected):
+    assert agent_workflow._relevance_score(raw) == expected
 
 
 def test_multiple_success_rounds_are_allowed_but_unknown_is_not(monkeypatch):
@@ -74,8 +107,9 @@ def test_empty_search_then_success_can_generate(monkeypatch):
     assert response.content == "收入为 42 元。[1]"
     assert citations[0]["chunk_id"] == "a"
     source["messages"].append(empty)
+    # 末尾一轮为空不再否决前面成功轮次的证据。
     _, mode = agent_workflow._finalize_knowledge_answer(source, answer(), include_mode=True)
-    assert mode == "EXTRACTIVE_FALLBACK"
+    assert mode == "GROUNDED_GENERATION"
 
 
 def test_mixed_image_preserves_unverified_disclosure(monkeypatch):

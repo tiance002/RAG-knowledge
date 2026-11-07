@@ -39,8 +39,8 @@ class KnowledgeBaseCreate(BaseModel):
     """创建知识库请求"""
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
-    embedding_model: str
-    vlm_model: str
+    embedding_model: Optional[str] = None
+    vlm_model: Optional[str] = None
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -79,11 +79,23 @@ class FileUploadResponse(BaseModel):
     """文件上传响应"""
     file_id: str
     status: str
+    outcome: str = "created"
+    duplicate: bool = False
+    name_conflict: bool = False
+    original_name: Optional[str] = None
+    display_name: Optional[str] = None
+    sha256: Optional[str] = None
+    supersedes_file_id: Optional[str] = None
+    available_actions: List[str] = []
 
 
 class FileStatusResponse(BaseModel):
     """文件状态响应"""
     id: str
+    original_name: Optional[str] = None
+    display_name: Optional[str] = None
+    sha256: Optional[str] = None
+    supersedes_file_id: Optional[str] = None
     name: str
     size: int
     status: str
@@ -152,8 +164,16 @@ class RecallRequest(BaseModel):
 class RecallResult(BaseModel):
     """召回结果"""
     chunkId: Optional[str] = None
+    seed_child_ids: List[str] = Field(default_factory=list)
+    parent_chunk_id: Optional[str] = None
+    context_group: Optional[dict] = None
+    score_origin: Optional[str] = None
+    source_mapping_status: Optional[str] = None
+    expansion_delivery_status: Optional[str] = None
     score: float
     rerank_score: Optional[float] = None
+    rerank_status: Optional[str] = None
+    source_metadata: Optional[dict] = None
     vector_score: Optional[float] = None  # 新增：向量分数
     bm25_score: Optional[float] = None    # 新增：BM25 分数
     content: str
@@ -164,12 +184,17 @@ class RecallResult(BaseModel):
     # 新增：结构化信息
     heading_text: Optional[str] = None
     heading_level: Optional[int] = None
+    source_type: Optional[str] = None
+    url: Optional[str] = None
+    title: Optional[str] = None
 
 
 class RecallTestResponse(BaseModel):
     """召回测试响应"""
     results: List[RecallResult]
     query_time: float
+    retrieval_status: Optional[str] = None
+    expansion_delivery_status: Optional[str] = None
 
 
 # ==================== 对话 ====================
@@ -190,11 +215,16 @@ class Message(BaseModel):
 class RewriteRequest(BaseModel):
     """问题改写请求"""
     query: str = Field(..., min_length=1)
+    history: List[Message] = Field(default_factory=list)
+    model_id: Optional[str] = None
+    images: List[str] = Field(default_factory=list, description="Image data URLs for query understanding")
 
 
 class RewriteResponse(BaseModel):
     """问题改写响应"""
     rewritten_query: str
+    intent: Optional[str] = None
+    image_description: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
@@ -203,6 +233,7 @@ class ChatRequest(BaseModel):
     kb_ids: List[str]
     stream: bool = True
     use_rewrite: bool = False
+    query_images: List[str] = Field(default_factory=list, description="Image data URLs for query understanding")
     mode: Optional[str] = "chat"
     top_k: Optional[int] = 50
     score_threshold: Optional[float] = 0.0
@@ -216,6 +247,7 @@ class ChatRequest(BaseModel):
     bm25_weight: float = 0.3
     rerank_top_k: int = 20
     context_window: int = 1  # 上下文窗口大小
+    web_search_enabled: bool = Field(default=False, description="仅将当前问题发送给 Tavily，使用网页证据回答")
 
 
 # ==================== SSE 事件 ====================

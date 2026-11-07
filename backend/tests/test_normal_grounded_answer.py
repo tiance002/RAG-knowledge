@@ -22,7 +22,9 @@ def run(monkeypatch, candidate, reason='stop', error=None, results=None, questio
     call = AsyncMock(side_effect=error, return_value=(candidate, reason, {'total_tokens': 10}))
     monkeypatch.setattr(grounded_generation, 'generate_grounded_candidate', call)
     service = chat.ChatService.__new__(chat.ChatService)
-    service.llm_service = SimpleNamespace()
+    service.llm_service = SimpleNamespace(model='synthetic')
+    service._runtime_snapshot = lambda: SimpleNamespace(max_chat_history_rounds=20)
+    service._resolved_llm = lambda model: service.llm_service
     if results is None:
         results = [{'id': 'c1', 'file_id': 'f1', 'file_name': 'report', 'page_number': 10,
                     'content': '2023年收入：100万元\n2023年支出：200万元', 'score': 0.9}]
@@ -44,11 +46,17 @@ def test_verified_answer_is_buffered_and_keeps_citations(monkeypatch):
 
 
 @pytest.mark.parametrize('candidate,reason', [
-    ('2023年收入为100万元。[1]', 'length'), ('', 'stop'), ('可用答案', None),
+    ('2023年收入为100万元。[1]', 'length'), ('', 'stop'),
 ])
 def test_incomplete_or_unknown_candidate_falls_back(monkeypatch, candidate, reason):
     events, _ = run(monkeypatch, candidate, reason)
     assert next(data for kind, data in events if kind == 'done')['answer_mode'] == 'EXTRACTIVE_FALLBACK'
+
+
+def test_missing_finish_reason_is_treated_as_completed(monkeypatch):
+    """部分网关不返回 finish_reason；内容非空时不应降级成原文摘录。"""
+    events, _ = run(monkeypatch, '可用答案', None)
+    assert next(data for kind, data in events if kind == 'done')['answer_mode'] == 'GROUNDED_GENERATION'
 
 
 @pytest.mark.parametrize('candidate', ['2023年收入为200万元。[1]', '2023年收入为100万元。[2]',
@@ -83,10 +91,11 @@ def test_extractive_fallback_is_bounded_but_citations_remain_complete(monkeypatc
     answer = next(data['content'] for kind, data in events if kind == 'answer_chunk')
     citations = next(data['citations'] for kind, data in events if kind == 'rag_result')
     assert len(citations) == 5 and all(len(c['content']) == 600 for c in citations)
-    assert len(answer) < 300
+    # 兜底摘录放宽到 2 条 × 400 字符；完整片段仍在 citations 里。
+    assert len(answer) < 1100
     assert '目前无法确认问题的答案' in answer
     assert '以上仅展示部分摘录' in answer
-    assert '[1]' in answer and '[2]' not in answer
+    assert '[1]' in answer and '[2]' in answer and '[3]' not in answer
 
 
 def test_spreadsheet_location_uses_sheet_not_invented_page(monkeypatch):
@@ -141,7 +150,8 @@ def test_spreadsheet_prepared_before_single_generation_and_provenance(monkeypatc
              'fiscal_year': '2020', 'headers': [(5, 2, 'Number'), (6, 2, 'of public'), (7, 2, 'libraries1')],
              'footnotes': {'1': {'text': '1Administrative entities.', 'row': 12, 'column': 1}},
              'notes': ['NOTE: Data are estimates.']}
-    statement, _ = spreadsheet_grounding._statement(proof, 1)
+    statement, metric, countable = spreadsheet_grounding._statement(proof, 1)
+    assert metric == 'public libraries' and countable is True
     context = spreadsheet_grounding.SpreadsheetGrounding(1, proof, statement)
     prepare = MagicMock(return_value=context)
     monkeypatch.setattr(spreadsheet_grounding, 'prepare_spreadsheet_grounding', prepare)

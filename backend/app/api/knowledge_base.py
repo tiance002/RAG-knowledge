@@ -53,12 +53,26 @@ async def create_knowledge_base(
             detail={"code": 40001, "message": "创建失败换个知识库名称试试？"},
         )
 
+    # Defaults apply only to fields omitted by the caller. Existing KB bindings
+    # never follow later changes to global defaults.
+    from app.services.model_bindings import resolve_model, ModelBindingError
+    from app.services.runtime_settings import RuntimeSettingsUnavailable
+    try:
+        embedding = resolve_model(session, 'embedding', data.embedding_model,
+                                  use_default='embedding_model' not in data.model_fields_set)
+        vlm = resolve_model(session, 'vlm', data.vlm_model, allow_unset=True,
+                            use_default='vlm_model' not in data.model_fields_set)
+    except ModelBindingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeSettingsUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     # 创建知识库
     kb = KnowledgeBase(
         name=data.name,
         description=data.description,
-        embedding_model=data.embedding_model,
-        vlm_model=data.vlm_model,
+        embedding_model=embedding.binding_id,
+        vlm_model=vlm.binding_id if vlm else "",
     )
     session.add(kb)
     session.commit()

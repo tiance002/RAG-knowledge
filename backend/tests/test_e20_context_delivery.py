@@ -37,8 +37,8 @@ def db():
         session.add(FileDocument(id='file', kb_id='kb', name='fixture.pdf', local_path='synthetic-only', size=0))
         session.add_all([
             DocumentChunk(id='previous', file_id='file', parent_id=None, original_index=0, page_number=6, content='IRRELEVANT_NEIGHBOR'),
-            DocumentChunk(id='seed', file_id='file', parent_id='parent', original_index=1, page_number=7, content='SEED_PART'),
-            DocumentChunk(id='sibling', file_id='file', parent_id='parent', original_index=2, page_number=8, content='SIBLING_GOLD'),
+            DocumentChunk(id='seed', file_id='file', parent_id=None, original_index=1, page_number=7, content='SEED_PART'),
+            DocumentChunk(id='sibling', file_id='file', parent_id=None, original_index=2, page_number=8, content='SIBLING_GOLD'),
             DocumentChunk(id='next', file_id='file', parent_id=None, original_index=3, page_number=9, content='NEXT_GOLD'),
         ])
         session.commit()
@@ -106,11 +106,7 @@ def test_duplicate_groups_never_duplicate_source_and_irrelevant_content_is_not_h
 def test_missing_database_seed_remains_uninvented(db):
     row={'id':'missing','file_id':'file','file_name':'fixture.pdf','page_number':None,'content':'ORIGINAL_ONLY','score':.5}
     expanded=rerank.expand_context([row],db,window_size=1,include_source_members=True)
-    assert expanded[0]['id']=='missing' and expanded[0]['content']=='ORIGINAL_ONLY'
-    citations,summary=build(expanded)
-    assert len(citations)==1 and citations[0]['chunk_id']=='missing'
-    assert citations[0]['page_number'] is None
-    assert summary['source_mapping_status']=='UNKNOWN'
+    assert expanded == [], 'a source absent from SQL cannot be verified'
 
 
 def test_empty_input_and_unknown_group_do_not_fabricate_members():
@@ -169,6 +165,7 @@ def test_corrupt_member_mapping_fails_closed_instead_of_forging_evidence(db):
     assert 'SIBLING_GOLD' not in str(citations)
     assert [c['chunk_id'] for c in citations]==['seed']
     assert summary['source_mapping_status']=='UNKNOWN'
+    assert summary['expansion_delivery_status']=='SEED_ONLY'
 
 
 def test_incomplete_mapping_never_invents_spreadsheet_locator(db):
@@ -184,7 +181,7 @@ def test_builder_does_not_add_input_clipping_beyond_expander(db):
     row=db.get(DocumentChunk,'sibling')
     row.content='NEIGHBOR_START:' + 'x'*6000 + ':NEIGHBOR_END'
     db.add(row); db.commit()
-    expanded=rerank.expand_context([seed_row()],db,window_size=0,max_parent_length=10000,include_source_members=True)
+    expanded=rerank.expand_context([seed_row()],db,window_size=1,max_parent_length=10000,include_source_members=True)
     citations,summary=build(expanded)
     neighbor=next(c for c in citations if c['chunk_id']=='sibling')
     assert neighbor['content']==row.content and 'NEIGHBOR_END' in neighbor['content']
@@ -238,6 +235,8 @@ def test_chat_path_sends_actual_expanded_members_to_provider(db, monkeypatch, en
     create=AsyncMock(return_value=SimpleNamespace(id='fake',model='fake',usage=None,
         choices=[SimpleNamespace(message=SimpleNamespace(content='synthetic answer [1]'),finish_reason='stop')]))
     service=chat.ChatService.__new__(chat.ChatService)
+    service._runtime_snapshot=lambda:SimpleNamespace(max_chat_history_rounds=20)
+    service._resolved_llm=lambda model:service.llm_service
     service.llm_service=SimpleNamespace(model='fake',_get_client=lambda:SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
     service._retrieve_with_new_service=AsyncMock(return_value=(copy.deepcopy(frozen),{'retrieval_status':'SUCCESS'}))
@@ -258,6 +257,8 @@ def test_chat_path_sends_actual_expanded_members_to_provider(db, monkeypatch, en
     assert sibling['source_metadata']['page']==8 and sibling['location']=='第 8 页'
     assert len({c['chunk_id'] for c in new_c})==len(new_c)
     assert old[-1][0]=='done' and new[-1][0]=='done'
+    assert new[-1][1]['validation_status']=='NOT_RUN'
+    assert new[-1][1]['expansion_delivery_status']=='DELIVERED'
 
 
 def test_observation_on_off_does_not_change_provider_request_or_sse(db, monkeypatch):
@@ -281,6 +282,8 @@ def test_observation_on_off_does_not_change_provider_request_or_sse(db, monkeypa
         create=AsyncMock(return_value=SimpleNamespace(id='fake',model='fake',usage=None,
             choices=[SimpleNamespace(message=SimpleNamespace(content='synthetic answer [1]'),finish_reason='stop')]))
         service=chat.ChatService.__new__(chat.ChatService)
+        service._runtime_snapshot=lambda:SimpleNamespace(max_chat_history_rounds=20)
+        service._resolved_llm=lambda model:service.llm_service
         service.llm_service=SimpleNamespace(model='fake',_get_client=lambda:SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
         service._retrieve_with_new_service=AsyncMock(return_value=(copy.deepcopy(frozen),{'retrieval_status':'SUCCESS'}))
         events=[event async for event in service._chat_stream_normal([Message(role=MessageRole.USER,content='synthetic question')],

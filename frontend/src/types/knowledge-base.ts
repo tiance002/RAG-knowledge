@@ -24,8 +24,8 @@ export interface KnowledgeBase {
 export interface CreateKnowledgeBaseRequest {
   name: string;
   description?: string;
-  embedding_model: string;
-  vlm_model: string;
+  embedding_model?: string;
+  vlm_model?: string | null;
 }
 
 /** 知识库列表响应 */

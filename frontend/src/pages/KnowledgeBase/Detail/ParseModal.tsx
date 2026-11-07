@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Modal, Form, Radio, InputNumber, Input, Slider, Button, Space, Divider, Typography, Select, Alert, Tooltip } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Modal, Form, Radio, InputNumber, Input, Slider, Button, Space, Divider, Typography, Select, Alert, Tooltip, Switch } from 'antd';
 import { SettingOutlined, EyeOutlined, RocketOutlined, InfoCircleOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import type { ModelInfo } from '@/types';
+import { getSettings } from '@/services';
 
 const { Text } = Typography;
 
@@ -11,11 +12,18 @@ interface ParseModalProps {
   onPreview: (config: ParseConfig) => void;
   onDirectProcess: (config: ParseConfig) => void;
   loading?: boolean;
-  models?: ModelInfo[]; // 可选模型列表
+  models?: ModelInfo[];
+  kbEmbeddingModel?: string;
+  initialConfig?: ParseConfig;
 }
 
 export interface ParseConfig {
   chunk_mode: 'custom' | 'no_split' | 'structure' | 'semantic';  // 新增 structure 模式
+  parent_child?: boolean;
+  parent_chunk_size?: number;
+  parent_chunk_overlap?: number;
+  child_chunk_size?: number;
+  child_chunk_overlap?: number;
   chunk_size?: number;
   chunk_overlap?: number;
   separator?: string;
@@ -32,13 +40,33 @@ const ParseModal: React.FC<ParseModalProps> = ({
   onDirectProcess,
   loading = false,
   models = [],
+  kbEmbeddingModel,
+  initialConfig,
 }) => {
   const [form] = Form.useForm();
   const [chunkMode, setChunkMode] = useState<'custom' | 'no_split' | 'structure' | 'semantic'>('custom');
 
-  // 过滤 embedding 模型，并排除 sys_embedding
+  const [settingsError, setSettingsError] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    form.resetFields();
+    setSettingsError(false);
+    getSettings().then(({data}) => {
+      if (!active || form.isFieldsTouched()) return;
+      const config: ParseConfig = {chunk_mode: 'custom', separator: '\n\n', heading_level: 2,
+        chunk_size: data.chunkSize, chunk_overlap: data.chunkOverlap,
+        embedding_model: kbEmbeddingModel, ...initialConfig};
+      form.setFieldsValue(config);
+      setChunkMode(config.chunk_mode);
+      setSettingsError(Boolean(data.degraded));
+    }).catch(() => { if (active) setSettingsError(true); });
+    return () => { active = false; };
+  }, [open, kbEmbeddingModel]);
+
+  // Semantic splitting may choose a model; index writes always retain the KB binding.
   const embeddingModels = models.filter(m => 
-    (m.type === 'embedding' || m.model_type === 'embedding') && m.id !== 'sys_embedding'
+    m.type === 'embedding'
   );
 
   const handleValuesChange = (changedValues: any) => {
@@ -52,7 +80,7 @@ const ParseModal: React.FC<ParseModalProps> = ({
       const values = await form.validateFields();
       const config = {
         ...values,
-        vector_model: values.vector_model || values.embedding_model,
+        vector_model: kbEmbeddingModel || values.vector_model,
       };
       onPreview(config);
     } catch (error) {
@@ -65,7 +93,7 @@ const ParseModal: React.FC<ParseModalProps> = ({
       const values = await form.validateFields();
       const config = {
         ...values,
-        vector_model: values.vector_model || values.embedding_model,
+        vector_model: kbEmbeddingModel || values.vector_model,
       };
       onDirectProcess(config);
     } catch (error) {
@@ -87,15 +115,18 @@ const ParseModal: React.FC<ParseModalProps> = ({
       destroyOnClose
       width={600}
     >
+      {settingsError && <Alert type="warning" showIcon message="系统默认设置暂未确认；未填写的切块参数将由服务端读取，手动值仍会保留。" />}
+      {kbEmbeddingModel && <Alert type="info" message={`入库使用知识库绑定的 Embedding：${models.find(m => m.id === kbEmbeddingModel)?.name || kbEmbeddingModel}`} />}
       <Form
         form={form}
         layout="vertical"
         initialValues={{
           chunk_mode: 'custom',
-          chunk_size: 500,
-          chunk_overlap: 50,
           separator: '\n\n',
           heading_level: 2,
+          parent_child: false,
+          parent_chunk_size: 4096, parent_chunk_overlap: 0,
+          child_chunk_size: 384, child_chunk_overlap: 48,
         }}
         onValuesChange={handleValuesChange}
       >
@@ -110,6 +141,21 @@ const ParseModal: React.FC<ParseModalProps> = ({
             <Radio.Button value="semantic">语义切分</Radio.Button>
             <Radio.Button value="no_split">不切分</Radio.Button>
           </Radio.Group>
+        </Form.Item>
+
+        <Form.Item name="parent_child" label="父子分块（试用）" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+        <Form.Item noStyle shouldUpdate={(prev, next) => prev.parent_child !== next.parent_child}>
+          {({ getFieldValue }) => getFieldValue('parent_child') ? <>
+            <Alert type="info" showIcon message="父块提供上下文，子块参与检索。下列参数单位均为字符；参考值尚未经真实题集评测。" />
+            <Space align="start" wrap>
+              <Form.Item name="parent_chunk_size" label="父块大小（字符）" rules={[{ required: true }]}><InputNumber min={1} max={65536} /></Form.Item>
+              <Form.Item name="parent_chunk_overlap" label="父块重叠（字符）" rules={[{ required: true }]}><InputNumber min={0} /></Form.Item>
+              <Form.Item name="child_chunk_size" label="子块大小（字符）" rules={[{ required: true }]}><InputNumber min={1} max={65536} /></Form.Item>
+              <Form.Item name="child_chunk_overlap" label="子块重叠（字符）" rules={[{ required: true }]}><InputNumber min={0} /></Form.Item>
+            </Space>
+          </> : null}
         </Form.Item>
 
         {/* 结构化切分模式 */}
@@ -253,15 +299,15 @@ const ParseModal: React.FC<ParseModalProps> = ({
           name="embedding_model"
           label={
             <Space>
-               <span>Embedding 模型</span>
+               <span>语义切分模型（入库模型保持知识库绑定）</span>
                <Tooltip title="用于文本向量化入库。在结构化/语义切分模式下，也将用于计算语义相似度。">
                  <QuestionCircleOutlined />
                </Tooltip>
             </Space>
           }
-          rules={[{ required: true, message: '请选择 Embedding 模型' }]}
+          rules={[{ required: chunkMode === 'semantic' || chunkMode === 'structure', message: '请选择语义切分模型' }]}
         >
-           <Select placeholder="请选择 Embedding 模型">
+           <Select allowClear placeholder="普通切分无需选择语义模型">
               {embeddingModels.map(m => (
                 <Select.Option key={m.id} value={m.id}>{m.name}</Select.Option>
               ))}

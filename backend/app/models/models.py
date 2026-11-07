@@ -59,6 +59,10 @@ class FileDocument(SQLModel, table=True):
     kb_id: str = Field(foreign_key="knowledge_bases.id", index=True)
     name: str
     local_path: str
+    original_name: Optional[str] = None
+    display_name: Optional[str] = None
+    sha256: Optional[str] = Field(default=None, index=True)
+    supersedes_file_id: Optional[str] = None
     size: int
     status: FileStatus = Field(default=FileStatus.PENDING)
     progress: int = Field(default=0)
@@ -90,6 +94,9 @@ class DocumentChunk(SQLModel, table=True):
     heading_text: Optional[str] = Field(default=None)   # 标题文本
     chunk_type: str = Field(default="content")  # "heading" | "content"
     token_count: int = Field(default=0)  # Token 数量
+    # Exact character offsets where known; never reconstructed from similarity.
+    start_offset: Optional[int] = None
+    end_offset: Optional[int] = None
 
     # 关系
     file_document: Optional[FileDocument] = Relationship(back_populates="chunks")

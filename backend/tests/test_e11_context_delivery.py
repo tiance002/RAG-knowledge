@@ -38,30 +38,30 @@ def test_expanded_neighbor_does_not_reach_final_model_message(monkeypatch, tmp_p
     monkeypatch.setenv('RAG_OBSERVATION_LOG', str(tmp_path/'events.jsonl'))
     monkeypatch.setattr(chat, 'Session', FakeSession)
     monkeypatch.setattr(spreadsheet_grounding, 'prepare_spreadsheet_grounding', lambda *args: None)
-    seed = SimpleNamespace(id='seed', parent_id='parent', file_id='source', original_index=0,
-                           content='seed without target', page_number=None, content_type='text',
-                           image_path=None, heading_level=None, heading_text=None)
-    sibling = SimpleNamespace(id='neighbor', parent_id='parent', file_id='source', original_index=1,
-                              content='GOLD_IN_NEIGHBOUR')
-    class Result:
-        def __init__(self, rows): self.rows = rows
-        def all(self): return self.rows
-    class ExpansionSession:
-        def __init__(self): self.calls = 0
-        def get(self, model, key): return seed if key == 'seed' else None
-        def exec(self, query):
-            self.calls += 1
-            return Result([seed, sibling] if self.calls == 1 else [])
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine
+    from app.models import DocumentChunk, FileDocument, KnowledgeBase
+    from app.services import parent_context
+    engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
     expansion_events = []
-    monkeypatch.setattr(rerank, 'event', lambda name, **data: expansion_events.append((name, data)))
-    selected = rerank.expand_context([{'id': 'seed', 'file_id': 'source', 'file_name': 'source.txt',
-                                       'kb_id': 'kb', 'content': seed.content, 'score': .8}],
-                                     ExpansionSession(), window_size=1)[0]
+    monkeypatch.setattr(parent_context, 'event', lambda name, **data: expansion_events.append((name, data)))
+    with Session(engine) as expansion_session:
+        expansion_session.add(KnowledgeBase(id='kb', name='Synthetic', embedding_model='none', vlm_model='none'))
+        expansion_session.add(FileDocument(id='source', kb_id='kb', name='source.txt', local_path='synthetic-only', size=0))
+        seed = DocumentChunk(id='seed', parent_id=None, file_id='source', original_index=0,
+                             content='seed without target', page_number=None, content_type='text')
+        neighbor = DocumentChunk(id='neighbor', parent_id=None, file_id='source', original_index=1,
+                                 content='GOLD_IN_NEIGHBOUR')
+        expansion_session.add_all([seed, neighbor]); expansion_session.commit()
+        selected = rerank.expand_context([{'id': 'seed', 'file_id': 'source', 'file_name': 'source.txt',
+                                           'kb_id': 'kb', 'content': seed.content, 'score': .8}],
+                                         expansion_session, window_size=1, include_source_members=True,
+                                         allowed_kb_ids=['kb'])[0]
+    engine.dispose()
     expansion = next(data for name, data in expansion_events if name == 'retrieval.context_expansion')
-    assert expansion['sibling_ids'] == ['seed', 'neighbor']
-    assert expansion['included_sibling_ids'] == ['seed', 'neighbor']
-    group = next(data for name, data in expansion_events if name == 'rag.candidate_transition')
-    assert group['included_evidence_ids'] == ['seed', 'neighbor']
+    assert expansion['seed_ids'] == ['seed'] and expansion['neighbor_ids'] == ['neighbor']
+    assert [member['id'] for member in selected['context_group']['source_members']] == ['seed', 'neighbor']
     response = SimpleNamespace(id='fake', model='fake', usage=None,
         choices=[SimpleNamespace(message=SimpleNamespace(content='Only seed evidence. [1]'), finish_reason='stop')])
     create = AsyncMock(return_value=response)
@@ -69,6 +69,8 @@ def test_expanded_neighbor_does_not_reach_final_model_message(monkeypatch, tmp_p
         chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
     service = chat.ChatService.__new__(chat.ChatService)
     service.llm_service = llm
+    service._runtime_snapshot = lambda: SimpleNamespace(max_chat_history_rounds=20)
+    service._resolved_llm = lambda model: llm
     service._retrieve_with_new_service = AsyncMock(return_value=([selected], {'retrieval_status':'SUCCESS'}))
     observations = []
     monkeypatch.setattr(chat, 'trace_event', lambda name, **data: observations.append((name, data)))

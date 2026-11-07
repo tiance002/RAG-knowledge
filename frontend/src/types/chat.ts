@@ -16,6 +16,9 @@ export interface ChatMessage {
   timestamp: string;
   isStreaming?: boolean;
   error?: string;
+  validationStatus?: string;
+  retrievalDegraded?: boolean;
+  webSearchEnabled?: boolean;
 }
 
 /** 引用信息 */
@@ -30,7 +33,9 @@ export interface Citation {
   chunk_id?: string;
   fileId?: string;
   image_path?: string;
-  source_type?: 'source_native_table_expansion';
+  source_type?: 'source_native_table_expansion' | 'web';
+  title?: string;
+  url?: string;
   parent_chunk_id?: string;
   sourceUrl?: string;
 }
@@ -41,6 +46,8 @@ export type AgentStepType = 'thinking' | 'decision' | 'action' | 'response' | 'o
 /** Agent 思考步骤 */
 export interface AgentStep {
   type: AgentStepType;
+  duration?: number;
+  cost?: number;
   content: string;
   timestamp: string;
 }
@@ -57,6 +64,7 @@ export interface ChatSession {
 
 /** 对话请求 */
 export interface ChatRequest {
+  web_search_enabled?: boolean;
   messages: Array<{ role: MessageRole; content: string }>;
   kb_ids: string[];
   stream: boolean;
@@ -79,6 +87,8 @@ export interface ChatRequest {
 /** 问题改写请求 */
 export interface RewriteRequest {
   query: string;
+  model_id?: string;
+  history?: Array<{role: MessageRole; content: string}>;
 }
 
 /** 问题改写响应 */
@@ -92,6 +102,8 @@ export type SSEEventType = 'agent_thought' | 'rag_result' | 'answer_chunk' | 'do
 /** SSE Agent思考事件数据 */
 export interface AgentThoughtData {
   step: AgentStepType;
+  duration?: number;
+  cost?: number;
   content: string;
 }
 
@@ -108,6 +120,11 @@ export interface AnswerChunkData {
 
 /** SSE 完成事件数据 */
 export interface DoneData {
+  generation_status?: 'COMPLETED' | 'TRUNCATED' | 'EMPTY' | 'UNKNOWN' | 'NOT_RUN';
+  generation_finish_reason?: string | null;
+  degraded?: boolean;
+  fallback_used?: boolean;
+  validation_status?: string;
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;

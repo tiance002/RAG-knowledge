@@ -179,8 +179,7 @@ def validate_grounded_answer(
     # statement and exact records built from the server-held proof. Their
     # parent IDs must never be mistaken for indexed chunk IDs.
     expansion_indices = {i for i, c in enumerate(citations, 1)
-                         if isinstance(c, Mapping) and (c.get('source_type') == 'source_native_table_expansion'
-                                                        or c.get('parent_chunk_id'))}
+                         if isinstance(c, Mapping) and c.get('source_type') == 'source_native_table_expansion'}
     if pdf_context is not None:
         from app.services.pdf_table_grounding import build_pdf_supplementary_citations
         expected = build_pdf_supplementary_citations(pdf_context, citations[:-2]) if len(citations) >= 3 else []

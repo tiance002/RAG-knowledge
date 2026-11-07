@@ -11,8 +11,11 @@ from contextlib import asynccontextmanager
 import os
 
 from app.core.config import get_settings, ensure_directories
-from app.core.database import init_db
+from app.core.database import engine, init_db
 from app.api import api_router
+from app.api.memory import router as memory_router
+from app.api.settings import load_persisted_settings
+from sqlmodel import Session
 from app.services.metrics import HTTPMetricsMiddleware, render_metrics, enabled as metrics_enabled
 
 settings = get_settings()
@@ -24,6 +27,15 @@ async def lifespan(app: FastAPI):
     # 启动时执行
     ensure_directories()
     init_db()
+    from app.services.runtime_settings import RuntimeSettingsUnavailable
+    try:
+        with Session(engine) as session:
+            load_persisted_settings(session)
+    except RuntimeSettingsUnavailable as exc:
+        # Keep status/settings repair endpoints reachable. Model-consuming entry
+        # points still require valid settings; no provider is silently selected.
+        import logging
+        logging.getLogger(__name__).error("Runtime settings unavailable: %s", exc)
     print("数据库初始化完成")
 
     # 调试：打印所有路由
@@ -61,6 +73,7 @@ app.add_middleware(
 
 # 注册 API 路由
 app.include_router(api_router)
+app.include_router(memory_router)
 
 # 调试：中间件记录请求
 @app.middleware("http")

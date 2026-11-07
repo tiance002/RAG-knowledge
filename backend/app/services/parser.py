@@ -20,7 +20,10 @@ import asyncio
 
 try:
     from langchain_experimental.text_splitter import SemanticChunker
-    from langchain_community.embeddings import OllamaEmbeddings
+except ImportError:
+    SemanticChunker = None
+
+try:
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     HAS_LANGCHAIN = True
 except ImportError:
@@ -94,8 +97,15 @@ class TextSplitter:
         separator: str = "\n\n",
         max_overflow_ratio: float = 0.2,  # 允许超出的最大比例
     ):
-        self.chunk_size = chunk_size or settings.CHUNK_SIZE
-        self.chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
+        if chunk_size is None or chunk_overlap is None:
+            from app.services.runtime_settings import get_runtime_settings
+            defaults = get_runtime_settings()
+            chunk_size = defaults.chunk_size if chunk_size is None else chunk_size
+            chunk_overlap = defaults.chunk_overlap if chunk_overlap is None else chunk_overlap
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        if self.chunk_size <= 0 or not 0 <= self.chunk_overlap < self.chunk_size:
+            raise ValueError("CHUNK_CONFIGURATION_INVALID")
         self.separator = separator.replace("\\n", "\n") if separator else "\n\n"
         self.max_overflow_ratio = max_overflow_ratio
         self.max_chunk_size = int(self.chunk_size * (1 + max_overflow_ratio))
@@ -332,8 +342,10 @@ class StructuredSplitter:
         self.text_splitter = TextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         
         self.semantic_splitter = None
-        if self.use_semantic and HAS_LANGCHAIN:
+        if self.use_semantic and SemanticChunker is not None:
             self._init_semantic_splitter()
+        elif self.use_semantic:
+            event('ingest.semantic_split', status='UNAVAILABLE', reason='dependency_not_available')
 
     def _init_semantic_splitter(self):
         """初始化语义切分器"""
@@ -349,7 +361,7 @@ class StructuredSplitter:
         
         print(f"🔧 [StructuredSplitter] Initializing EmbeddingServiceAdapter with base_url: {base_url}, model: {model_name}, has_key: {bool(api_key)}")
         
-        # 使用适配器替代 OllamaEmbeddings
+        # Use the configured provider adapter for semantic embeddings.
         embeddings = EmbeddingServiceAdapter(
             base_url=base_url,
             api_key=api_key,
@@ -821,8 +833,8 @@ class FileParser:
         self,
         file_path: str,
         chunk_mode: str = "auto",  # auto, no_chunk, custom, structure
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
+        chunk_size: int = None,
+        chunk_overlap: int = None,
         separator: str = "\n\n",
         heading_level: int = 2,  # structure 模式专用
         use_semantic: bool = False,  # 是否使用语义切分
@@ -849,21 +861,12 @@ class FileParser:
             embedding_max_tokens: 向量模型最大上下文长度
             semantic_max_tokens: 语义模型最大上下文长度
         """
-        # 强制重叠逻辑：
-        # 1. 如果不是自定义模式 (custom)，强制使用 10% 的重叠，忽略前端传入的 chunk_overlap
-        # 2. 即使是自定义模式，如果 chunk_overlap 未设置或不合理，也建议有默认值（这里完全尊重用户输入）
-        if chunk_mode != 'custom':
-            if chunk_size is not None:
-                chunk_overlap = int(chunk_size * 0.1)
-                print(f"🔧 [Parser] Force set chunk_overlap to {chunk_overlap} (10% of {chunk_size}) for mode '{chunk_mode}'")
-            else:
-                chunk_overlap = 0 # 安全回退
-                print(f"🔧 [Parser] Chunk size is None, set chunk_overlap to 0 for mode '{chunk_mode}'")
-
-        # 确保 chunk_size 有默认值，避免 TextSplitter 初始化失败
-        if chunk_size is None:
-            chunk_size = 500 # 默认值
-
+        # Missing values use the shared runtime defaults; explicit zero is valid.
+        if chunk_size is None or chunk_overlap is None:
+            from app.services.runtime_settings import get_runtime_settings
+            defaults = get_runtime_settings()
+            chunk_size = defaults.chunk_size if chunk_size is None else chunk_size
+            chunk_overlap = defaults.chunk_overlap if chunk_overlap is None else chunk_overlap
 
         self.splitter = TextSplitter(chunk_size, chunk_overlap, separator)
         
@@ -1202,15 +1205,15 @@ class FileParser:
             for run in para.runs:
                 # 1. 提取文本
                 if run.text:
-                    if self.chunk_mode == "structure" or self.chunk_mode == "semantic":
-                         # 结构化/语义模式：累积到全文 buffer
-                         full_text_buffer += run.text
-                    
+                    if self.chunk_mode == "semantic":
+                        full_text_buffer += run.text
+
                     if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
                         page_text_buffer += run.text
-                    else:
+                    elif self.chunk_mode != "structure":
                         current_text_buffer += run.text
-                    para_text += run.text
+                    if self.chunk_mode == "structure":
+                        para_text += run.text
                 
                 # 2. 检查图片
                 # 查找 run 元素下的 drawing 标签
@@ -1552,51 +1555,84 @@ class FileParser:
         return chunks
 
     def _parse_excel(self, file_path: str) -> List[ParsedChunk]:
-        """解析 Excel 文件"""
-        print(f"🔍 [Excel Parser] 开始解析: {file_path}")
+        """Read a workbook and bind locators to the exact bytes parsed."""
+        from io import BytesIO
+        from pathlib import Path
+        import re
+        from app.services.pdf_provenance import digest_bytes, write_manifest
+
+        source = Path(file_path).read_bytes()
         chunks = []
-        try:
-            xlsx = pd.ExcelFile(file_path)
-            print(f"🔍 [Excel Parser] 工作表数量: {len(xlsx.sheet_names)}, 名称: {xlsx.sheet_names}")
-
-            for sheet_name in xlsx.sheet_names:
-                print(f"🔍 [Excel Parser] 正在处理工作表: {sheet_name}")
-                df = pd.read_excel(xlsx, sheet_name=sheet_name)
-                print(f"🔍 [Excel Parser] 工作表 '{sheet_name}' 行数: {len(df)}, 列数: {len(df.columns)}")
-
-                # Excel 通常按行切分，不使用通用 TextSplitter
-                chunk_size = 20
-                for i in range(0, len(df), chunk_size):
-                    chunk_df = df.iloc[i:i + chunk_size]
-                    md_table = chunk_df.to_markdown(index=False)
-
+        with pd.ExcelFile(BytesIO(source)) as workbook:
+            for sheet in workbook.sheet_names:
+                df = pd.read_excel(workbook, sheet_name=sheet)
+                # Scan once per sheet; read-only openpyxl rows can contain EmptyCell.
+                sheet_formats = []
+                format_status = "UNKNOWN"
+                if workbook.engine == "openpyxl" and len(df.columns):
+                    try:
+                        worksheet = workbook.book[sheet]
+                        for row_number, row in enumerate(worksheet.iter_rows(
+                                min_row=1, max_row=len(df) + 1, max_col=len(df.columns)), start=1):
+                            for column_number, cell in enumerate(row, start=1):
+                                if cell.value is None:
+                                    continue
+                                fmt = cell.number_format or ""
+                                # [$-409] is a locale marker, not a dollar sign.
+                                symbol_format = re.sub(r"\[\$-[^\]]+\]", "", fmt)
+                                if not any(s in symbol_format for s in ("$", "€", "£", "¥", "₹")):
+                                    continue
+                                if (sheet_formats and sheet_formats[-1]["row"] == row_number
+                                        and sheet_formats[-1]["end_column"] == column_number - 1
+                                        and sheet_formats[-1]["number_format"] == fmt):
+                                    sheet_formats[-1]["end_column"] = column_number
+                                    sheet_formats[-1]["end_cell"] = cell.coordinate
+                                else:
+                                    sheet_formats.append({"row": row_number, "start_column": column_number,
+                                                          "end_column": column_number, "start_cell": cell.coordinate,
+                                                          "end_cell": cell.coordinate, "number_format": fmt})
+                        format_status = "AVAILABLE"
+                    except Exception:
+                        sheet_formats = []
+                for i in range(0, len(df), 20):
+                    rows = df.iloc[i:i + 20]
+                    locator = {"sheet": sheet, "row_start": i + 2, "row_end": i + len(rows) + 1,
+                               "column_start": 1, "column_end": len(rows.columns)}
+                    # Preserve display-format evidence without assigning a currency to
+                    # values in other cells or inferring a currency code from a symbol.
+                    formats = [item for item in sheet_formats if item["row"] == 1
+                               or locator["row_start"] <= item["row"] <= locator["row_end"]]
+                    format_text = ""
+                    if formats:
+                        format_text = "\n[原始货币显示格式（仅适用于列出的单元格）] " + "; ".join(
+                            f'{item["start_cell"]}:{item["end_cell"]} (列 {item["start_column"]}-{item["end_column"]}): {item["number_format"]}'
+                            for item in formats
+                        ) + "\n"
                     chunks.append(ParsedChunk(
-                        content=f"[工作表: {sheet_name}]\n{md_table}",
-                        page_number=i // chunk_size + 1,
-                        content_type="table",
+                        content=f"[工作表: {sheet}]\n{format_text}{rows.to_markdown(index=False)}",
+                        page_number=i // 20 + 1, content_type="table",
+                        metadata={"source_locator": locator, "currency_format_status": format_status,
+                                  "currency_formats": formats},
                     ))
-                print(f"🔍 [Excel Parser] 工作表 '{sheet_name}' 处理完成，当前总块数: {len(chunks)}")
-
-            print(f"✅ [Excel Parser] 解析完成，总块数: {len(chunks)}")
-        except Exception as e:
-            print(f"❌ [Excel Parser] 解析异常: {e}")
-            import traceback
-            traceback.print_exc()
-            raise e
+        write_manifest(settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1")
         return chunks
 
     def _parse_csv(self, file_path: str) -> List[ParsedChunk]:
-        """解析 CSV 文件"""
-        chunks = []
-        df = pd.read_csv(file_path)
-        chunk_size = 20
-        for i in range(0, len(df), chunk_size):
-            chunk_df = df.iloc[i:i + chunk_size]
-            md_table = chunk_df.to_markdown(index=False)
+        from io import BytesIO
+        from pathlib import Path
+        from app.services.pdf_provenance import digest_bytes, write_manifest
 
+        source = Path(file_path).read_bytes()
+        df = pd.read_csv(BytesIO(source))
+        chunks = []
+        for i in range(0, len(df), 20):
+            rows = df.iloc[i:i + 20]
+            # CSV records may contain embedded newlines. These are data records after the header.
+            locator = {"record_start": i + 1, "record_end": i + len(rows),
+                       "column_start": 1, "column_end": len(rows.columns)}
             chunks.append(ParsedChunk(
-                content=md_table,
-                page_number=i // chunk_size + 1,
-                content_type="table",
+                content=rows.to_markdown(index=False), page_number=i // 20 + 1,
+                content_type="table", metadata={"source_locator": locator},
             ))
+        write_manifest(settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1")
         return chunks

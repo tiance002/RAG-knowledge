@@ -18,6 +18,26 @@ def _cells(line):
     return [part.strip() for part in line[1:-1].split('|')]
 
 
+def _same_number(text, value):
+    """比较渲染文本与单元格数值，允许等价的小数位与千分位写法。
+
+    逐字符相等会把 108149.90 与 108149.9、或带千分位的渲染判成不一致，
+    这是格式差异而不是证据差异。
+    """
+    if not isinstance(text, str) or type(value) not in (int, float):
+        return False
+    cleaned = text.strip().replace(',', '').replace('，', '')
+    if cleaned in ('', '-', 'nan', 'None', 'null'):
+        return False
+    try:
+        rendered = float(cleaned)
+    except (TypeError, ValueError):
+        return False
+    if type(value) is int:
+        return rendered == value
+    return abs(rendered - value) <= max(1e-9, abs(value) * 1e-12)
+
+
 def verify_spreadsheet_cell(session, citation, kb_ids, *, source_sha256,
                             sheet, title_row, header_end_row, row, label_col, value_col):
     """Verify an explicitly located cell and return its source context or None.
@@ -67,7 +87,9 @@ def verify_spreadsheet_cell(session, citation, kb_ids, *, source_sha256,
             ws = workbook[sheet]
             if ws.max_row > 100000 or ws.max_column > 1000:
                 return None
-            if any(r.min_row <= row and r.max_row > title_row for r in ws.merged_cells.ranges):
+            # 只拒绝真正跨越目标数据行的合并区域；标题下方跨列的合并表头
+            # （如 T07 的 C2:K2）不应否决整张表。
+            if any(r.min_row <= row <= r.max_row for r in ws.merged_cells.ranges):
                 return None
             title = _text(ws.cell(title_row, 1).value)
             if not title or any(ws.cell(title_row, c).value is not None for c in range(2, ws.max_column + 1)):
@@ -109,7 +131,7 @@ def verify_spreadsheet_cell(session, citation, kb_ids, *, source_sha256,
                 return None
             row_lines = [line for line in lines[2 + len(header_lines):]
                          if len(line) >= max(label_col, value_col) and line[label_col - 1] == label]
-            if len(row_lines) != 1 or row_lines[0][value_col - 1] != str(cell.value):
+            if len(row_lines) != 1 or not _same_number(row_lines[0][value_col - 1], cell.value):
                 return None
             # A second title between the declared title and row invalidates the locator.
             if any(re.match(r'(?i)^table\s+\d+\b', _text(ws.cell(r, 1).value))
@@ -235,7 +257,7 @@ def discover_spreadsheet_cells(session, citation, kb_ids, *, source_sha256):
                 for col in columns:
                     cell = ws.cell(row, col)
                     if (cell.data_type != 'f' and type(cell.value) in (int, float)
-                            and line[col - 1] == str(cell.value)):
+                            and _same_number(line[col - 1], cell.value)):
                         candidates.append((row, col))
             if len(candidates) > 128 or len(set(candidates)) != len(candidates):
                 return []

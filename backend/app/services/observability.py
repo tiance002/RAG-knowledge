@@ -131,6 +131,16 @@ def sanitize(value, key='', *, final_export=False):
         return value
     if key == 'search_mode' and value in ('vector', 'fulltext', 'hybrid'):
         return value
+    preference_enums = {
+        'answer_style': ('concise', 'normal', 'detailed'),
+        'knowledge_level': ('beginner', 'intermediate', 'expert'),
+        'output_preferences': ('step_by_step', 'table', 'code_example', 'principle_first'),
+        'answer_style_origin': ('default', 'explicit', 'current_turn'),
+        'knowledge_level_origin': ('default', 'explicit', 'current_turn'),
+        'output_preferences_origin': ('default', 'explicit', 'current_turn'),
+    }
+    if key in preference_enums and value in preference_enums[key]:
+        return value
     if key == 'answer_mode' and value in ('GROUNDED_GENERATION', 'EXTRACTIVE_FALLBACK', 'INSUFFICIENT_EVIDENCE', 'RETRIEVAL_ERROR', 'UNKNOWN'):
         return value
     if key == 'validation_status' and value in ('VERIFIED', 'UNKNOWN', 'UNSUPPORTED', 'INVALID', 'NOT_RUN'):
@@ -167,14 +177,18 @@ def sanitize(value, key='', *, final_export=False):
     if key == 'truncation_rule' and value == 'none_at_this_boundary':
         return value
     controlled = {
+        'usage_status': ('PROVIDER_REPORTED', 'UNKNOWN'),
         'arm': ('A', 'B'),
         'source_mapping_status': ('VERIFIED', 'UNKNOWN'),
         'token_count_status': ('UNKNOWN',),
         'token_count_method': ('model_tokenizer_not_configured',),
         'context_strategy': ('ORIGINAL_CONTENT', 'EXPANDED_CONTENT'),
-        'relation': ('seed', 'parent_sibling', 'previous_neighbor', 'next_neighbor'),
-        'evidence_relation': ('seed', 'parent_sibling', 'previous_neighbor', 'next_neighbor'),
-        'truncation_status': ('CHAR_LIMIT_APPLIED', 'NOT_APPLIED', 'UNKNOWN'),
+        'relation': ('seed', 'parent', 'neighbor', 'parent_sibling', 'previous_neighbor', 'next_neighbor'),
+        'evidence_relation': ('seed', 'parent', 'neighbor', 'parent_sibling', 'previous_neighbor', 'next_neighbor'),
+        'truncation_status': ('CHAR_LIMIT_APPLIED', 'NOT_APPLIED', 'UNKNOWN', 'SEED_OMITTED_OVER_LIMIT'),
+        'degradation_reason': ('INVALID_PARENT_LINK', 'PARENT_OVER_BUDGET', 'SEED_NOT_IN_PARENT', 'FINAL_REQUEST_OVER_CHAR_BUDGET'),
+        'boundary_status': ('KNOWN', 'UNKNOWN'),
+        'score_origin': ('best_seed_rerank', 'best_seed_retrieval'),
         'delivery_status': ('SELECTED_NOT_YET_SENT', 'PREPARED_FOR_PROVIDER', 'SENT', 'UNKNOWN'),
     }
     if key in controlled and value in controlled[key]:
@@ -943,6 +957,36 @@ def observe(name):
     return decorator
 
 
+def trace_response_usage(response):
+    """Copy authoritative response usage; aggregate-only LC usage is unverified.
+
+    Streaming LangChain messages may sum cumulative per-chunk counters. Their
+    usage_metadata alone cannot establish totals, even when a particular stream
+    happens to be correct. This affects traces only, never the returned message.
+    """
+    from copy import deepcopy
+    usage = getattr(response, 'usage', None)
+    if hasattr(usage, 'model_dump'):
+        usage = usage.model_dump()
+    if not isinstance(usage, dict) or not usage:
+        metadata = getattr(response, 'response_metadata', None) or {}
+        usage = metadata.get('token_usage') if isinstance(metadata, dict) else None
+    if not isinstance(usage, dict) or not usage:
+        return None, 'UNKNOWN'
+    usage = deepcopy(usage)
+    # LC's numeric counter name collides with the hidden-content privacy gate.
+    # Rename only an actual nonnegative integer in this known counter location;
+    # booleans, text, objects and conflicting counters retain the forbidden key.
+    details = usage.get('output_token_details')
+    if isinstance(details, dict):
+        counter = details.get('reasoning')
+        if (type(counter) is int and counter >= 0
+                and ('reasoning_tokens' not in details
+                     or (type(details['reasoning_tokens']) is int and details['reasoning_tokens'] == counter))):
+            details['reasoning_tokens'] = details.pop('reasoning')
+    return usage, 'PROVIDER_REPORTED'
+
+
 def model_response(response, *, role='generation', model=None):
     try:
         usage = getattr(response, 'usage', None)
@@ -951,11 +995,12 @@ def model_response(response, *, role='generation', model=None):
         record_provider_usage(role, usage)
         if not enabled():
             return
+        trace_usage, usage_status = trace_response_usage(response)
         metadata = getattr(response, 'response_metadata', {}) or {}
         choices = getattr(response, 'choices', None)
         finish = choices[0].finish_reason if choices else metadata.get('finish_reason')
         event('llm.response', role=role, model=getattr(response, 'model', None) or model,
-              finish_reason=finish, usage=usage, cost=None,
+              finish_reason=finish, usage=trace_usage, usage_status=usage_status, cost=None,
               status='TRUNCATED' if finish == 'length' else 'RETURNED')
     except Exception:
         pass

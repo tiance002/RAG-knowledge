@@ -3,20 +3,21 @@ from app.services.observability import observe, event, snapshot, enabled, model_
 基于 LangGraph 的 Agent 工作流 (Cyclic Graph)
 """
 
-from typing import TypedDict, List, Annotated, Literal, Dict, Any
+from typing import TypedDict, List, Annotated, Dict, Any
 import operator
 import json
 import re
 import os
+import math
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.message import add_messages
 
 from app.services.llm import LLMService, is_unknown_provider_error, should_abort_provider_error, invoke_provider_model
 from app.services.metrics import record_agent_retry_decision
+from app.core.config import get_settings
 from app.tools import search_knowledge_base
 from app.tools.retrieval_tool import retrieval_attempt
 import uuid
@@ -93,30 +94,151 @@ class AgentState(TypedDict):
     # 业务上下文
     kb_ids: List[str]
     intent: str  # 'chat', 'qa'
+    understanding_intent: str | None  # Intent from the optional unified query understanding
+    retrieval_query: str | None # Optional once-per-request clarified retrieval query
     original_query: str # 用户原始问题
     current_plan: str # 当前执行计划
     
     # RAG 相关 (用于前端展示)
     rag_context: str
     retrieval_status: str
+    degraded: bool
+    fallback_used: bool
     citations: List[dict]
     retrieved_docs: List[Any] # 累计召回文档 (暂存)
     search_params: Dict[str, Any] # 前端传递的默认检索参数
     
     # 流程控制
     retry_count: int
+    retrieval_retry_scheduled: bool
     router_escalations_used: int
     retrieval_attempt_id: str
     retrieval_attempt_count: int
-    last_score: float # 最近一次评分
+    last_score: float | None # None means unavailable, never a relevance score.
     execution_history: List[str] # 执行路径记录
     
     agent_steps: Annotated[List[dict], operator.add] # Append only
     final_system_prompt: str
+    preference_policy: str
     answer_mode: str
+    fallback_strategy: str
+    generation_status: str
+    generation_finish_reason: str | None
     
     # LLM 配置 (动态注入)
     model_config: Dict[str, Any]
+    source_registry: List[dict]
+    executed_retrieval_requests: List[str]
+    retrieval_blocked: bool
+    grading_status: str
+    validation_status: str
+    grading_scope: Dict[str, Any]
+    source_mapping_status: str
+    expansion_delivery_status: str
+    model_usage_records: Annotated[List[Any], operator.add]
+
+
+def _source_key(citation):
+    return (citation.get('fileId') or citation.get('file_id'), citation.get('chunk_id'),
+            citation.get('content'))
+
+
+def _source_context(citations):
+    return '\n\n'.join(f"Document {c['source_id']} (Source: {c.get('fileName', 'Unknown File')}):\n{c['content']}"
+                       for c in citations)
+
+
+_SCORE_NUMBER = re.compile(r'(?<![\w.])[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?![\w.])')
+_SCORE_LABELLED = re.compile(
+    r'(?:score|rating|relevance|评分|相关性|得分)\s*[:：=为]?\s*'
+    r'(\d+(?:\.\d+)?)\s*(?:/\s*(1(?:\.0+)?|10|100))?',
+    re.IGNORECASE,
+)
+_SCORE_ERROR = re.compile(
+    r'\b(?:error|failed|failure|timeout|unavailable|exception|invalid|not\s+a\s+score)\b|错误|失败|故障|超时|不可用',
+    re.IGNORECASE,
+)
+# 分数型写法：0.85/1.0、8.5/10、0.85 out of 1.0
+_SCORE_FRACTION = re.compile(
+    r'(?<![\w.])(\d+(?:\.\d+)?)\s*(?:/\s*|out\s+of\s*)(1(?:\.0+)?|10|100)(?![\w.])',
+    re.IGNORECASE,
+)
+
+
+def _bounded_score(value, scale=1.0):
+    """把候选数值换算到 0–1；越界或非数值返回 None。"""
+    try:
+        number = float(value)
+        scale = float(scale) if scale else 1.0
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(number) or scale <= 0:
+        return None
+    score = number / scale
+    return score if 0 <= score <= 1 else None
+
+
+def _relevance_score(content):
+    """读取一个 0–1 的相关性分数，容忍常见包装写法，不臆造分数。
+
+    原实现要求全文恰好一个数字，评分模型回 "0.85/1.0"、"得分 0.85，理由…"
+    都会判无效，进而阻断答案生成。这里先看唯一数值，再看显式分数写法。
+    """
+    if not isinstance(content, str):
+        return None
+    # 1) 显式标注的分数优先：`score: 0.85`、`得分 0.85`。
+    labelled = [s for s in (_bounded_score(*groups) for groups in _SCORE_LABELLED.findall(content))
+                if s is not None]
+    if len(set(labelled)) == 1:
+        return labelled[0]
+    # 2) 分数型写法：0.85/1.0、8.5/10、0.85 out of 1.0。
+    fractions = {round(s, 6) for s in
+                 (_bounded_score(*groups) for groups in _SCORE_FRACTION.findall(content))
+                 if s is not None}
+    if len(fractions) == 1:
+        return fractions.pop()
+    # 3) 有错误词而没有显式分数时，不把数字当分数（"timeout code 0.5"、"Error code 0"）。
+    if _SCORE_ERROR.search(content):
+        return None
+    # 4) 最后才接受全文唯一的 0–1 数值。
+    bounded = [s for s in (_bounded_score(number) for number in _SCORE_NUMBER.findall(content))
+               if s is not None]
+    return bounded[0] if len(bounded) == 1 else None
+
+
+def _grounded_min_score():
+    """允许生成答案的最低相关性分数；0.5 对应评分提示里的"部分相关"。"""
+    try:
+        value = float(os.getenv('RAG_GROUNDED_MIN_SCORE', '0.5'))
+    except (TypeError, ValueError):
+        return 0.5
+    return value if 0.0 <= value <= 1.0 else 0.5
+
+
+def _register_sources(data, registry):
+    """Number the actual tool delivery once for this answer, before model use."""
+    selected = []
+    image_sources = []
+    omitted_images = bool(data.get('omitted_images'))
+    for citation in data.get('citations', []):
+        if not isinstance(citation, dict):
+            continue
+        content, has_image = evidence_text(citation)
+        omitted_images |= has_image
+        if citation.get('content_type') == 'image':
+            image_sources.append({**citation, 'content': '', 'evidence_status': 'UNVERIFIED_IMAGE'})
+            continue
+        if not citation.get('chunk_id') or not content:
+            continue
+        citation = {**citation, 'content': content}
+        existing = next((c for c in registry if _source_key(c) == _source_key(citation)), None)
+        if existing is None:
+            existing = {**citation, 'source_id': len(registry) + 1}
+            registry.append(existing)
+        if existing not in selected:
+            selected.append(existing)
+    return {**data, 'citations': selected + image_sources, 'context': _source_context(selected),
+            'source_ids': [c['source_id'] for c in selected], 'omitted_images': omitted_images}
 
 def explicitly_requests_sources(content: str) -> bool:
     # A definition request about the concept does not ask to consult a corpus.
@@ -166,6 +288,7 @@ def _guard_knowledge_answer(state: AgentState, response: AIMessage):
             if status not in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"}:
                 status = "UNKNOWN"
             statuses.append(status)
+            omitted_images |= bool(data.get('omitted_images'))
             for citation in data.get("citations", []):
                 if not isinstance(citation, dict):
                     continue
@@ -178,7 +301,10 @@ def _guard_knowledge_answer(state: AgentState, response: AIMessage):
         except (TypeError, ValueError, AttributeError):
             statuses.append("UNKNOWN")
 
-    incomplete = any(status in {"RETRIEVAL_ERROR", "UNKNOWN"} for status in statuses)
+    if state.get('source_registry'):
+        citations = [dict(c) for c in state['source_registry']]
+    incomplete = (state.get('retrieval_status') in {'RETRIEVAL_ERROR', 'UNKNOWN'}
+                  or any(status in {"RETRIEVAL_ERROR", "UNKNOWN"} for status in statuses))
     if not citations:
         if "RETRIEVAL_ERROR" in statuses:
             answer = "知识库检索发生错误，无法确认是否存在相关资料，请稍后重试。"
@@ -197,24 +323,40 @@ def _guard_knowledge_answer(state: AgentState, response: AIMessage):
 
     if incomplete:
         prefix = "检索未完全成功，以下是已找到的原文，无法确认是否足以完整回答："
-    elif "LOW_RELEVANCE" in statuses or state.get("last_score", 0.0) < 0.8:
+    elif "LOW_RELEVANCE" in statuses or (
+            state.get("last_score") is not None and state.get("last_score", 0.0) < _grounded_min_score()):
         prefix = "现有证据不足以完整回答，以下是相关原文："
     else:
         prefix = "无法确认以下资料是否足以完整回答，以下为检索到的原文："
-    excerpts = [f"[{i}] {item['content'].strip()}" for i, item in enumerate(citations, 1)]
+    excerpts = [f"[{item.get('source_id', i)}] {item['content'].strip()}" for i, item in enumerate(citations, 1)]
     response.content = prefix + "\n\n" + "\n\n".join(excerpts)
     if omitted_images:
         response.content += "\n\n另有图片资料，其内容需要进一步核验。"
     return citations
 
 
-def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, include_mode=False):
+def _answer_generation_metadata(response: AIMessage, *, generation_ran=True):
+    """Describe the model reply before evidence fallback changes its content."""
+    if not generation_ran:
+        return {'generation_status': 'NOT_RUN', 'generation_finish_reason': None}
+    finish = (getattr(response, 'response_metadata', None) or {}).get('finish_reason')
+    content = response.content
+    # Match ordinary grounded chat's completion policy. Unknown content shapes
+    # remain unknown; neither fallback text nor a tool call proves completion.
+    status = ('TRUNCATED' if finish == 'length' else
+              'EMPTY' if isinstance(content, str) and not content.strip() else
+              'COMPLETED' if isinstance(content, str) and content.strip()
+              and finish in ('stop', None) else 'UNKNOWN')
+    return {'generation_status': status, 'generation_finish_reason': finish}
+
+
+def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, include_mode=False, generation_ran=True):
     """Return a complete generated answer when retrieval is usable, else fallback."""
+    generation_metadata = _answer_generation_metadata(response, generation_ran=generation_ran)
     candidate = response.content
     citations = _guard_knowledge_answer(state, response)
     statuses = []
     omitted_images = False
-    raw_citations = []
     for message in state.get("messages", []):
         if not isinstance(message, ToolMessage) or message.name != "search_knowledge_base":
             continue
@@ -222,8 +364,8 @@ def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, includ
             data = json.loads(message.content)
             status = data.get("retrieval_status", "RETRIEVAL_ERROR" if data.get("error") else "UNKNOWN")
             statuses.append(status if status in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"} else "UNKNOWN")
-            raw_citations = data.get("citations", [])
-            for item in raw_citations:
+            omitted_images |= bool(data.get('omitted_images'))
+            for item in data.get("citations", []):
                 if isinstance(item, dict):
                     omitted_images |= evidence_text(item)[1]
         except (TypeError, ValueError, AttributeError):
@@ -238,19 +380,23 @@ def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, includ
         mode = "INSUFFICIENT_EVIDENCE"
     validation_status = "NOT_RUN"
     finish_reason = (getattr(response, "response_metadata", None) or {}).get("finish_reason")
+    # 评分格式异常（last_score=None）不再否决已生成的答案；只有明确的低分才降级。
+    score = state.get("last_score")
+    score_usable = score is None or score >= _grounded_min_score()
+    # 部分网关不返回 finish_reason；只要内容非空且不是显式截断，就按完成处理。
+    completed = finish_reason in ("stop", None)
     if (os.getenv("RAG_GROUNDED_GENERATION", "true").lower() == "true"
-            and citations and statuses and statuses[-1] == "SUCCESS"
+            and citations and "SUCCESS" in statuses
             and all(status in {"SUCCESS", "NO_RESULTS"} for status in statuses)
-            and state.get("last_score", 0.0) >= 0.8
-            and isinstance(candidate, str) and candidate.strip() and finish_reason == "stop"):
-        # The answer is not subjected to custom content/citation rules; all
-        # Earlier empty searches are harmless when the latest search succeeds;
-        # errors, unknown status, and low relevance still block generation.
+            and score_usable and completed
+            and isinstance(candidate, str) and candidate.strip()):
+        # 答案不再经过自定义内容/引用规则；早前某轮检索为空不影响后续成功轮次，
+        # 但 RETRIEVAL_ERROR / UNKNOWN / 低分仍会阻断生成。
         disclosure = "\n\n另有图片资料，其内容需要进一步核验。" if omitted_images else ""
         response.content = candidate + disclosure
         mode = "GROUNDED_GENERATION"
     event("agent.answer_validation", mode=mode, status=validation_status)
-    event("qa.answer", answer_mode=mode, validation_status=validation_status)
+    event("qa.answer", answer_mode=mode, validation_status=validation_status, **generation_metadata)
     return (citations, mode) if include_mode else citations
 
 class AgentWorkflow:
@@ -265,10 +411,16 @@ class AgentWorkflow:
             return (llm, None, None) if return_decision else llm
         from app.services.grounded_generation import _route_generation
         roles = {'human': 'user', 'ai': 'assistant', 'system': 'system', 'tool': 'tool'}
-        actual_messages = [{'role': roles.get(message.type, message.type),
-                            'content': message.content} for message in invocation_messages]
+        actual_messages = []
+        for message in invocation_messages:
+            row = {'role': roles.get(message.type, message.type), 'content': message.content}
+            for key in ('tool_calls', 'tool_call_id', 'name'):
+                value = getattr(message, key, None)
+                if value:
+                    row[key] = value
+            actual_messages.append(row)
         routed = _route_generation(
-            llm, llm.model, actual_messages, state['citations'],
+            llm, llm.model, actual_messages, state.get('source_registry') or state['citations'],
             question=state.get('original_query', ''), retrieval_status=state['retrieval_status'],
             **({'return_decision': True} if return_decision else {}))
         selected = routed[0]
@@ -279,7 +431,6 @@ class AgentWorkflow:
     def __init__(self):
         self.llm_service = LLMService()
         self.tools = [search_knowledge_base]
-        self.tool_node = ToolNode(self.tools)
         
         # 构建图
         workflow = StateGraph(AgentState)
@@ -343,8 +494,11 @@ class AgentWorkflow:
     @observe("agent.analyze_intent")
     async def analyze_intent(self, state: AgentState, config: RunnableConfig):
         """意图分析节点"""
-        # 获取最新的一条 HumanMessage
-        last_message = state["messages"][-1]
+        # Trailing assistant drafts are not the active user request.
+        current_index = next((i for i in range(len(state["messages"]) - 1, -1, -1)
+                              if isinstance(state["messages"][i], HumanMessage)),
+                             len(state["messages"]) - 1)
+        last_message = state["messages"][current_index]
         content = last_message.content
 
         # Explicit requests to use selected sources must not be routed to chat.
@@ -356,61 +510,25 @@ class AgentWorkflow:
                 "retry_count": 0,
                 "execution_history": [],
             }
-        
-        # 简单规则快速判断
-        if len(content.strip()) < 10 and content.strip().lower() in ["你好", "在吗", "hello", "hi", "help", "test"]:
+
+        understood_intent = state.get("understanding_intent")
+        if understood_intent in ("chat", "qa"):
             return {
-                "intent": "chat", 
-                "agent_steps": [{
-                    "step": "decision",
-                    "content": "检测到闲聊意图 (Fast Path)"
-                }],
+                "intent": understood_intent,
+                "agent_steps": [{"step": "decision", "content": f"意图分析: {understood_intent}"}],
                 "original_query": content,
                 "retry_count": 0,
-                "execution_history": []
+                "execution_history": [],
             }
-
-        # LLM 意图判断
-        prompt = f"""Analyze the user input: "{content}"
         
-Classify intent as:
-- "chat": Greeting, small talk, or general knowledge question that DOES NOT require external documentation.
-- "qa": Question that likely requires retrieving specific information from a knowledge base.
-
-Output ONLY one word: "chat" or "qa".
-"""
-        try:
-            llm = self._get_llm_service(state)
-            # Use streaming=False to avoid "No generations found in stream" error with some local models
-            invocation_messages = [HumanMessage(content=prompt)]
-            model = llm.get_chat_model(temperature=0.01, streaming=False)
-            _observe_model_request("intent", invocation_messages, llm.model, provider_model=model)
-            response = await invoke_provider_model(model, invocation_messages, config=config, stage="intent", model_name=llm.model)
-            _observe_model_response("intent", response, llm.model)
-            model_response(response, role="intent", model=llm.model)
-            intent = response.content.strip().lower()
-            if "qa" in intent or "knowledge" in intent:
-                intent = "qa"
-            else:
-                intent = "chat"
-        except Exception as e:
-            if should_abort_provider_error(e):
-                raise
-            print(f"Intent analysis failed: {e}")
-            event('agent.intent_fallback', status='FALLBACK', error_type=type(e).__name__)
-            intent = "qa" # Fallback to QA
-            
-        new_steps = [{
-            "step": "decision",
-            "content": f"意图分析: {intent}"
-        }]
-        
+        # Without a usable unified understanding, default to retrieval.  Do not
+        # run a separate intent classifier or infer chitchat from keywords.
         return {
-            "intent": intent, 
-            "agent_steps": new_steps,
+            "intent": "qa",
+            "agent_steps": [{"step": "decision", "content": "默认使用知识库问答"}],
             "original_query": content,
             "retry_count": 0,
-            "execution_history": []
+            "execution_history": [],
         }
 
     def route_based_on_intent(self, state: AgentState):
@@ -419,23 +537,72 @@ Output ONLY one word: "chat" or "qa".
     @observe("agent.agent_node")
     async def agent_node(self, state: AgentState, config: RunnableConfig):
         """Agent 思考节点"""
+        if state.get('retrieval_blocked'):
+            response = AIMessage(content='')
+            citations, mode = _finalize_knowledge_answer(state, response, include_mode=True, generation_ran=False)
+            return {'messages': [response], 'citations': citations, 'answer_mode': mode,
+                    'validation_status': 'NOT_RUN',
+                    **_answer_generation_metadata(response, generation_ran=False)}
+        # Only a completed sequence of empty retrievals permits the configured
+        # no-evidence answer; earlier failures or evidence remain authoritative.
+        if (state.get('retrieval_status') == 'NO_RESULTS'
+                and not state.get('retrieval_retry_scheduled')
+                and not state.get('degraded') and not state.get('source_registry')
+                and not state.get('citations') and state.get('kb_ids')):
+            search_results = []
+            for message in state.get('messages', []):
+                if isinstance(message, ToolMessage) and message.name == 'search_knowledge_base':
+                    try:
+                        data = json.loads(message.content)
+                        if not isinstance(data, dict):
+                            raise ValueError('invalid search result')
+                        search_results.append(data)
+                    except (TypeError, ValueError):
+                        search_results.append({})
+            if (search_results and all(
+                    item.get('retrieval_status') == 'NO_RESULTS'
+                    and not item.get('degraded') and not item.get('citations')
+                    and not item.get('omitted_images')
+                    for item in search_results)):
+                from app.services.grounded_generation import generate_no_results_fallback
+                text, strategy, finish, usage = await generate_no_results_fallback(
+                    self._get_llm_service(state), state.get('original_query', ''))
+                response = AIMessage(content=text, response_metadata={'finish_reason': finish})
+                usage_record = None
+                if isinstance(usage, dict) and all(isinstance(usage.get(key), int) for key in
+                        ('prompt_tokens', 'completion_tokens', 'total_tokens')):
+                    usage_record = {'input': usage.get('prompt_tokens'),
+                                    'output': usage.get('completion_tokens'),
+                                    'total': usage.get('total_tokens')}
+                return {'messages': [response], 'citations': [],
+                        'answer_mode': 'NO_RESULTS_' + strategy.upper(),
+                        'fallback_strategy': strategy,
+                        'validation_status': 'NOT_RUN',
+                        'generation_status': ('NOT_RUN' if strategy == 'fixed' else
+                                              'COMPLETED' if finish == 'stop' else
+                                              'TRUNCATED' if finish == 'length' else
+                                              'EMPTY' if finish == 'empty' else 'UNKNOWN'),
+                        'generation_finish_reason': finish,
+                        'model_usage_records': [usage_record] if usage_record is not None else []}
         # 准备 System Prompt
         system_msg = SystemMessage(content=f"""你是一个专业的智能助手，专门用于帮助用户从知识库中检索和解答问题。
 
 你的工作流程如下：
 1. **分析意图**：仔细分析用户的问题，确定需要查询什么信息。
 2. **执行检索**：使用 `search_knowledge_base` 工具查询知识库。
+   - 用户要求依据所选资料回答时，先检索获取证据；工具返回前，不要声称资料缺失或检索无结果。
    - 只需提供 `query` 参数。系统会自动处理知识库 ID 和检索配置。
    - 尽量使用准确的关键词。
    - 如果用户的问题比较复杂，可以拆解为多次查询。
 3. **响应反馈**：
    - 检索完成后，系统会评估检索结果的相关性。
    - 如果系统提示 "检索结果相关性评分较低"，**你必须** 尝试改写查询关键词，并再次调用工具。
-   - 在重试时，如果之前的尝试没有结果，请尝试在参数中降低 `score_threshold` (例如 0.1) 以获取更多结果。
+   - 在重试时，请改写查询关键词或换一个切入点；检索参数由服务端统一控制，不要在工具参数里调整。
    - 不要重复使用相同的查询。尝试不同的切入点。
 4. **生成回答**：
    - 当检索结果被系统接受，或者系统提示 "已达到最大重试次数" 时，请基于现有的所有搜索结果回答用户的问题。
-   - 严谨引用来源，回答要准确、完整。
+   - 仅依据工具返回的文本证据作答；不要补充证据未明确支持的细节、单位、时间或推断。证据只支持部分答案时，说明缺少什么，不要猜测。检索片段未提供某信息时，只说明现有片段未提供，不要据此断言整份文档没有该信息。
+   - 每个依据资料作出的事实陈述旁使用对应来源的编号引用，例如 `[1]`；编号取自工具结果中的 `source_id`（与 context 中的 `Document 1` 对应）。多个来源均支持时可分别引用，例如 `[1][2]`；不要编造来源或编号。
    - 如果多次尝试后仍无结果，请诚实告知用户。
 
 注意事项：
@@ -445,14 +612,30 @@ Output ONLY one word: "chat" or "qa".
 - **重要**：最终回答用户时，**不要**包含 "Thinking: ..." 这样的思考过程块。只输出最终的回答内容。思考过程仅用于中间步骤。""")
         
         messages = state["messages"]
+        if state.get('retrieval_query') and not state.get('retrieval_attempt_count'):
+            system_msg = SystemMessage(content=system_msg.content +
+                '\n\n本轮首轮检索使用已解析的问题：' + state['retrieval_query'] +
+                '\n最终回答仍针对用户原始问题；后续重试由现有证据评分流程决定。')
         invocation_messages = [system_msg] + messages
         
         llm = self._get_llm_service(state)
         llm, route, router_config = self._route_post_retrieval_model(
             state, llm, invocation_messages, return_decision=True)
+        # This workflow combines tool selection and final composition in one
+        # model call. Keep preferences out of routing/tool state and constrain
+        # this independent segment to visible final answer composition only.
+        forced_retry = state.get('retrieval_retry_scheduled', False)
+        answer_possible = (bool(state.get('source_registry') or state.get('citations'))
+                           and state.get('retrieval_status') == 'SUCCESS' and not forced_retry)
+        if state.get('preference_policy') and answer_possible:
+            invocation_messages = [SystemMessage(content=system_msg.content + '\n\n' + state['preference_policy'])] + messages
+        event('memory.delivery', stage='agent_tool_and_answer',
+              preference_policy_applied=bool(state.get('preference_policy') and answer_possible))
         # Use streaming=False to prevent crashes on local models
         from app.services.grounded_generation import _routed_chat_model, _routed_response_identity, _router_outcome
         model = _routed_chat_model(llm, self.tools)
+        from app.services.grounded_generation import enforce_request_budget
+        enforce_request_budget(invocation_messages, getattr(model, 'kwargs', {}).get('tools'))
         
         _observe_model_request("agent", invocation_messages, llm.model, provider_model=model)
         try:
@@ -463,6 +646,8 @@ Output ONLY one word: "chat" or "qa".
         _observe_model_response("agent", response, llm.model)
         
         model_response(response, role="agent", model=llm.model)
+        from app.services.llm import _response_usage
+        usage_records = [_response_usage(response)]
         identity_status = (_routed_response_identity(response, llm.model, stage='agent')
                            if route is not None else 'UNKNOWN')
         escalation_used = state.get('router_escalations_used', 0)
@@ -474,7 +659,7 @@ Output ONLY one word: "chat" or "qa".
             from app.services.grounded_generation import _reference_range_quality, _role_service
             from app.services.model_router import decide_escalation
             try:
-                quality_status = _reference_range_quality(response.content, len(state['citations']))
+                quality_status = _reference_range_quality(response.content, len(state.get('source_registry') or state['citations']))
             except Exception:
                 quality_status = 'UNKNOWN'
             escalation = decide_escalation(route, completion_status='COMPLETED', quality_status=quality_status,
@@ -485,6 +670,8 @@ Output ONLY one word: "chat" or "qa".
                       model=escalation.selected_model, retry_count=1, cost={'status': 'UNKNOWN'})
                 upgraded = _role_service('EXPENSIVE', escalation.selected_model)
                 upgraded_model = _routed_chat_model(upgraded, self.tools)
+                event('memory.delivery', stage='agent_tool_and_answer',
+                      preference_policy_applied=bool(state.get('preference_policy') and answer_possible))
                 _observe_model_request('agent', invocation_messages, upgraded.model, provider_model=upgraded_model)
                 try:
                     response = await invoke_provider_model(upgraded_model, invocation_messages, config=config,
@@ -495,6 +682,7 @@ Output ONLY one word: "chat" or "qa".
                 _routed_response_identity(response, upgraded.model, stage='agent')
                 _observe_model_response('agent', response, upgraded.model)
                 model_response(response, role='agent', model=upgraded.model)
+                usage_records.append(_response_usage(response))
                 escalation_used += 1
         _router_outcome(route, upgraded.model if escalation_used > state.get('router_escalations_used', 0) else llm.model,
                         finish=(getattr(response, 'response_metadata', None) or {}).get('finish_reason'),
@@ -536,11 +724,13 @@ Output ONLY one word: "chat" or "qa".
                     "content": f"调用工具: {function_name}"
                 })
         
-        result = {"messages": [response], "agent_steps": steps}
+        result = {"messages": [response], "agent_steps": steps, 'model_usage_records': usage_records}
         if escalation_used:
             result['router_escalations_used'] = escalation_used
         if not response.tool_calls:
+            result.update(_answer_generation_metadata(response))
             result["citations"], result["answer_mode"] = _finalize_knowledge_answer(state, response, include_mode=True)
+            result['validation_status'] = 'NOT_RUN'
         return result
 
     @observe("agent.run_tools")
@@ -553,6 +743,9 @@ Output ONLY one word: "chat" or "qa".
             return {}
             
         tool_outputs = []
+        registry = [dict(c) for c in state.get('source_registry', [])]
+        executed = list(state.get('executed_retrieval_requests', []))
+        blocked = False
         attempt_count = state.get("retrieval_attempt_count", 0)
         last_attempt_id = state.get("retrieval_attempt_id")
         for tool_call in last_message.tool_calls:
@@ -568,7 +761,11 @@ Output ONLY one word: "chat" or "qa".
                     "bm25_weight", "rerank_top_k", "rerank_score_threshold",
                     "rerank_model_id", "context_window",
                 )
-                final_args = {"query": agent_args.get("query"), "kb_ids": state.get("kb_ids", [])}
+                query = (state.get('retrieval_query') if attempt_count == 1
+                         and state.get('retrieval_query') else agent_args.get('query'))
+                final_args = {"query": query, "kb_ids": state.get("kb_ids", [])}
+                if state.get("original_query"):
+                    final_args["original_query"] = state["original_query"]
                 for name in parameter_names:
                     if name in search_params:
                         final_args[name] = search_params[name]
@@ -594,7 +791,7 @@ Output ONLY one word: "chat" or "qa".
                         safe["use_rerank"] = values["use_rerank"]
                     return safe
 
-                requested = dict(search_params)
+                requested = dict(agent_args)
                 if "rerank_enabled" in requested:
                     requested["use_rerank"] = requested["rerank_enabled"]
                 try:
@@ -604,6 +801,11 @@ Output ONLY one word: "chat" or "qa".
                         if not field.is_required()
                     }
                     effective_args.update(final_args)
+                    request_key = hashlib.sha256(json.dumps(effective_args, sort_keys=True, default=str).encode('utf-8')).hexdigest()
+                    block_reason = ('RETRY_LIMIT' if attempt_count > 4 else
+                                    'DUPLICATE_EFFECTIVE_REQUEST' if request_key in executed else None)
+                    if block_reason:
+                        attempt_count -= 1
                     scope_hash = hashlib.sha256(json.dumps(final_args["kb_ids"], sort_keys=True).encode("utf-8")).hexdigest()
                     event("agent.actual_query", retrieval_attempt_id=last_attempt_id,
                           tool_call_id=tool_call.get("id"), origin="agent_tool_call",
@@ -611,9 +813,18 @@ Output ONLY one word: "chat" or "qa".
                           kb_scope_sha256=scope_hash, retry_count=state.get("retry_count", 0),
                           requested_parameters=safe_settings(requested),
                           actual_parameters=safe_settings(effective_args))
-                    if not final_args["kb_ids"]:
+                    if block_reason:
+                        blocked = True
+                        result = json.dumps({'retrieval_status': 'UNKNOWN', 'context': '', 'citations': [],
+                            'execution_status': block_reason, 'retry_reason': block_reason,
+                            'requested_parameters': safe_settings(requested),
+                            'actual_parameters': safe_settings(effective_args)})
+                        event('agent.tool_blocked', reason_code=block_reason, retry_count=state.get('retry_count', 0))
+                    elif not final_args["kb_ids"]:
                         result = json.dumps({"retrieval_status": "NO_RESULTS", "context": "No knowledge bases found in the system.", "citations": []})
                     else:
+                        # Reserve before invoking: unknown outcomes cannot be replayed.
+                        executed.append(request_key)
                         token = retrieval_attempt.set(last_attempt_id)
                         try:
                             from app.services.observability import native_enabled, langchain_callback_config, tool_observation
@@ -644,6 +855,13 @@ Output ONLY one word: "chat" or "qa".
                     event('agent.tool_failed', status='FAILED', error_type=type(e).__name__, retry_count=state.get('retry_count', 0))
                     result = json.dumps({"retrieval_status": "RETRIEVAL_ERROR", "context": "", "citations": []})
                 
+                try:
+                    data = json.loads(result)
+                    if not isinstance(data, dict):
+                        raise ValueError('tool response must be an object')
+                    result = json.dumps(_register_sources(data, registry), ensure_ascii=False)
+                except (ValueError, TypeError):
+                    result = json.dumps({'retrieval_status': 'UNKNOWN', 'context': '', 'citations': []})
                 tool_outputs.append(
                     ToolMessage(
                         content=str(result),
@@ -653,7 +871,8 @@ Output ONLY one word: "chat" or "qa".
                 )
         
         return {"messages": tool_outputs, "retrieval_attempt_id": last_attempt_id,
-                "retrieval_attempt_count": attempt_count}
+                "retrieval_attempt_count": attempt_count, 'source_registry': registry,
+                'executed_retrieval_requests': executed, 'retrieval_blocked': blocked}
 
     def should_continue(self, state: AgentState):
         """决定是继续调用工具还是结束"""
@@ -670,46 +889,51 @@ Output ONLY one word: "chat" or "qa".
     @observe("agent.process_tool_output")
     async def process_tool_output(self, state: AgentState):
         """处理工具输出，解析 JSON，记录 Observation"""
-        messages = state["messages"]
-        last_message = messages[-1] # ToolMessage
-        
-        if not isinstance(last_message, ToolMessage):
+        # Only this tool round enters the grader. The answer registry remains
+        # cumulative, while the grading scope stays bounded and explicit.
+        batch = []
+        for message in reversed(state["messages"]):
+            if not isinstance(message, ToolMessage):
+                break
+            if message.name == 'search_knowledge_base':
+                batch.append(message)
+        if not batch:
             return {}
-
-        new_steps = []
-        citations = []
-        rag_context = ""
-        retrieval_status = "UNKNOWN"
-        
-        try:
-            # 解析工具返回的 JSON
-            data = json.loads(last_message.content)
-            rag_context = data.get("context", "")
-            citations = data.get("citations", [])
-            retrieval_status = data.get("retrieval_status", "UNKNOWN")
-            if retrieval_status not in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"}:
-                retrieval_status = "UNKNOWN"
-            
-            # 记录 Observation
-            new_steps.append({
-                "step": "observation",
-                "content": f"检索到 {len(citations)} 条相关记录"
-            })
-            
-        except Exception as e:
-            print(f"Error parsing tool output: {e}")
-            rag_context = str(last_message.content) # Fallback
-            new_steps.append({
-                "step": "observation",
-                "content": f"检索出错或格式异常: {str(e)}"
-            })
-            
-        return {
-            "citations": citations, # 更新 citations
-            "rag_context": rag_context,
-            "retrieval_status": retrieval_status,
-            "agent_steps": new_steps
-        }
+        citations, contexts, statuses, mappings, expansions = [], [], [], [], []
+        degraded = bool(state.get('degraded', False))
+        fallback_used = bool(state.get('fallback_used', False))
+        for message in reversed(batch):
+            try:
+                data = json.loads(message.content)
+                if not isinstance(data, dict):
+                    raise ValueError('tool response must be an object')
+                # Keep partial-route failure visible even after a healthy retry.
+                degraded = degraded or data.get('degraded') is True
+                fallback_used = fallback_used or data.get('fallback_used') is True
+                status = data.get('retrieval_status', 'UNKNOWN')
+                statuses.append(status if status in {'SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE', 'RETRIEVAL_ERROR', 'UNKNOWN'} else 'UNKNOWN')
+                contexts.append(data.get('context', ''))
+                mappings.append(data.get('source_mapping_status', 'UNKNOWN'))
+                expansions.append(data.get('expansion_delivery_status', 'UNKNOWN'))
+                for citation in data.get('citations', []):
+                    if isinstance(citation, dict) and citation not in citations:
+                        citations.append(citation)
+            except (TypeError, ValueError):
+                statuses.append('UNKNOWN')
+        status = ('RETRIEVAL_ERROR' if 'RETRIEVAL_ERROR' in statuses else
+                  'UNKNOWN' if 'UNKNOWN' in statuses else
+                  'LOW_RELEVANCE' if 'LOW_RELEVANCE' in statuses else
+                  'SUCCESS' if citations else 'NO_RESULTS')
+        if status == 'NO_RESULTS' and degraded:
+            status = 'UNKNOWN'
+        context = '\n\n'.join(c for c in contexts if isinstance(c, str))
+        return {'citations': citations, 'rag_context': context,
+                'retrieval_status': status,
+                'degraded': degraded, 'fallback_used': fallback_used,
+                'source_mapping_status': 'UNKNOWN' if 'UNKNOWN' in mappings else 'VERIFIED',
+                'expansion_delivery_status': next((value for value in
+                    ('OMITTED', 'SEED_ONLY', 'PARTIAL', 'UNKNOWN', 'DELIVERED') if value in expansions), 'NOT_REQUESTED'),
+                'agent_steps': [{'step': 'observation', 'content': f'检索到 {len(citations)} 条相关记录'}]}
 
     @observe("agent.grade_documents")
     async def grade_documents(self, state: AgentState, config: RunnableConfig):
@@ -747,9 +971,11 @@ Output ONLY one word: "chat" or "qa".
             try:
                 llm = self._get_llm_service(state)
                 invocation_messages = [HumanMessage(content=prompt)]
-                model = llm.get_chat_model(temperature=0.1)
+                grading_timeout = get_settings().AGENT_GRADING_TIMEOUT_SECONDS
+                model = llm.get_chat_model(temperature=0.1, streaming=False, timeout=grading_timeout)
                 _observe_model_request("quality", invocation_messages, llm.model, provider_model=model)
-                response = await invoke_provider_model(model, invocation_messages, config=config, stage="quality", model_name=llm.model)
+                response = await invoke_provider_model(model, invocation_messages, config=config, stage="quality",
+                                                       model_name=llm.model, timeout_seconds=grading_timeout)
                 _observe_model_response("quality", response, llm.model)
                 model_response(response, role="quality", model=llm.model)
                 try:
@@ -757,26 +983,22 @@ Output ONLY one word: "chat" or "qa".
                                         content_role="provider_response") if enabled() else None
                 except Exception:
                     score_raw = None
-                score_str = response.content.strip()
-                import re
-                match = re.search(r"0\.\d+|1\.0|0|1", score_str)
-                score_parsed = float(match.group()) if match else None
-                score = score_parsed if match else 0.5
-                # Preserve legacy grading, but do not claim a valid score when
-                # a malformed response merely contains a numeric substring.
-                quality_fallback = re.fullmatch(r'(?:0(?:\.\d+)?|1(?:\.0+)?)', score_str) is None
+                score_parsed = _relevance_score(response.content)
+                score = score_parsed
+                quality_fallback = score is None
                 score_valid = not quality_fallback
                 if quality_fallback:
                     quality_reason = 'INVALID_FORMAT'
+                    score = None
             except Exception as e:
                 if should_abort_provider_error(e):
                     raise
-                print(f"Grading failed: {e}")
+                print(f"Grading failed: {type(e).__name__}")
                 event('agent.quality_fallback', status='FALLBACK', error_type=type(e).__name__)
                 quality_fallback = True
                 score_valid = False
                 quality_reason = "PROVIDER_FAILURE"
-                score = 0.5 # Fallback
+                score = None
             
         steps = [{
             "step": "reflection",
@@ -794,9 +1016,21 @@ Output ONLY one word: "chat" or "qa".
               reason=quality_reason, retrieval_attempt_id=state.get("retrieval_attempt_id"),
               retry_count=retry_count, is_fallback=quality_fallback, cost=None)
         # A low score only represents low relevance when candidate evidence exists.
-        if citations and not quality_fallback and score < 0.8:
+        if citations and not quality_fallback and score is not None and score < 0.8:
             event("agent.evidence_outcome", status="LOW_RELEVANCE", score=score, retry_count=retry_count)
         
+        grading_scope = {'source_ids': [c.get('source_id') for c in citations],
+                         'chunk_ids': [c.get('chunk_id') for c in citations],
+                         'examined_source_ids': [c.get('source_id') for c in citations
+                             if c.get('source_id') is not None and
+                             0 <= context.find(f"Document {c['source_id']} (") < len(examined)],
+                         'context_chars_examined': len(examined),
+                         'context_chars_total': len(context), 'context_clipped': len(context) > 2000,
+                         'scope': 'CURRENT_TOOL_ROUND_PREFIX', 'max_chars': 2000}
+        if quality_fallback or state.get('retrieval_status') in ('UNKNOWN', 'RETRIEVAL_ERROR'):
+            event('agent.retry_decision', action='NOT_SCHEDULED', reason_code='QUALITY_OR_RETRIEVAL_UNKNOWN')
+            return {'last_score': None, 'grading_status': 'UNKNOWN', 'retrieval_retry_scheduled': False,
+                    'grading_scope': grading_scope, 'agent_steps': steps}
         if score < 0.8: # 阈值 0.8
             if retry_count < 3:
                 new_retry_count = retry_count + 1
@@ -814,7 +1048,8 @@ Output ONLY one word: "chat" or "qa".
                 })
                 
                 return {
-                    "last_score": score,
+                    "last_score": score, "grading_status": "VALID", "grading_scope": grading_scope,
+                    "retrieval_retry_scheduled": True,
                     "retry_count": new_retry_count,
                     "messages": messages,
                     "agent_steps": steps
@@ -834,7 +1069,8 @@ Output ONLY one word: "chat" or "qa".
                 })
                 
                 return {
-                    "last_score": score,
+                    "last_score": score, "grading_status": "VALID", "grading_scope": grading_scope,
+                    "retrieval_retry_scheduled": False,
                     "messages": messages,
                     "agent_steps": steps
                 }
@@ -842,7 +1078,8 @@ Output ONLY one word: "chat" or "qa".
         event("agent.retry_decision", action="NOT_SCHEDULED", previous_attempt_id=state.get("retrieval_attempt_id"),
               decision="NOT_SCHEDULED", reason_code="SCORE_AT_OR_ABOVE_THRESHOLD", retry_count=retry_count,
               next_action="ANSWER", retrieval_attempt_count=state.get("retrieval_attempt_count", 0))
-        return {"last_score": score, "agent_steps": steps}
+        return {"last_score": score, "grading_status": "VALID", "grading_scope": grading_scope,
+                "retrieval_retry_scheduled": False, "agent_steps": steps}
 
     @observe("agent.generate_chat")
     async def generate_chat(self, state: AgentState, config: RunnableConfig):
@@ -858,7 +1095,11 @@ Output ONLY one word: "chat" or "qa".
         llm = self._get_llm_service(state)
         # Use streaming=False to ensure compatibility
         model = llm.get_chat_model(streaming=False)
+        if state.get('preference_policy'):
+            system_prompt += '\n\n' + state['preference_policy']
         invocation_messages = [SystemMessage(content=system_prompt)] + messages
+        event('memory.delivery', stage='agent_chat',
+              preference_policy_applied=bool(state.get('preference_policy')))
         _observe_model_request("agent_chat", invocation_messages, llm.model, provider_model=model)
         response = await invoke_provider_model(model, invocation_messages, config=config, stage="agent_chat", model_name=llm.model)
         _observe_model_response("agent_chat", response, llm.model)
@@ -866,5 +1107,6 @@ Output ONLY one word: "chat" or "qa".
         
         return {
             "messages": [response],
+            **_answer_generation_metadata(response),
             "agent_steps": [{"step": "response", "content": "生成闲聊回复"}]
         }

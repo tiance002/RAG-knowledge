@@ -34,7 +34,8 @@ request.interceptors.response.use(
     const errorMessage = (error.response?.data as { message?: string })?.message
       || error.message
       || '请求失败';
-    message.error(errorMessage);
+    const detail = (error.response?.data as { detail?: { code?: string } })?.detail;
+    if (detail?.code !== 'FILE_NAME_CONFLICT') message.error(errorMessage);
     return Promise.reject(error);
   }
 );

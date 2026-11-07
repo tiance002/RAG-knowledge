@@ -84,8 +84,18 @@ def execute(output, cloud=False, schema="e12", scenario="fulltext", content_poli
     if os.name == 'posix':
         os.chmod(output, 0o700)
     elif os.name == 'nt':
-        who = subprocess.run(['whoami','/user','/fo','csv','/nh'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-        sid = next(csv.reader(who.stdout.splitlines()))[1]
+        who = subprocess.run(['whoami','/user','/fo','csv','/nh'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        # whoami 按控制台代码页输出，不能假定 UTF-8（中文 Windows 为 GBK）。
+        raw = who.stdout
+        for codec in ('utf-8', 'mbcs', 'gbk'):
+            try:
+                who_text = raw.decode(codec)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        else:
+            who_text = raw.decode('utf-8', 'replace')
+        sid = next(csv.reader(who_text.splitlines()))[1]
         if not re.fullmatch(r'S-1-[0-9-]+', sid): raise ValueError('cannot verify current user SID')
         subprocess.run(['icacls',str(output),'/inheritance:r','/grant:r','*'+sid+':(OI)(CI)F','/grant:r','*S-1-5-18:(OI)(CI)F'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
 

@@ -3,13 +3,14 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, Form, Select, InputNumber, Button, Spin, message, Divider, Table, Modal, Input, Tag, Space, Tooltip } from 'antd';
-import { SaveOutlined, PlusOutlined, DeleteOutlined, InfoCircleOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
+import { Card, Form, Select, InputNumber, Button, Spin, message, Table, Modal, Input, Tag, Space, Tooltip, Alert } from 'antd';
+import { SaveOutlined, PlusOutlined, DeleteOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { PageHeader } from '@/components/common';
 import { getSettings, updateSettings, getModelList, createCustomModel, updateCustomModel, deleteCustomModel, getCustomModels, testCustomModel } from '@/services';
 import { useAppStore } from '@/stores';
 import type { SystemSettings, UpdateSettingsRequest, CustomModel } from '@/types';
 import styles from './Settings.module.css';
+import PreferenceCard from './PreferenceCard';
 
 const Settings: React.FC = () => {
   const { models, setModels } = useAppStore();
@@ -94,19 +95,24 @@ const Settings: React.FC = () => {
   const handleSave = async (values: SystemSettings) => {
     setSaving(true);
     try {
+      if (!settings || settings.degraded) throw new Error('设置尚未正常加载，请刷新后保存');
       const request: UpdateSettingsRequest = {
-        default_embedding_model: values.defaultEmbeddingModel,
-        default_vlm_model: values.defaultVlmModel,
-        default_llm_model: values.defaultLlmModel,
+        expected_revision: settings.revision,
+        default_embedding_model: values.defaultEmbeddingModel ?? null,
+        default_vlm_model: values.defaultVlmModel ?? null,
+        default_llm_model: values.defaultLlmModel ?? null,
         max_concurrency: values.maxConcurrency,
         chunk_size: values.chunkSize,
         chunk_overlap: values.chunkOverlap,
         max_chat_history_rounds: values.maxChatHistoryRounds,
       };
-      await updateSettings(request);
-      message.success('保存成功');
-    } catch (error) {
-      message.error('保存失败');
+      const saved = await updateSettings(request);
+      setSettings(saved.data);
+      message.success(saved.data.restartRequired?.includes('max_concurrency') && saved.data.maxConcurrency !== settings.maxConcurrency ? '保存成功，并发设置需重启 Worker 生效' : '保存成功');
+    } catch (error: any) {
+      if (error.response?.status === 409) {
+        message.warning('设置已被其他页面更新，请刷新后核对再保存');
+      } else message.error(error.response?.data?.detail?.message || error.response?.data?.detail || error.message || '保存失败');
     } finally {
       setSaving(false);
     }
@@ -198,9 +204,6 @@ const Settings: React.FC = () => {
   };
 
   // 分类模型
-  const embeddingModels = models.filter((m) => m.type === 'embedding');
-  const vlmModels = models.filter((m) => m.type === 'vlm');
-  const llmModels = models.filter((m) => m.type === 'llm');
 
   const modelColumns = [
     {
@@ -294,6 +297,7 @@ const Settings: React.FC = () => {
         subtitle="配置系统参数和模型选项"
       />
 
+      <PreferenceCard />
       <div className={styles.content}>
         {/* 系统参数设置 */}
         <div className={styles.mainPanel} style={{ marginBottom: 24 }}>
@@ -305,12 +309,16 @@ const Settings: React.FC = () => {
                 type="primary" 
                 icon={<SaveOutlined />} 
                 loading={saving}
+                disabled={!settings || settings.degraded}
                 onClick={form.submit}
               >
                 保存设置
               </Button>
             }
           >
+            {settings?.degraded && <Alert type="warning" showIcon message="正在显示上次成功加载的设置，暂时不能保存" description={settings.configError} />}
+            {!settings?.degraded && settings?.configError && <Alert type="warning" showIcon message="部分模型选择不可用，请修改对应选择" description={settings.configError} />}
+            {settings?.restartRequired?.includes('max_concurrency') && <Alert type="info" showIcon message="解析并发修改需重启 Celery Worker 生效" />}
             <Form
               form={form}
               layout="vertical"
@@ -321,33 +329,33 @@ const Settings: React.FC = () => {
                   name="defaultLlmModel"
                   label="默认 LLM 模型"
                   tooltip="Agent 用于推理的主要模型"
-                  rules={[{ required: true }]}
+                  
                 >
-                  <Select options={models.filter(m => m.type === 'llm').map(m => ({ label: m.name, value: m.id }))} />
+                  <Select allowClear placeholder="尚未选择" options={models.filter(m => m.type === 'llm').map(m => ({ label: m.name, value: m.id }))} />
                 </Form.Item>
 
                 <Form.Item
                   name="defaultEmbeddingModel"
                   label="默认 Embedding 模型"
-                  tooltip="用于知识库向量化的模型"
-                  rules={[{ required: true }]}
+                  tooltip="新知识库的默认模型，不改变已有知识库绑定和索引"
+                  
                 >
-                  <Select options={models.filter(m => m.type === 'embedding').map(m => ({ label: m.name, value: m.id }))} />
+                  <Select allowClear placeholder="尚未选择" options={models.filter(m => m.type === 'embedding').map(m => ({ label: m.name, value: m.id }))} />
                 </Form.Item>
 
                 <Form.Item
                   name="defaultVlmModel"
                   label="默认 VLM 模型"
                   tooltip="用于图片理解的多模态模型"
-                  rules={[{ required: true }]}
+                  
                 >
-                  <Select options={models.filter(m => m.type === 'vlm').map(m => ({ label: m.name, value: m.id }))} />
+                  <Select allowClear placeholder="尚未选择" options={models.filter(m => m.type === 'vlm').map(m => ({ label: m.name, value: m.id }))} />
                 </Form.Item>
                 
                 <Form.Item
                   name="maxChatHistoryRounds"
                   label="最大历史对话轮数"
-                  tooltip="限制发送给模型的历史消息数量（1轮=1问+1答），防止上下文爆炸"
+                  tooltip="最多使用最近 N 轮历史，另保留当前问题；普通与 Agent 模式共用"
                   rules={[{ required: true }]}
                 >
                    <InputNumber min={1} max={100} style={{ width: '100%' }} />
@@ -356,7 +364,7 @@ const Settings: React.FC = () => {
                 <Form.Item
                   name="maxConcurrency"
                   label="最大并发解析数"
-                  tooltip="文件解析时的最大并发线程数"
+                  tooltip="Celery Worker 并发数，修改后重启 Worker 生效；已有任务不受影响"
                   rules={[{ required: true }]}
                 >
                   <InputNumber min={1} max={32} style={{ width: '100%' }} />

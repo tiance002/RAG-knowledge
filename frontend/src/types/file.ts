@@ -16,6 +16,10 @@ export type FileStatus =
 export interface FileInfo {
   id: string;
   name: string;
+  original_name?: string;
+  display_name?: string;
+  sha256?: string | null;
+  supersedes_file_id?: string | null;
   size: number;
   type: string;
   status: FileStatus;
@@ -27,12 +31,17 @@ export interface FileInfo {
   created_at?: string;
   updatedAt: string;
   errorMessage?: string;
+  error_message?: string | null;
 }
 
 /** 文件上传响应 */
 export interface FileUploadResponse {
   file_id: string;
-  message: string;
+  status: string;
+  outcome: 'created' | 'duplicate' | 'replacement_staged';
+  duplicate: boolean;
+  display_name?: string;
+  name_conflict: boolean;
 }
 
 /** Chunk 内容类型 */
@@ -51,6 +60,10 @@ export interface ChunkInfo {
   vlmDescription?: string;
   tokenCount?: number;
   token_count?: number;
+  parentId?: string | null;
+  headingLevel?: number | null;
+  headingText?: string | null;
+  chunkType?: string;
   metadata?: Record<string, unknown>;
 }
 
