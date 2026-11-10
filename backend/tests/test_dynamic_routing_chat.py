@@ -42,7 +42,9 @@ def test_chat_stream_real_routing_boundary(monkeypatch, mode, evidence, cheap_an
     observed = []
     monkeypatch.setattr(grounded_generation, 'event', lambda name, **kwargs: observed.append((name, kwargs)))
     service = chat.ChatService.__new__(chat.ChatService)
-    service.llm_service = baseline
+    service._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    service._request_llm = baseline
+    monkeypatch.setattr(grounded_generation.get_settings(), 'FALLBACK_STRATEGY', 'fixed')
     rows = [{'id': 'c1', 'file_id': 'f1', 'file_name': 'report', 'content': '收入100万元。', 'score': .9}] if evidence else []
     service._retrieve_with_new_service = AsyncMock(return_value=(rows, {'retrieval_status': 'SUCCESS' if evidence else 'NO_RESULTS'}))
     async def collect():

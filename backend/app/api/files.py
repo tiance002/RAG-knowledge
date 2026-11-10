@@ -3,9 +3,9 @@ from app.services.observability import observe, event
 文件管理 API 路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Body, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File, status, Body, Query
 from fastapi.responses import Response
-from typing import Optional
+from typing import Annotated, Optional
 from sqlmodel import Session, select, func
 from typing import List, Dict
 import os
@@ -16,21 +16,47 @@ from app.core.database import get_session
 from app.core.config import get_settings
 from app.models import KnowledgeBase, FileDocument, FileStatus, generate_uuid, DocumentChunk
 from app.schemas import FileUploadResponse, FileStatusResponse, ApiResponse
-from app.tasks.dispatch import (dispatch_file_task, FileTaskBusy, DispatchUnconfirmed,
-                                FileTaskReceipt, receipt_view)
+from app.services.file_retirement import retire_source, clean_source
+from app.tasks.dispatch import (dispatch_file_task, FileTaskBusy, FileTaskConflict,
+                                FileTaskReceipt, lookup_file_request, receipt_view, cancel_in_session)
 
 router = APIRouter(tags=["File"])
 settings = get_settings()
 
 
-def _dispatch(file_id, operation, payload):
+RequestKey = Annotated[str | None, Header(alias="Idempotency-Key", min_length=1, max_length=256)]
+
+
+def _dispatch(file_id, operation, payload, **options):
     try:
-        return dispatch_file_task(file_id, operation, payload)
+        return dispatch_file_task(file_id, operation, payload, **options)
     except FileTaskBusy as exc:
         raise HTTPException(status_code=409, detail={"message": str(exc), "task_id": exc.task_id}) from exc
-    except DispatchUnconfirmed as exc:
-        raise HTTPException(status_code=503, detail={"message": str(exc), "task_id": exc.task_id,
-                                                   "status": "PUBLISH_UNKNOWN"}) from exc
+    except FileTaskConflict as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(404 if str(exc) == 'FILE_NOT_FOUND' else 400, detail=str(exc)) from exc
+
+
+def _replay(file_id, operation, key, raw):
+    if key is None:
+        return None
+    try:
+        return lookup_file_request(file_id, operation, key, raw)
+    except FileTaskConflict as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+
+
+def begin_file_mutation(session):
+    # Reserve the SQLite writer before checking active_file or reading live chunks.
+    if session.get_bind().dialect.name == "sqlite":
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+
+def reject_busy_files(session, file_ids):
+    row = session.exec(select(FileTaskReceipt).where(FileTaskReceipt.active_file.in_(file_ids)).limit(1)).first()
+    if row:
+        raise HTTPException(409, detail={"message": "文件正在处理，请查看任务状态", "task_id": row.task_id})
 
 
 @router.get("/files/{file_id}/tasks", response_model=ApiResponse)
@@ -45,9 +71,22 @@ def list_file_tasks(file_id: str, session: Session = Depends(get_session)):
 @router.get("/files/{file_id}/tasks/{task_id}", response_model=ApiResponse)
 def get_file_task(file_id: str, task_id: str, session: Session = Depends(get_session)):
     row = session.get(FileTaskReceipt, task_id)
-    if row is None or row.file_id != file_id or session.get(FileDocument, file_id) is None:
+    if row is None or row.file_id != file_id:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return ApiResponse(data=receipt_view(row))
+    from app.tasks.dispatch import FileTaskAttempt, FileTaskEffect, FileTaskEvent
+    attempts = session.exec(select(FileTaskAttempt).where(FileTaskAttempt.task_id == task_id)
+        .order_by(FileTaskAttempt.attempt_no)).all()
+    effects = session.exec(select(FileTaskEffect).where(FileTaskEffect.task_id == task_id)
+        .order_by(FileTaskEffect.updated_at, FileTaskEffect.effect_key)).all()
+    events = session.exec(select(FileTaskEvent).where(FileTaskEvent.task_id == task_id)
+        .order_by(FileTaskEvent.created_at)).all()
+    data = receipt_view(row)
+    data["attempts"] = [dict(attempt_no=a.attempt_no, stage=a.stage, worker=a.worker_id, outcome=a.outcome,
+        started_at=a.started_at, finished_at=a.finished_at, error=a.error_code) for a in attempts]
+    data["effects"] = [dict(effect_key=e.effect_key, stage=e.stage, state=e.state,
+        provider_request_id=e.provider_request_id, stored_result=bool(e.result_ref)) for e in effects]
+    data["decisions"] = [dict(action=e.action, reason=e.reason, created_at=e.created_at) for e in events]
+    return ApiResponse(data=data)
 
 
 def get_file_extension(filename: str) -> str:
@@ -239,11 +278,12 @@ async def get_file_detail(
 
 
 @router.post("/files/{file_id}/parse", response_model=ApiResponse)
-async def parse_file_manually(
+def parse_file_manually(
     file_id: str,
     session: Session = Depends(get_session),
     # 使用 Body() 正确解析请求体参数
     config: Optional[dict] = Body(default=None),
+    request_key: RequestKey = None,
 ):
     """手动触发文件解析"""
     file_doc = session.get(FileDocument, file_id)
@@ -256,6 +296,9 @@ async def parse_file_manually(
 
     # 提取 config 中的参数
     config = config or {}
+    prior = _replay(file_id, "parse", request_key, config)
+    if prior:
+        return ApiResponse(data=prior)
     chunk_mode = config.get('chunk_mode')
     chunk_size = config.get('chunk_size')
     chunk_overlap = config.get('chunk_overlap')
@@ -265,9 +308,19 @@ async def parse_file_manually(
     vector_model = config.get('vector_model')
 
     if not auto_vectorize:
-        from app.services.vector_store import VectorStoreService
-        collection = VectorStoreService()._existing_collection(file_doc.kb_id)
-        if collection is not None and collection.get(where={"file_id": file_id}, limit=1)["ids"]:
+        from app.models import ChunkIndex
+        published = file_doc.active_build_id or file_doc.status in (FileStatus.READY, FileStatus.PARSED)
+        if not published:
+            published = session.exec(select(ChunkIndex.id).join(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id)
+                .where(ChunkIndex.kb_id == file_doc.kb_id, DocumentChunk.file_id == file_id).limit(1)).first()
+        if not published:
+            # A historical vector-only index may lack postings and a build pointer.
+            ids = session.exec(select(DocumentChunk.id).where(DocumentChunk.file_id == file_id)).all()
+            if ids:
+                from app.services.vector_store import VectorStoreService
+                collection = VectorStoreService()._existing_collection(file_doc.kb_id)
+                published = collection and collection.get(ids=list(ids), limit=1, include=[])["ids"]
+        if published:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                                 detail="文件已有有效向量，暂不支持保留索引的手动重解析；请选择自动入库")
 
@@ -277,15 +330,16 @@ async def parse_file_manually(
         auto_vectorize=auto_vectorize, embedding_model=embedding_model,
         vector_model=vector_model,
         **{key: config[key] for key in ("parent_child", "parent_chunk_size", "parent_chunk_overlap", "child_chunk_size", "child_chunk_overlap") if key in config},
-    ))
+    ), request_key=request_key, expected_generation=file_doc.desired_generation, request_input=config)
     return ApiResponse(message="解析任务已入队", data=task)
 
 
 @router.post("/files/{file_id}/chunks/submit", response_model=ApiResponse)
-async def submit_file_chunks(
+def submit_file_chunks(
     file_id: str,
     data: dict, # { "chunks": [...] }
     session: Session = Depends(get_session),
+    request_key: RequestKey = None,
 ):
     """提交确认的分块结果，触发入库"""
     file_doc = session.get(FileDocument, file_id)
@@ -295,6 +349,10 @@ async def submit_file_chunks(
             detail={"code": 40401, "message": "文件不存在"},
         )
         
+    raw = {"action": "submit", "data": data}
+    prior = _replay(file_id, "index", request_key, raw)
+    if prior:
+        return ApiResponse(data=prior)
     chunks = data.get("chunks", [])
     vector_model = data.get("vector_model")
     if not chunks:
@@ -324,14 +382,16 @@ async def submit_file_chunks(
                     "start_offset": original.start_offset, "end_offset": original.end_offset}
         normalized.append(item)
 
-    task = _dispatch(file_id, "index", {"chunks_data": normalized, "vector_model": vector_model})
+    task = _dispatch(file_id, "index", {"chunks_data": normalized, "vector_model": vector_model},
+                     request_key=request_key, request_input=raw, expected_generation=file_doc.desired_generation)
     return ApiResponse(message="分块入库任务已入队", data=task)
 
 
 @router.post("/files/{file_id}/vectorize", response_model=ApiResponse)
-async def vectorize_file_manually(
+def vectorize_file_manually(
     file_id: str,
     session: Session = Depends(get_session),
+    request_key: RequestKey = None,
 ):
     """手动触发向量化入库 (用于正常模式确认)"""
     file_doc = session.get(FileDocument, file_id)
@@ -341,18 +401,27 @@ async def vectorize_file_manually(
             detail={"code": 40401, "message": "文件不存在"},
         )
         
-    # 获取当前的 chunks
-    from app.models import DocumentChunk
-    chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).all()
+    raw = {"action": "vectorize"}
+    prior = _replay(file_id, "index", request_key, raw)
+    if prior:
+        return ApiResponse(data=prior)
+    chunks_data = _chunk_snapshot(session, file_id)
     
-    if not chunks:
+    if not chunks_data:
          raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": 40004, "message": "文件尚未解析，无法入库"},
         )
         
-    # 构造 chunks 数据格式
-    chunks_data = [
+    task = _dispatch(file_id, "index", {"chunks_data": chunks_data}, request_key=request_key,
+                     request_input=raw, expected_generation=file_doc.desired_generation)
+    return ApiResponse(message="入库任务已入队", data=task)
+
+
+def _chunk_snapshot(session, file_id):
+    chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)
+                          .order_by(DocumentChunk.original_index, DocumentChunk.id)).all()
+    return [
         {
             "id": c.id, "start_offset": c.start_offset, "end_offset": c.end_offset,
             "content": c.content,
@@ -368,10 +437,6 @@ async def vectorize_file_manually(
         }
         for c in chunks
     ]
-
-    task = _dispatch(file_id, "index", {"chunks_data": chunks_data})
-    return ApiResponse(message="入库任务已入队", data=task)
-
 
 @router.get("/files/{file_id}/chunks", response_model=ApiResponse)
 async def get_file_chunks(
@@ -398,14 +463,20 @@ async def get_file_chunks(
 
 
 @router.put("/chunks/{chunk_id}", response_model=ApiResponse)
-async def update_chunk(
+def update_chunk(
     chunk_id: str,
     data: dict, # { "content": "..." }
     session: Session = Depends(get_session),
+    request_key: RequestKey = None,
 ):
     """更新 Chunk 内容"""
-    from app.models import DocumentChunk
-    
+    from app.models import ChunkIndex
+    raw = {"action": "edit", "chunk_id": chunk_id, "content": data.get("content")}
+    if data.get("file_id"):
+        prior = _replay(data["file_id"], "index", request_key, raw)
+        if prior:
+            return ApiResponse(data=prior)
+    begin_file_mutation(session)
     chunk = session.get(DocumentChunk, chunk_id)
     if not chunk:
         raise HTTPException(
@@ -413,9 +484,37 @@ async def update_chunk(
             detail={"code": 40401, "message": "Chunk 不存在"},
         )
         
-    if "content" in data:
-        chunk.content = data["content"]
-        
+    file_id = chunk.file_id
+    if data.get("file_id", file_id) != file_id:
+        raise HTTPException(409, detail="分块不属于当前文件")
+    if "content" not in data or data["content"] == chunk.content:
+        return ApiResponse(data=chunk)
+    if not isinstance(data["content"], str) or not data["content"].strip():
+        raise HTTPException(400, detail="分块内容不能为空")
+    doc = session.get(FileDocument, file_id)
+    if doc is None:
+        raise HTTPException(409, detail="分块缺少文件归属")
+    prior = _replay(file_id, "index", request_key, raw)
+    if prior:
+        return ApiResponse(data=prior)
+    reject_busy_files(session, [file_id])
+    published = doc.active_build_id or doc.status in (FileStatus.READY, FileStatus.PARSED) or session.exec(
+        select(ChunkIndex.id).where(ChunkIndex.kb_id == doc.kb_id, ChunkIndex.chunk_id == chunk_id)
+        .limit(1)).first()
+    if published:
+        generation = doc.desired_generation
+        chunks = _chunk_snapshot(session, file_id)
+        for item in chunks:
+            if item["id"] == chunk_id:
+                item["content"] = data["content"]
+        session.rollback()
+        task = _dispatch(file_id, "index", {"chunks_data": chunks}, request_input=raw,
+                         expected_generation=generation, request_key=request_key)
+        return ApiResponse(message="修改已入队，发布后生效", data=task)
+    chunk.content = data["content"]
+    chunk.source_metadata_json = None
+    doc.desired_generation += 1
+    session.add(doc)
     session.add(chunk)
     session.commit()
     session.refresh(chunk)
@@ -427,8 +526,10 @@ async def update_chunk(
 async def delete_file(
     file_id: str,
     session: Session = Depends(get_session),
+    cancel_active: bool = False,
 ):
     """删除文件"""
+    begin_file_mutation(session)
     file_doc = session.get(FileDocument, file_id)
     if not file_doc:
         raise HTTPException(
@@ -436,10 +537,13 @@ async def delete_file(
             detail={"code": 40401, "message": "文件不存在"},
         )
 
-    # Keep the source and its SQL records if vector cleanup cannot run.
-    source_path = file_doc.local_path
-    from app.services.vector_store import VectorStoreService
-    VectorStoreService().delete_by_file_id(file_doc.kb_id, file_id)
+    if cancel_active:
+        cancel_in_session(session, file_id, "用户取消任务并删除文件")
+    else:
+        reject_busy_files(session, [file_id])
+    source_retirement = retire_source(session, file_doc)
+    from app.services.index_builds import retire_file_builds
+    retire_file_builds(session, file_id)
 
     # 删除数据库记录
     # 级联删除 chunks
@@ -457,6 +561,5 @@ async def delete_file(
     if kb:
         kb.chunk_count = session.exec(select(func.count(DocumentChunk.id)).join(FileDocument).where(FileDocument.kb_id == kb.id)).one()
     session.commit()
-    if os.path.exists(source_path):
-        os.remove(source_path)
+    clean_source(session.get_bind(), source_retirement)
     return ApiResponse(message="删除成功")

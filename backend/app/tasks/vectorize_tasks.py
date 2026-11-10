@@ -36,6 +36,11 @@ def vectorize_file_task(self, file_id: str, expected_revision: str = None):
     3. 存入 ChromaDB
     4. 更新知识库统计
     """
+    # Historical queued messages must not bypass the new receipt/build fence.
+    # Direct synchronous callers remain available for compatibility and tests.
+    import os
+    if not self.request.called_directly or os.getenv('FILE_TASK_WORKER_ROLE') in ('parse', 'index'):
+        return {"error": "LEGACY_TASK_DISABLED_USE_FILE_TASK_RECEIPT"}
     with Session(engine) as session:
         # 获取文件记录
         file_doc = session.get(FileDocument, file_id)

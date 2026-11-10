@@ -11,13 +11,15 @@ BM25 索引和检索服务
 import re
 import json
 import math
+import logging
 from collections import Counter
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any
 from datetime import datetime
 
 from sqlmodel import Session, select, delete
+from sqlalchemy import literal_column, func, or_
 
-from app.models import ChunkIndex, IndexStats, DocumentChunk, FileDocument, generate_uuid
+from app.models import BM25Posting, ChunkIndex, IndexStats, DocumentChunk, FileDocument, FileStatus, generate_uuid
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -65,7 +67,7 @@ def tokenize(text: str) -> List[str]:
         use_jieba = True
     except ImportError:
         use_jieba = False
-        print("⚠️ [BM25] jieba 未安装，使用简单分词")
+        logging.getLogger(__name__).warning("jieba 未安装，使用简单分词")
 
     # 1. 提取英文单词（包括数字和下划线）
     english_pattern = r'[a-zA-Z0-9_]+'
@@ -138,19 +140,22 @@ class BM25Index:
         # Parents are context-only even when called by a generic index rebuild.
         chunk = session.get(DocumentChunk, chunk_id)
         if chunk is not None and chunk.chunk_type == "parent":
+            self.delete_chunk_index(session, chunk_id, kb_id)
             return
         # 分词
         tokens = tokenize(content)
         if not tokens:
+            self.delete_chunk_index(session, chunk_id, kb_id)
             return
 
         # 计算词频
         term_freq = dict(Counter(tokens))
         doc_length = len(tokens)
 
-        # 检查是否已存在索引
+        self._remove_postings(session, chunk_id, kb_id)
         existing = session.exec(
-            select(ChunkIndex).where(ChunkIndex.chunk_id == chunk_id)
+            select(ChunkIndex).where(ChunkIndex.chunk_id == chunk_id, ChunkIndex.kb_id == kb_id)
+            .execution_options(populate_existing=True)
         ).first()
 
         if existing:
@@ -165,6 +170,7 @@ class BM25Index:
             existing.terms = json.dumps(term_freq, ensure_ascii=False)
             existing.doc_length = doc_length
             session.add(existing)
+            index_id = existing.id
         else:
             # 创建新索引
             chunk_index = ChunkIndex(
@@ -175,9 +181,85 @@ class BM25Index:
                 doc_length=doc_length
             )
             session.add(chunk_index)
+            index_id = chunk_index.id
+
+        session.flush()
+        session.execute(BM25Posting.__table__.insert(), [
+            dict(kb_id=kb_id, index_id=index_id, term=term, tf=tf)
+            for term, tf in term_freq.items()
+        ])
 
         # 更新全局统计
         self._increment_stats(session, kb_id, term_freq, doc_length)
+
+    @staticmethod
+    def prepare_file_index(rows):
+        """Tokenize a replacement before taking the publication write lock."""
+        prepared = []
+        for row in rows:
+            if (row.get('chunk_type') or 'content') == 'parent':
+                continue
+            frequencies = dict(Counter(tokenize(row.get('content') or '')))
+            if frequencies:
+                prepared.append({'id': generate_uuid(), 'chunk_id': row['id'],
+                    'doc_length': sum(frequencies.values()),
+                    'terms': json.dumps(frequencies, ensure_ascii=False), 'frequencies': frequencies})
+        return prepared
+
+    @staticmethod
+    def begin_file_replacement(session, file_id, kb_id):
+        """Remove prior physical postings and return their aggregate delta; no commit."""
+        old = session.exec(select(ChunkIndex.id, ChunkIndex.doc_length, ChunkIndex.terms)
+            .join(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id)
+            .where(DocumentChunk.file_id == file_id, ChunkIndex.kb_id == kb_id)).all()
+        old_df = Counter()
+        for _, _, terms in old:
+            old_df.update(json.loads(terms).keys())
+        ids = [index_id for index_id, _, _ in old]
+        for start in range(0, len(ids), 500):
+            batch = ids[start:start+500]
+            session.execute(delete(BM25Posting).where(BM25Posting.index_id.in_(batch)))
+            session.execute(delete(ChunkIndex).where(ChunkIndex.id.in_(batch)))
+        return len(old), sum(length for _, length, _ in old), old_df
+
+    @staticmethod
+    def finish_file_replacement(session, kb_id, removed, prepared):
+        """Batch insert replacement and update KB-wide stats once in caller transaction."""
+        removed_count, removed_length, removed_df = removed
+        stats = session.get(IndexStats, kb_id, populate_existing=True)
+        total = stats.total_docs if stats else 0
+        total_length = (stats.avg_doc_length * total) if stats else 0
+        frequencies = Counter(json.loads(stats.term_doc_freq)) if stats else Counter()
+        if removed_count > total or any(frequencies[t] < count for t, count in removed_df.items()):
+            raise ValueError('BM25_STATS_INCONSISTENT')
+        frequencies.subtract(removed_df)
+        for row in prepared:
+            frequencies.update(row['frequencies'].keys())
+        frequencies = {term: count for term, count in frequencies.items() if count > 0}
+        new_total = total - removed_count + len(prepared)
+        new_length = total_length - removed_length + sum(row['doc_length'] for row in prepared)
+        if new_length < -1e-6 or (new_total == 0 and abs(new_length) > 1e-6):
+            raise ValueError('BM25_STATS_INCONSISTENT')
+        if stats is None:
+            stats = IndexStats(kb_id=kb_id)
+        stats.total_docs = new_total
+        stats.avg_doc_length = max(0.0, new_length / new_total) if new_total else 0.0
+        stats.term_doc_freq = json.dumps(frequencies, ensure_ascii=False)
+        stats.updated_at = datetime.utcnow()
+        session.add(stats)
+        if prepared:
+            session.execute(ChunkIndex.__table__.insert(), [dict(id=row['id'], chunk_id=row['chunk_id'],
+                kb_id=kb_id, terms=row['terms'], doc_length=row['doc_length'], created_at=datetime.utcnow())
+                for row in prepared])
+            postings = [dict(kb_id=kb_id, index_id=row['id'], term=term, tf=tf)
+                for row in prepared for term, tf in row['frequencies'].items()]
+            if postings:
+                session.execute(BM25Posting.__table__.insert(), postings)
+
+    @staticmethod
+    def _remove_postings(session: Session, chunk_id: str, kb_id: str) -> None:
+        indices = select(ChunkIndex.id).where(ChunkIndex.kb_id == kb_id, ChunkIndex.chunk_id == chunk_id)
+        session.execute(delete(BM25Posting).where(BM25Posting.index_id.in_(indices)))
 
     def delete_chunk_index(
         self,
@@ -193,9 +275,10 @@ class BM25Index:
             chunk_id: chunk ID
             kb_id: 知识库 ID
         """
-        # 获取要删除的索引
+        self._remove_postings(session, chunk_id, kb_id)
         chunk_index = session.exec(
-            select(ChunkIndex).where(ChunkIndex.chunk_id == chunk_id)
+            select(ChunkIndex).where(ChunkIndex.chunk_id == chunk_id, ChunkIndex.kb_id == kb_id)
+            .execution_options(populate_existing=True)
         ).first()
 
         if not chunk_index:
@@ -230,6 +313,12 @@ class BM25Index:
         for chunk_id in chunks:
             self.delete_chunk_index(session, chunk_id, kb_id)
 
+    @staticmethod
+    def clear_kb_index(session: Session, kb_id: str) -> None:
+        session.exec(delete(BM25Posting).where(BM25Posting.kb_id == kb_id))
+        session.exec(delete(ChunkIndex).where(ChunkIndex.kb_id == kb_id))
+        session.exec(delete(IndexStats).where(IndexStats.kb_id == kb_id))
+
     def rebuild_kb_index(
         self,
         session: Session,
@@ -247,25 +336,25 @@ class BM25Index:
         """
         print(f"🔄 [BM25] 开始重建知识库 {kb_id} 的索引...")
 
-        # 1. 删除旧索引
-        session.exec(delete(ChunkIndex).where(ChunkIndex.kb_id == kb_id))
-        session.exec(delete(IndexStats).where(IndexStats.kb_id == kb_id))
-        session.commit()
-
-        # 2. 获取所有 chunks
-        chunks = session.exec(
-            select(DocumentChunk)
-            .join(FileDocument)
-            .where(FileDocument.kb_id == kb_id, DocumentChunk.chunk_type != "parent")
-        ).all()
-
-        # 3. 重建索引
-        count = 0
-        for chunk in chunks:
-            self.index_chunk(session, chunk.id, chunk.content, kb_id)
-            count += 1
-
-        session.commit()
+        try:
+            # Current SQL chunks are the published projection only for files
+            # with an active build or a legacy published status. Preview chunks
+            # must never be indexed, and old committed postings for uncertain
+            # historical files must not be destroyed or replaced.
+            chunks = session.exec(
+                select(DocumentChunk).join(FileDocument)
+                .where(FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None),
+                       DocumentChunk.chunk_type != "parent",
+                       or_(FileDocument.active_build_id.is_not(None),
+                           FileDocument.status.in_([FileStatus.PARSED, FileStatus.READY])))
+            ).all()
+            for chunk in chunks:
+                self.index_chunk(session, chunk.id, chunk.content, kb_id)
+            count = len(chunks)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
         print(f"✅ [BM25] 知识库 {kb_id} 索引重建完成，共 {count} 个 chunks")
 
         return count
@@ -275,7 +364,8 @@ class BM25Index:
         session: Session,
         query: str,
         kb_id: str,
-        top_k: int = None
+        top_k: int = None,
+        *, live_only: bool = False
     ) -> List[Dict[str, Any]]:
         """
         BM25 检索
@@ -297,47 +387,82 @@ class BM25Index:
             return []
 
         # 2. 获取统计信息
-        stats = session.get(IndexStats, kb_id)
-        if not stats or stats.total_docs == 0:
+        stats = session.exec(select(IndexStats.total_docs, IndexStats.avg_doc_length)
+                             .where(IndexStats.kb_id == kb_id)).first()
+        if not stats or not stats.total_docs:
             return []
 
-        N = stats.total_docs
-        avg_dl = stats.avg_doc_length
-        term_doc_freq = json.loads(stats.term_doc_freq)
-
-        # 3. 获取包含查询词的所有索引
-        # 优化：只获取包含至少一个查询词的文档
-        query_terms_set = set(query_tokens)
-
-        # 获取该知识库的所有索引
-        all_indices = session.exec(
-            select(ChunkIndex).where(ChunkIndex.kb_id == kb_id)
-        ).all()
-
-        # 4. 计算每个文档的 BM25 分数
-        scores = {}
-        for idx in all_indices:
-            doc_term_freq = json.loads(idx.terms)
-            doc_length = idx.doc_length
-
-            # 检查是否包含任何查询词
-            if not any(t in doc_term_freq for t in query_terms_set):
-                continue
-
-            score = self._calculate_bm25(
-                query_tokens, doc_term_freq, doc_length, N, avg_dl, term_doc_freq
+        # Persisted aggregate stats include historical versions retained for
+        # rollback. Subtract inactive file rows in bounded batches, and filter
+        # matching postings before calculating df or applying top_k.
+        from app.services.file_versions import inactive_file_ids
+        inactive = inactive_file_ids(session, [kb_id])
+        removed_count = 0
+        removed_length = 0
+        inactive_list = sorted(inactive)
+        for start in range(0, len(inactive_list), 500):
+            count, length = session.exec(
+                select(func.count(ChunkIndex.id), func.coalesce(func.sum(ChunkIndex.doc_length), 0))
+                .select_from(ChunkIndex).join(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id)
+                .join(FileDocument, FileDocument.id == DocumentChunk.file_id)
+                .where(ChunkIndex.kb_id == kb_id, DocumentChunk.file_id.in_(inactive_list[start:start + 500]),
+                       FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None),
+                       DocumentChunk.chunk_type != 'parent')
+            ).one()
+            removed_count += count
+            removed_length += length
+        if live_only:
+            # Aggregate in SQL, without materializing every indexed chunk. This
+            # excludes orphans, cross-KB rows, parents and deleted documents.
+            total, total_length = session.exec(
+                select(func.count(ChunkIndex.id), func.coalesce(func.sum(ChunkIndex.doc_length), 0))
+                .select_from(ChunkIndex).join(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id)
+                .join(FileDocument, FileDocument.id == DocumentChunk.file_id)
+                .where(ChunkIndex.kb_id == kb_id, FileDocument.kb_id == kb_id,
+                       FileDocument.deleted_at.is_(None), DocumentChunk.chunk_type != 'parent')
+            ).one()
+        else:
+            total, total_length = stats.total_docs, stats.total_docs * stats.avg_doc_length
+        N = total - removed_count
+        if N <= 0:
+            return []
+        avg_dl = (total_length - removed_length) / N
+        if avg_dl <= 0:
+            return []
+        term_doc_freq = Counter()
+        matches = {}
+        terms = sorted(set(query_tokens))
+        # Preserve the previous SQLite scan order on tied scores, including at top_k.
+        tie_order = (literal_column("chunk_index.rowid") if session.get_bind().dialect.name == "sqlite"
+                     else ChunkIndex.created_at)
+        for start in range(0, len(terms), 500):
+            statement = (
+                select(ChunkIndex.chunk_id, ChunkIndex.doc_length, tie_order, BM25Posting.term, BM25Posting.tf, DocumentChunk.file_id)
+                .select_from(BM25Posting).join(ChunkIndex, ChunkIndex.id == BM25Posting.index_id)
+                .outerjoin(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id)
+                .where(BM25Posting.kb_id == kb_id, BM25Posting.term.in_(terms[start:start + 500]))
             )
+            if live_only:
+                statement = statement.join(FileDocument, FileDocument.id == DocumentChunk.file_id).where(
+                    FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None),
+                    DocumentChunk.chunk_type != 'parent')
+            postings = session.exec(statement)
+            for chunk_id, length, order, term, tf, file_id in postings:
+                if file_id in inactive:
+                    continue
+                term_doc_freq[term] += 1
+                if chunk_id not in matches:
+                    matches[chunk_id] = (length, order, {})
+                frequencies = matches[chunk_id][2]
+                frequencies[term] = tf
 
+        ranked = []
+        for chunk_id, (length, order, frequencies) in matches.items():
+            score = self._calculate_bm25(query_tokens, frequencies, length, N, avg_dl, term_doc_freq)
             if score > 0:
-                scores[idx.chunk_id] = score
-
-        # 5. 排序并返回 top_k
-        sorted_results = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-        return [
-            {"chunk_id": chunk_id, "bm25_score": score}
-            for chunk_id, score in sorted_results[:top_k]
-        ]
+                ranked.append((score, order, chunk_id))
+        ranked.sort(key=lambda hit: (-hit[0], hit[1], hit[2]))
+        return [{"chunk_id": chunk_id, "bm25_score": score} for score, _, chunk_id in ranked[:top_k]]
 
     def _calculate_bm25(
         self,
@@ -389,7 +514,7 @@ class BM25Index:
         doc_length: int
     ) -> None:
         """增加统计信息"""
-        stats = session.get(IndexStats, kb_id)
+        stats = session.get(IndexStats, kb_id, populate_existing=True)
 
         if not stats:
             # 创建新的统计记录
@@ -430,7 +555,7 @@ class BM25Index:
         doc_length: int
     ) -> None:
         """减少统计信息"""
-        stats = session.get(IndexStats, kb_id)
+        stats = session.get(IndexStats, kb_id, populate_existing=True)
 
         if not stats or stats.total_docs <= 0:
             return

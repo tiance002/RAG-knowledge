@@ -127,12 +127,13 @@ def child(path):
 
 def test_chat_and_agent_full_path_synthetic(tmp_path):
     run = subprocess.run([sys.executable, str(__file__), '--full', str(tmp_path)], cwd=ROOT,
-                         capture_output=True, text=True, encoding='utf-8', timeout=180,
+                         capture_output=True, timeout=180,
                          env={**os.environ, 'PYTHONIOENCODING': 'utf-8'})
     assert run.returncode == 0, run.stdout[-12000:] + run.stderr[-12000:]
-    assert 'synthetic-only-key' not in run.stdout
-    assert 'synthetic-only-key' not in run.stderr
-    assert 'OFFLINE_FULL_CHAT_AGENT_PASS' in run.stdout
+    # WSL diagnostics and Python stdout can use different encodings on Windows.
+    assert b'synthetic-only-key' not in run.stdout
+    assert b'synthetic-only-key' not in run.stderr
+    assert b'OFFLINE_FULL_CHAT_AGENT_PASS' in run.stdout
 
 
 def full_child(path):

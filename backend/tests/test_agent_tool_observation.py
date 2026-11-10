@@ -122,13 +122,13 @@ def test_provider_messages_observe_all_agent_calls_and_hide_reasoning(monkeypatc
     asyncio.run(workflow.generate_chat({'messages': [HumanMessage(content='hi')]}, {}))
     requests = [data for name, data in events if name == 'llm.request']
     responses = [data for name, data in events if name == 'llm.visible_response']
-    assert [d['role'] for d in requests] == ['intent', 'agent', 'quality', 'agent_chat']
+    assert [d['role'] for d in requests] == ['agent', 'quality', 'agent_chat']
     assert [d['role'] for d in responses] == [d['role'] for d in requests]
     for request, (_, messages) in zip(requests, sent):
         assert [row['role'] for row in request['input']['value']] == [m.type for m in messages]
         assert [row['content'] for row in request['input']['value']] == [m.content for m in messages]
     assert 'hidden model reasoning' not in str(captured)
-    assert responses[1]['output']['value'] == '[REDACTED]visible'
+    assert responses[0]['output']['value'] == '[REDACTED]visible'
     assert all(role in ('provider_request', 'provider_response') for role, _ in captured)
 
 

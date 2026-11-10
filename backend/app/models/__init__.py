@@ -5,6 +5,7 @@
 from app.models.models import (
     KnowledgeBase,
     FileDocument,
+    FileIndexBuild,
     DocumentChunk,
     FileStatus,
     ContentType,
@@ -12,6 +13,7 @@ from app.models.models import (
     CustomModel,
     ModelType,
     ChunkIndex,
+    BM25Posting,
     IndexStats,
     RetrievalLog,
 )
@@ -19,6 +21,7 @@ from app.models.models import (
 __all__ = [
     "KnowledgeBase",
     "FileDocument",
+    "FileIndexBuild",
     "DocumentChunk",
     "FileStatus",
     "ContentType",
@@ -26,6 +29,7 @@ __all__ = [
     "CustomModel",
     "ModelType",
     "ChunkIndex",
+    "BM25Posting",
     "IndexStats",
     "RetrievalLog",
 ]

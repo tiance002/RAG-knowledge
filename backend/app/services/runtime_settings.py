@@ -11,15 +11,10 @@ from typing import Optional
 from pydantic import BaseModel, Field as ValidationField, model_validator
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlmodel import SQLModel, Field, Session
+from sqlmodel import Session
 
 from app.core.config import get_settings
-
-
-class PersistedSystemSettings(SQLModel, table=True):
-    __tablename__ = 'system_settings'
-    id: str = Field(default='system', primary_key=True)
-    data: str = '{}'
+from app.core.settings_model import PersistedSystemSettings
 
 
 class RuntimeValues(BaseModel):

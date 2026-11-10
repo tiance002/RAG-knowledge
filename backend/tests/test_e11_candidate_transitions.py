@@ -64,6 +64,8 @@ def test_hybrid_to_rerank_transitions_and_observability_equivalence(monkeypatch)
 
     service = retrieval.RetrievalService.__new__(retrieval.RetrievalService)
     service.vector_store = VectorStore()
+    # This unit test exercises ranking with transport doubles, not SQL authorization.
+    service._vector_scope = lambda session, kb_id: (['a', 'b', 'c'], [])
     service.bm25_index = BM25()
     async def embed(*args):
         return [0.1]

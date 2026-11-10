@@ -89,9 +89,20 @@ class IndexRetirementError(RuntimeError):
     """SQL has committed, but retiring the superseded vectors failed."""
 
 
+def _guard_legacy_entry():
+    """Keep standalone callers, but never allow a worker to bypass its ledger."""
+    import os
+    from celery import current_task
+    request = getattr(current_task, 'request', None)
+    if (os.getenv('FILE_TASK_WORKER_ROLE') in ('parse', 'index') or
+            (request is not None and not request.called_directly)):
+        raise RuntimeError('LEGACY_INGEST_DISABLED_USE_FILE_TASK_RECEIPT')
+
+
 @observe("ingest.index")
 def process_submitted_chunks(file_id: str, chunks_data: list, vector_model: str = None):
     """Stage new vectors first, then replace SQL chunks and retire exact old IDs."""
+    _guard_legacy_entry()
     with Session(engine, expire_on_commit=False) as session:
         file_doc = session.get(FileDocument, file_id)
         if not file_doc:
@@ -263,6 +274,7 @@ def process_file_parsing(
         vector_model: 向量化用的 Embedding 模型 ID (Optional)
         auto_vectorize: 解析完成后是否自动入库
     """
+    _guard_legacy_entry()
     # 立即打印入参，确保前端传值正确
     print(f"🚀 [ParseTask] 接收到任务: file_id={file_id}, chunk_mode={chunk_mode}, embedding_model={embedding_model}, vector_model={vector_model}", flush=True)
     
@@ -289,6 +301,13 @@ def process_file_parsing(
         try:
             _preflight_embedding(session, file_doc, vector_model)
             if not auto_vectorize:
+                from app.models import ChunkIndex
+                historical_bm25 = session.exec(select(ChunkIndex.id).join(
+                    DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id).where(
+                        DocumentChunk.file_id == file_id).limit(1)).first()
+                if (file_doc.status in (FileStatus.PARSED, FileStatus.READY) or
+                        getattr(file_doc, 'active_build_id', None) or historical_bm25):
+                    raise ValueError('文件已有有效索引，暂不支持保留索引的手动重解析；请选择自动入库')
                 collection = VectorStoreService()._existing_collection(file_doc.kb_id)
                 if collection is not None and collection.get(where={"file_id": file_id}, limit=1)["ids"]:
                     raise ValueError("文件已有有效向量，暂不支持保留索引的手动重解析；请选择自动入库")

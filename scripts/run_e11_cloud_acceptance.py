@@ -95,7 +95,7 @@ def execute(output, cloud=False):
     spec.loader.exec_module(route)
     router = route.router
     from app.core.database import get_session
-    from app.models import KnowledgeBase, FileDocument, DocumentChunk, FileStatus
+    from app.models import KnowledgeBase, FileDocument, DocumentChunk, FileStatus, CustomModel, ModelType
     from app.services import chat, retrieval, observability as obs
     from app.services.trace_schema import capture_scope
 
@@ -109,13 +109,28 @@ def execute(output, cloud=False):
         session.add(KnowledgeBase(id='synthetic-kb', name='Synthetic', embedding_model='none', vlm_model='none', chunk_count=1))
         session.add(FileDocument(id='synthetic-file', kb_id='synthetic-kb', name='synthetic.txt', local_path=str(source_path), size=len(SOURCE), status=FileStatus.READY))
         session.add(DocumentChunk(id='synthetic-chunk', file_id='synthetic-file', content=SOURCE))
+        session.add(CustomModel(id='synthetic-chat', name='Synthetic chat', model_type=ModelType.LLM,
+                                base_url='http://synthetic.invalid/v1', api_key='synthetic',
+                                model_name='synthetic-fake'))
         session.commit()
+        from app.services.runtime_settings import get_runtime_settings, update_runtime_settings
+        current = get_runtime_settings(session)
+        snapshot = update_runtime_settings(session, {'default_llm_model': 'synthetic-chat'}, current.revision)
     chat.engine = engine
+    chat.get_runtime_settings = lambda: snapshot
+    from app.services import memory
+    from app.services.memory import PreferencesSnapshot
+    async def synthetic_preferences(scope=None):
+        return PreferencesSnapshot(redis_fallback=True)
+    memory.get_memory_service = lambda: SimpleNamespace(get_preferences=synthetic_preferences)
     calls = {'fake_provider': 0, 'bm25': 0}
+    bm25_queries = []
     class BM25:
         def search(self, **kwargs):
             calls['bm25'] += 1
-            assert kwargs['query'] == QUESTION and kwargs['kb_id'] == 'synthetic-kb'
+            bm25_queries.append(kwargs['query'])
+            from app.services.query_expansion import expand_queries
+            assert kwargs['query'] in [QUESTION, *expand_queries([QUESTION])] and kwargs['kb_id'] == 'synthetic-kb'
             return [{'chunk_id': 'synthetic-chunk', 'bm25_score': 2.0}]
     class FakeCompletion:
         async def create(self, **kwargs):
@@ -132,7 +147,10 @@ def execute(output, cloud=False):
     def init(self):
         self.llm_service = fake_llm
         self.retrieval_service = rservice
+        self._request_settings = None
+        self._request_llm = None
     chat.ChatService.__init__ = init
+    chat.ChatService._resolved_llm = lambda self, model_id: fake_llm
     app = FastAPI()
     app.include_router(router)
     def session_override():
@@ -174,8 +192,11 @@ def execute(output, cloud=False):
         r.get(direction, {}).get('observation_id') == r.get('observation_id')
         for r in rows if r.get('stage') in ('grounded.request.sent', 'grounded.response')
         for direction in ('input', 'output') if isinstance(r.get(direction), dict)) if cloud else True
+    from app.services.query_expansion import expand_queries
+    expected_bm25_queries = [QUESTION, *expand_queries([QUESTION])]
     valid = (response.status_code == 200 and 'event: done' in response.text and 'event: error' not in response.text
-             and ANSWER in response.text and guard.denied == 0 and calls == {'fake_provider': 1, 'bm25': 1}
+             and ANSWER in response.text and guard.denied == 0 and calls['fake_provider'] == 1
+             and bm25_queries == expected_bm25_queries
              and {'retrieval.bm25', 'rag.candidate_transition', 'grounded.request.sent', 'grounded.response', 'observation.io'} <= stages
              and SENTINEL not in (output / 'events.jsonl').read_text(encoding='utf-8') and identity_verified
              and root_contract_verified and payload_binding_verified)

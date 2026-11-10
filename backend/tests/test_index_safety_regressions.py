@@ -286,6 +286,19 @@ def test_reparse_and_manual_index_preserve_structure_and_bm25(monkeypatch):
                                           metadata={'parent_id': 'chunk_1', 'heading_level': 2, 'heading_text': 'Title', 'chunk_type': 'content'})]
     monkeypatch.setattr(module, 'VectorStoreService', Store); monkeypatch.setattr(module, 'EmbeddingService', Embed)
     monkeypatch.setattr(module, 'FileParser', Parser)
+    # Missing Chroma rows do not make an existing BM25 projection disposable.
+    with pytest.raises(ValueError, match='已有有效索引'):
+        module.process_file_parsing('f')
+    with Session(engine) as session:
+        assert session.get(DocumentChunk, 'old').content == 'old term'
+        assert session.get(IndexStats, 'kb').total_docs == 1
+        # Explicitly prepare an unindexed preview fixture for the confirmation
+        # contract below, rather than reparsing a searchable historical build.
+        BM25Index().delete_chunk_index(session, 'old', 'kb')
+        session.delete(session.get(DocumentChunk, 'old'))
+        doc = session.get(FileDocument, 'f')
+        doc.status = FileStatus.PENDING_CONFIRM
+        session.add(doc); session.commit()
     assert module.process_file_parsing('f')['status'] == 'pending_confirm'
     with Session(engine) as session:
         assert session.get(IndexStats, 'kb').total_docs == 0

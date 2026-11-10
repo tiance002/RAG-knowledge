@@ -39,7 +39,12 @@ def test_additive_migration_idempotent_preserves_legacy(tmp_path):
     database, source = legacy_db(tmp_path)
     engine = create_engine("sqlite:///" + str(database))
     first = migrate_schema(engine)
-    assert len(first) == 6
+    assert set(first) == {
+        "file_documents.original_name", "file_documents.display_name", "file_documents.sha256",
+        "file_documents.supersedes_file_id", "file_documents.desired_generation",
+        "file_documents.active_build_id", "file_documents.deleted_at", "document_chunks.start_offset",
+        "document_chunks.end_offset", "document_chunks.source_metadata_json",
+    }
     assert migrate_schema(engine) == []
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT id,parent_id,content FROM document_chunks").fetchone() == ("child", "chunk_1", "legacy body")

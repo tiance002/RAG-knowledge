@@ -89,7 +89,12 @@ def test_worker_pool_uses_database_concurrency_after_cli(monkeypatch):
     from app.tasks.celery_app import apply_runtime_worker_settings
     monkeypatch.setattr(runtime_settings, 'get_runtime_settings', lambda: SimpleNamespace(
         max_concurrency=2, revision=7, degraded=False))
-    worker = SimpleNamespace(concurrency=1, autoscale=None, app=SimpleNamespace(conf=SimpleNamespace()))
+    from app.tasks.celery_app import settings
+    monkeypatch.setenv("FILE_TASK_WORKER_ROLE", "parse")
+    monkeypatch.setattr(settings, "CHROMA_HOST", "127.0.0.1")
+    queues = SimpleNamespace(consume_from={"document.parse": object()})
+    worker = SimpleNamespace(concurrency=1, autoscale=None, app=SimpleNamespace(
+        conf=SimpleNamespace(), amqp=SimpleNamespace(queues=queues)))
     apply_runtime_worker_settings(sender=worker)
     assert worker.concurrency == 2
     assert worker.app.conf.worker_concurrency == 2

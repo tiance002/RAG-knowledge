@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     print("数据库初始化完成")
 
     # 调试：打印所有路由
-    print("🚀 [Startup] Registered Routes:")
+    print("[Startup] Registered Routes:")
     for route in app.routes:
         if isinstance(route, APIRoute):
             print(f"   {route.methods} {route.path}")

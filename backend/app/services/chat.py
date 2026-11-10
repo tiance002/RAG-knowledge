@@ -956,7 +956,7 @@ class ChatService:
             trace_event('qa.scope_resolved', scope='all_available', kb_ids=kb_ids)
         if kb_ids and user_message and explicitly_requests_sources(user_message):
             preflight_status = _scope_preflight(kb_ids)
-            if preflight_status == 'INDEXING_PENDING':
+            if preflight_status in ('INDEXING_PENDING', 'NO_RESULTS'):
                 trace_event("qa.answer", answer_mode="INSUFFICIENT_EVIDENCE", retrieval_status=preflight_status)
                 content = ("所选知识库中的资料正在处理或等待索引，请完成索引后再提问。"
                            if preflight_status == "INDEXING_PENDING" else "所选知识库中暂无资料，请先上传并完成索引。")

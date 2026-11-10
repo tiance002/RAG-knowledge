@@ -17,18 +17,22 @@ def chunk_key(content, page_number, content_type):
     return digest_bytes(json.dumps([content, page_number, content_type], ensure_ascii=False).encode())
 
 
-def write_manifest(root, source_sha256, pages, chunks, *, schema="pdf-parse-v1"):
+def write_manifest(root, source_sha256, pages, chunks, *, schema="pdf-parse-v1", flat=False):
     payload = {"schema": schema, "source_sha256": source_sha256,
                "pages": pages, "chunks": [
                    {"key": chunk_key(c.content, c.page_number, c.content_type),
                     "metadata": c.metadata or {}} for c in chunks]}
     data = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
-    directory = Path(root) / source_sha256
+    # Task-local roots already isolate the source; a flat layout also avoids
+    # exceeding Windows path limits for nested task/attempt/source/hash paths.
+    directory = Path(root) if flat else Path(root) / source_sha256
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / (digest_bytes(data) + '.json')
     # Exclusive creation preserves historical manifests. Readers only see complete files.
     with tempfile.NamedTemporaryFile(dir=directory, delete=False) as handle:
         handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
         temporary = handle.name
     try:
         try:
@@ -36,6 +40,12 @@ def write_manifest(root, source_sha256, pages, chunks, *, schema="pdf-parse-v1")
         except FileExistsError:
             if path.read_bytes() != data:
                 raise ValueError('PDF_MANIFEST_IDENTITY_CONFLICT')
+        if os.name != 'nt':
+            descriptor = os.open(directory, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
     finally:
         os.unlink(temporary)
     return str(path)

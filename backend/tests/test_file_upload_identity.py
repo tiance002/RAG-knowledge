@@ -152,7 +152,13 @@ def test_delete_same_name_keeps_other_record_source_and_chunks(store, monkeypatc
         assert session.get(FileDocument, "one") is None
         assert session.get(FileDocument, "two") is not None
         assert session.get(DocumentChunk, "c2").content == "second"
-    assert calls == [("kb", "one")]
+    # Vector cleanup is deferred to the index worker and uses an exact manifest.
+    assert calls == []
+    from app.models import FileIndexBuild
+    import json
+    with Session(store[0]) as session:
+        retired = session.exec(select(FileIndexBuild)).one()
+        assert retired.file_id == "one" and json.loads(retired.manifest)["vector_ids"] == ["c1"]
     assert not (store[1] / "one.txt").exists() and (store[1] / "two.txt").exists()
 
 

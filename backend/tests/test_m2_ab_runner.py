@@ -232,6 +232,14 @@ g=r.BudgetTransport(m,out,transport=httpx.MockTransport(provider))
 with g.installed():
  r.build_index(m)
  trials=asyncio.run(r.run_trials(m,out,g))
+ # Grounded answers now use buffered validation. Exercise the independent
+ # streaming SDK path with the same no-network provider guard.
+ from app.services.llm import LLMService
+ async def check_stream():
+  g.context = {'qid': 'separate-stream-probe', 'mode': 'probe', 'arm': 'probe'}
+  async with g.bind_services():
+   return [part async for part in LLMService().generate_stream([{'role':'user','content':'synthetic stream check'}])]
+ assert asyncio.run(check_stream())
 assert len(trials)==96,(len(trials),trials[-1])
 assert {x['mode'] for x in trials}=={'chat','agent'}
 assert {x['arm'] for x in trials}=={'A','B','C','D'}

@@ -5,10 +5,23 @@ ROOT=Path(__file__).resolve().parents[2]
 def load():
  s=importlib.util.spec_from_file_location('recovery_test',ROOT/'scripts/m2_hybrid_postfix_recovery.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
 
+def synthetic_historical_snapshot(m, monkeypatch):
+ # Exercise the offline guard with archived ledger data and a controlled
+ # source identity. This does not attest that the old source tree is present.
+ expected=json.loads((m.RUN_V3/'plan.json').read_bytes())['current_sources']
+ monkeypatch.setattr(m.base.old,'snapshot',lambda: expected)
+
+def test_changed_source_still_blocks_historical_recovery(monkeypatch):
+ m=load()
+ monkeypatch.setattr(m.base.old,'snapshot',lambda: {})
+ with pytest.raises(ValueError,match='Application source differs from v3'):
+  m.verify_v3()
+
 def test_real_prior_zero_send_proof_and_distinct_grant():
- m=load();proof=m.verify_zero_send();assert len(proof)==4
+ m=load();before=m.base.GRANT.read_bytes() if m.base.GRANT.exists() else None
+ proof=m.verify_zero_send();assert len(proof)==4
  assert m.base.GRANT!=m.FAILED_GRANT and m.base.PREFIX.endswith('-v5')
- assert not m.base.GRANT.exists()
+ assert (m.base.GRANT.read_bytes() if m.base.GRANT.exists() else None)==before
 
 def test_prior_unexpected_request_or_identity_fails(tmp_path,monkeypatch):
  m=load();failed=tmp_path/'run';failed.mkdir();(failed/'calls').mkdir();(failed/'summary.jsonl').write_text(json.dumps({'calls':0,'error_type':'JSONDecodeError','provider_bill':'UNKNOWN','state':'STOPPED'})+'\n')
@@ -24,10 +37,11 @@ def test_prior_unexpected_request_or_identity_fails(tmp_path,monkeypatch):
 @pytest.mark.parametrize('value',[None,'/var/tmp/redis',json.dumps(['wsl.exe','--exec','wrong'])])
 def test_bad_redis_env_blocks_before_execute_and_grant(monkeypatch,value):
  m=load()
+ before=m.base.GRANT.read_bytes() if m.base.GRANT.exists() else None
  if value is None:monkeypatch.delenv('RAG_TEST_REDIS_CMD',raising=False)
  else:monkeypatch.setenv('RAG_TEST_REDIS_CMD',value)
  with pytest.raises(ValueError):m.execute({},'unused')
- assert not m.base.GRANT.exists()
+ assert (m.base.GRANT.read_bytes() if m.base.GRANT.exists() else None)==before
 
 def test_valid_redis_env_has_expected_argv(monkeypatch):
  m=load();binary=(m.VAR/'redis-test-runtime.txt').read_text(encoding='utf8').strip();expected=['wsl.exe','-d','Ubuntu','--exec',binary]
@@ -65,3 +79,47 @@ def test_combined_call_cap_stops_before_provider_dispatch(tmp_path,monkeypatch):
  g=m.base.Guard(tmp_path/'calls',plan,b'owned');g.continuation_attempts=34
  with pytest.raises(m.base.old.guardmod.GuardStop):g.begin('m2-hybrid-postfix-v5:synthetic:call-000001',None)
  assert g.count==0 and not list(g.directory.iterdir())
+
+def test_synthetic_source_snapshot_exercises_exclusion_rules(monkeypatch):
+ m=load()
+ synthetic_historical_snapshot(m,monkeypatch)
+ plan=m.base.make_plan()
+ prior=m.base.rows(m.RUN_V3/'started.jsonl')+m.base.rows(m.RUN_V4/'started.jsonl')
+ excluded={m.base.identity(row) for row in prior}
+ assert len(plan['identities'])==3
+ assert not excluded.intersection(m.base.identity(row) for row in plan['identities'])
+ assert plan['v3_unknown_503']=='RETAINED_DO_NOT_REPLAY'
+ assert plan['v4_unknown_connect_error']=='RETAINED_DO_NOT_REPLAY'
+
+def test_synthetic_source_snapshot_enforces_combined_call_cap(tmp_path,monkeypatch):
+ m=load()
+ synthetic_historical_snapshot(m,monkeypatch)
+ plan=m.base.make_plan()
+ monkeypatch.setattr(m.base,'GRANT',tmp_path/'grant.started')
+ m.base.GRANT.write_bytes(b'owned')
+ guard=m.base.Guard(tmp_path/'calls',plan,b'owned')
+ guard.continuation_attempts=34
+ with pytest.raises(m.base.old.guardmod.GuardStop):
+  guard.begin('m2-hybrid-postfix-v5:synthetic:call-000001',None)
+ assert guard.count==0
+ assert not list(guard.directory.iterdir())
+
+def test_synthetic_source_snapshot_sends_at_most_one_mock_request(tmp_path,monkeypatch):
+ import httpx
+ m=load()
+ synthetic_historical_snapshot(m,monkeypatch)
+ plan=m.base.make_plan()
+ monkeypatch.setattr(m.base,'GRANT',tmp_path/'grant.started')
+ m.base.GRANT.write_bytes(b'owned')
+ guard=m.base.Guard(tmp_path/'calls',plan,b'owned')
+ requests=[]
+ def reply(request):
+  requests.append(json.loads(request.content))
+  return httpx.Response(200,json={'model':'Qwen/Qwen3.5-4B','choices':[{'finish_reason':'stop'}]})
+ mock=httpx.MockTransport(reply)
+ adapter=m.base.Adapter(guard,mock,mock)
+ adapter.context='synthetic:chat:A'
+ request=httpx.Request('POST','https://api.siliconflow.cn/v1/chat/completions',
+                       json={'model':'Qwen/Qwen3.5-4B','messages':[{'role':'user','content':'synthetic'}]})
+ assert adapter.sync_send(request).status_code==200
+ assert len(requests)==1 and guard.count==1

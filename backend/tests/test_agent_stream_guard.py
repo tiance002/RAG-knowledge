@@ -32,6 +32,8 @@ def run_stream(monkeypatch, node):
                    "data": {"output": {"messages": [response], "citations": citations}}}
     monkeypatch.setattr(agent_workflow, "AgentWorkflow", lambda: SimpleNamespace(app=FakeApp()))
     service = chat.ChatService.__new__(chat.ChatService)
+    service._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    service._request_llm = SimpleNamespace(model='fixture', base_url='http://fixture', api_key='fixture')
     async def collect():
         return [event async for event in service._chat_stream_langgraph(
             [Message(role=MessageRole.USER, content="问题")], ["kb"], 5, 0.1, None)]
@@ -64,6 +66,8 @@ def test_empty_scope_is_not_expanded_to_all_knowledge_bases(monkeypatch):
                 yield None
     monkeypatch.setattr(agent_workflow, 'AgentWorkflow', lambda: SimpleNamespace(app=FakeApp()))
     service = chat.ChatService.__new__(chat.ChatService)
+    service._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    service._request_llm = SimpleNamespace(model='fixture', base_url='http://fixture', api_key='fixture')
     async def collect():
         return [event async for event in service._chat_stream_langgraph(
             [Message(role=MessageRole.USER, content='你好')], [], 5, 0.1, None)]

@@ -194,6 +194,8 @@ async def invoke_provider_http_async(send, *, stage, model_name):
     with provider_attempt(stage, model_name) as attempt:
         response = await send()
         attempt["provider_request_id"] = _provider_id(response)
+        from app.services.task_effect_context import record_provider_id
+        record_provider_id(attempt["provider_request_id"], response.status_code)
         response.raise_for_status()
         return response
 

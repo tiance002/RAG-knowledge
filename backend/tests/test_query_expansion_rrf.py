@@ -15,6 +15,9 @@ def service(vector_rows=(), lexical=None):
     svc = retrieval.RetrievalService.__new__(retrieval.RetrievalService)
     svc.vector_store = Mock()
     svc.vector_store.query.return_value = list(vector_rows)
+    # This fixture supplies no SQL session; candidate authorization is covered
+    # separately with real SQL and Chroma in test_index_builds.
+    svc._vector_scope = Mock(return_value=([row['id'] for row in vector_rows], []))
     svc._embed_query_for_kb = AsyncMock(return_value=[0.1])
     svc.bm25_index = Mock()
     svc.bm25_index.search.side_effect = lexical or (lambda **kw: [])
@@ -90,6 +93,33 @@ def test_sufficient_initial_union_skips_expansion(monkeypatch):
     assert metrics["expansion_triggered"] is False
     svc.bm25_index.search.assert_called_once()
     svc._embed_query_for_kb.assert_awaited_once()
+
+
+def test_hybrid_merges_real_lexical_postings_with_vector_results():
+    from sqlmodel import SQLModel, Session, create_engine
+    from app.services.bm25 import BM25Index
+    from app.models import FileDocument, DocumentChunk, KnowledgeBase
+
+    engine = create_engine("sqlite://")
+    SQLModel.metadata.create_all(engine)
+    svc = service([{"id": "semantic", "score": .9}])
+    svc.bm25_index = BM25Index()
+    with Session(engine) as session:
+        session.add_all([KnowledgeBase(id="kb", name="kb", embedding_model="", vlm_model=""),
+                         KnowledgeBase(id="other", name="other", embedding_model="", vlm_model="")])
+        session.add_all([FileDocument(id="f", kb_id="kb", name="f", local_path="x", size=1),
+                         FileDocument(id="outside-f", kb_id="other", name="f", local_path="x", size=1)])
+        session.add_all([DocumentChunk(id="literal", file_id="f", content="budget 14009"),
+                         DocumentChunk(id="outside", file_id="outside-f", content="budget 14009")])
+        session.flush()
+        svc.bm25_index.index_chunk(session, "literal", "budget 14009", "kb")
+        svc.bm25_index.index_chunk(session, "outside", "budget 14009", "other")
+        session.commit()
+        rows, metrics = asyncio.run(svc.search(session, "budget 14009", ["kb"], top_k=2,
+                                               search_mode="hybrid", log_retrieval=False))
+        assert {row["id"] for row in rows} == {"semantic", "literal"}
+        assert metrics["bm25_count"] == 1
+        svc._embed_query_for_kb.assert_awaited_once()
 
 
 def test_insufficient_union_expands_bm25_only_and_retains_original(monkeypatch):

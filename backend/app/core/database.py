@@ -5,6 +5,7 @@
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy.pool import StaticPool
 from app.core.config import get_settings
+from app.core.settings_model import PersistedSystemSettings  # register settings table with SQLModel
 
 settings = get_settings()
 
@@ -35,7 +36,15 @@ if "sqlite" in settings.DATABASE_URL:
 
 def init_db():
     """初始化数据库表"""
-    SQLModel.metadata.create_all(engine)
+    # Recovery and workers can initialize the schema without importing FastAPI.
+    from app.tasks import dispatch  # noqa: F401
+    from app.models import models  # noqa: F401
+    from app.services import file_retirement  # noqa: F401
+    with engine.begin() as connection:
+        if connection.dialect.name == "sqlite":
+            # Serialize the existence check and one-time backfill across starting workers.
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        SQLModel.metadata.create_all(connection)
     from app.core.schema_migrations import migrate_schema
     migrate_schema(engine)
 

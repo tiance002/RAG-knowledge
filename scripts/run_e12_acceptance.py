@@ -116,7 +116,7 @@ def execute(output, cloud=False, schema="e12", scenario="fulltext", content_poli
     spec.loader.exec_module(route)
     router = route.router
     from app.core.database import get_session
-    from app.models import KnowledgeBase, FileDocument, DocumentChunk, FileStatus
+    from app.models import KnowledgeBase, FileDocument, DocumentChunk, FileStatus, CustomModel, ModelType
     from app.services import chat, retrieval, observability as obs
     from app.services.trace_schema import capture_scope
     memory_exporter = None
@@ -148,19 +148,34 @@ def execute(output, cloud=False, schema="e12", scenario="fulltext", content_poli
         session.add(KnowledgeBase(id='synthetic-kb', name='Synthetic', embedding_model='none', vlm_model='none', chunk_count=1))
         session.add(FileDocument(id='synthetic-file', kb_id='synthetic-kb', name='synthetic.txt', local_path=str(source_path), size=len(SOURCE), status=FileStatus.READY))
         session.add(DocumentChunk(id='synthetic-chunk', file_id='synthetic-file', content=SOURCE))
+        session.add(CustomModel(id='synthetic-chat', name='Synthetic chat', model_type=ModelType.LLM,
+                                base_url='http://synthetic.invalid/v1', api_key='synthetic',
+                                model_name='synthetic-fake'))
         session.commit()
+        from app.services.runtime_settings import get_runtime_settings, update_runtime_settings
+        snapshot = get_runtime_settings(session)
+        snapshot = update_runtime_settings(session, {'default_llm_model': 'synthetic-chat'}, snapshot.revision)
     chat.engine = engine
+    chat.get_runtime_settings = lambda: snapshot
+    from app.services import memory
+    from app.services.memory import PreferencesSnapshot
+    async def synthetic_preferences(scope=None):
+        return PreferencesSnapshot(redis_fallback=True)
+    memory.get_memory_service = lambda: SimpleNamespace(get_preferences=synthetic_preferences)
     calls = {'fake_provider': 0, 'fake_agent_model': 0, 'fake_grade_model': 0, 'tool': 0, 'bm25': 0, 'vector': 0, 'embedding': 0, 'rerank': 0}
+    bm25_queries = []
     provider_requests = []
     model_requests = []
     provider_entered = asyncio.Event()
     class BM25:
         def search(self, **kwargs):
             calls['bm25'] += 1
+            bm25_queries.append((calls['tool'], kwargs['query']))
             assert kwargs['kb_id'] == 'synthetic-kb'
             if scenario == 'agent_two_rounds':
-                return [] if kwargs['query'] == 'synthetic initial query' else [{'chunk_id': 'synthetic-chunk', 'bm25_score': 2.0}]
-            assert kwargs['query'] == QUESTION
+                return [] if calls['tool'] == 1 else [{'chunk_id': 'synthetic-chunk', 'bm25_score': 2.0}]
+            from app.services.query_expansion import expand_queries
+            assert kwargs['query'] in [QUESTION, *expand_queries([QUESTION])]
             return [] if scenario == 'no_results' else [{'chunk_id': 'synthetic-chunk', 'bm25_score': 2.0}]
     class FakeCompletion:
         async def create(self, **kwargs):
@@ -200,7 +215,11 @@ def execute(output, cloud=False, schema="e12", scenario="fulltext", content_poli
     def init(self):
         self.llm_service = fake_llm
         self.retrieval_service = rservice
+        self._request_settings = None
+        self._request_llm = None
     chat.ChatService.__init__ = init
+    if scenario != 'agent_two_rounds':
+        chat.ChatService._resolved_llm = lambda self, model_id: fake_llm
     if scenario == 'agent_two_rounds':
         # The real AgentWorkflow StateGraph, its tool node and retrieval service
         # run unchanged; only the LangChain model and backend search inputs are synthetic.
@@ -393,7 +412,13 @@ def execute(output, cloud=False, schema="e12", scenario="fulltext", content_poli
     elif scenario == 'agent_two_rounds':
         status_sequence = [e['data'].get('status') for e in parsed if e['event'] == 'retrieval_status' and isinstance(e['data'],dict)]
         attempt_ids = [r.get('metadata',{}).get('retrieval_attempt_id') for r in rows if r.get('stage') == 'agent.actual_query']
-        expected = bool(done and not error and calls['tool'] == 2 and calls['fake_agent_model'] == 3 and calls['fake_grade_model'] == 1 and calls['bm25'] == 2 and status_sequence == ['NO_RESULTS','SUCCESS'])
+        from app.services.query_expansion import expand_queries
+        expected_queries = [(round_no, variant) for round_no, query in
+                            [(1, 'synthetic initial query'), (2, 'synthetic corrected query')]
+                            for variant in [query, *expand_queries([query])]]
+        expected = bool(done and not error and calls['tool'] == 2 and calls['fake_agent_model'] == 3
+                        and calls['fake_grade_model'] == 1 and bm25_queries == expected_queries
+                        and status_sequence == ['NO_RESULTS','SUCCESS'])
         if schema != 'off': expected = expected and len(attempt_ids) == 2 and all(attempt_ids) and len(set(attempt_ids)) == 2
 
     elif scenario in ('empty', 'truncated'):

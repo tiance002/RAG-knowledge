@@ -171,8 +171,11 @@ copy backend\.env.example backend\.env  # Windows
 # cp backend/.env.example backend/.env   # Linux / macOS
 
 cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -c "from app.core.database import init_db; init_db()"
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+文件处理还需要启动 Redis、本机 Chroma、恢复进程和两类 Celery Worker。[单机并发入库的启动、升级和任务核对](docs/file-task-workers.md)
 
 编辑 `backend/.env`，配置自己的模型服务：
 

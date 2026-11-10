@@ -301,7 +301,12 @@ const MultiFilePreview: React.FC = () => {
 
     setSavingChunk(true);
     try {
-      await updateChunk(chunkId, { content });
+      const saved = await updateChunk(chunkId, { content, file_id: selectedFileId });
+      if ('task_id' in saved.data) {
+        message.success('修改已提交，发布后生效。可在处理任务中查看进度');
+        setDetailModalVisible(false);
+        return;
+      }
       message.success('保存成功');
       
       // 更新本地状态：chunks 和 selectedChunk

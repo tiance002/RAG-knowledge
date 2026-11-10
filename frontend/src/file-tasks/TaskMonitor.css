@@ -1,0 +1,7 @@
+.file-task-monitor { padding: 12px 0; color: inherit; }
+.file-task-monitor .task-table-scroll { overflow-x: auto; }
+.file-task-monitor table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+.file-task-monitor th, .file-task-monitor td { padding: 10px; vertical-align: top; border-bottom: 1px solid #d9dde3; }
+.file-task-monitor small { display: block; font-size: 12px; overflow-wrap: anywhere; }
+.file-task-monitor button, .file-task-monitor input { margin: 3px; }
+.file-task-monitor [role="alert"] { color: #9b3030; }

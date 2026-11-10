@@ -3,11 +3,13 @@
 """
 
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import event
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 import uuid
 
+from app.core.bm25_migration import begin_posting_creation, backfill_new_posting_table
 
 def generate_uuid() -> str:
     """生成 UUID 字符串"""
@@ -63,6 +65,9 @@ class FileDocument(SQLModel, table=True):
     display_name: Optional[str] = None
     sha256: Optional[str] = Field(default=None, index=True)
     supersedes_file_id: Optional[str] = None
+    desired_generation: int = Field(default=0)
+    active_build_id: Optional[str] = None
+    deleted_at: Optional[datetime] = None
     size: int
     status: FileStatus = Field(default=FileStatus.PENDING)
     progress: int = Field(default=0)
@@ -84,7 +89,7 @@ class DocumentChunk(SQLModel, table=True):
     content: str
     page_number: Optional[int] = None
     content_type: ContentType = Field(default=ContentType.TEXT)
-    image_path: Optional[str] = None
+    image_path: Optional[str] = Field(default=None, index=True)
     original_index: int = Field(default=0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -97,9 +102,27 @@ class DocumentChunk(SQLModel, table=True):
     # Exact character offsets where known; never reconstructed from similarity.
     start_offset: Optional[int] = None
     end_offset: Optional[int] = None
+    source_metadata_json: Optional[str] = None
 
     # 关系
     file_document: Optional[FileDocument] = Relationship(back_populates="chunks")
+
+
+class FileIndexBuild(SQLModel, table=True):
+    """Durable ownership record for exact vector cleanup and publication."""
+    __tablename__ = "file_index_builds"
+    build_id: str = Field(primary_key=True)
+    file_id: str = Field(index=True)
+    kb_id: str = Field(index=True)
+    generation: int
+    task_id: str
+    attempt_no: int
+    state: str = Field(index=True)
+    manifest: str
+    manifest_hash: str
+    chunk_count: int
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    retired_at: Optional[datetime] = None
 
 
 class ModelType(str, Enum):
@@ -127,7 +150,7 @@ class CustomModel(SQLModel, table=True):
 
 
 class ChunkIndex(SQLModel, table=True):
-    """倒排索引表 - 用于 BM25 关键词检索"""
+    """每块的词频与长度；也是倒排表的迁移来源。"""
     __tablename__ = "chunk_index"
 
     id: str = Field(default_factory=generate_uuid, primary_key=True)
@@ -139,6 +162,21 @@ class ChunkIndex(SQLModel, table=True):
     doc_length: int = Field(default=0)  # 文档长度（词数）
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BM25Posting(SQLModel, table=True):
+    """A term occurrence in one indexed chunk. The PK serves KB + term lookups."""
+    __tablename__ = "bm25_postings"
+
+    kb_id: str = Field(primary_key=True)
+    term: str = Field(primary_key=True)
+    index_id: str = Field(foreign_key="chunk_index.id", primary_key=True, index=True)
+    tf: int
+
+
+# create_all is also used by offline workers, without going through API startup.
+event.listen(BM25Posting.__table__, "before_create", begin_posting_creation)
+event.listen(BM25Posting.__table__, "after_create", backfill_new_posting_table)
 
 
 class IndexStats(SQLModel, table=True):

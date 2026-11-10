@@ -18,18 +18,22 @@ class EmbeddingService:
     """Embedding 服务"""
 
     def __init__(self, base_url: str = None, api_key: str = None, model: str = None):
-        self.base_url = base_url or settings.EMBEDDING_BASE_URL
-        self.api_key = api_key or settings.EMBEDDING_API_KEY
-        self.model = model or settings.EMBEDDING_MODEL
+        self.base_url = settings.EMBEDDING_BASE_URL if base_url is None else base_url
+        self.api_key = settings.EMBEDDING_API_KEY if api_key is None else api_key
+        self.model = settings.EMBEDDING_MODEL if model is None else model
 
     async def embed_query(self, text: str, model_id: str = None) -> List[float]:
         """获取文本的向量表示"""
-        embeddings = await self._embed([text], model_id)
+        embeddings = await self.embed_documents([text], model_id)
         return embeddings[0] if embeddings else []
 
     async def embed_documents(self, texts: List[str], model_id: str = None) -> List[List[float]]:
         """批量获取文本的向量表示"""
-        return await self._embed(texts, model_id)
+        from app.services.task_effect_context import invoke_effect
+        return await invoke_effect('embedding', {
+            'base_url': self.base_url, 'model': model_id or self.model,
+            'inputs': texts,
+        }, lambda: self._embed(texts, model_id))
 
     @observe("embedding.call")
     async def _embed(self, texts: List[str], model_id: str = None) -> List[List[float]]:

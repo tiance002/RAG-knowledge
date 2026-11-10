@@ -21,18 +21,22 @@ def test_client_and_langchain_disable_sdk_retries(monkeypatch):
     assert captured["model"]["max_retries"] == 0
 
 
-@pytest.mark.parametrize("node", ["intent", "grade"])
-def test_agent_timeout_does_not_fallback(node):
+def test_agent_grading_timeout_does_not_fallback():
     workflow = agent_workflow.AgentWorkflow.__new__(agent_workflow.AgentWorkflow)
     model = SimpleNamespace(ainvoke=AsyncMock(side_effect=TimeoutError("sensitive")))
     workflow._get_llm_service = Mock(return_value=SimpleNamespace(model="test", get_chat_model=Mock(return_value=model)))
-    if node == "intent":
-        call = workflow.analyze_intent({"messages": [HumanMessage(content="a sufficiently long question")]}, {})
-    else:
-        call = workflow.grade_documents({"citations": [{"id": "x"}], "original_query": "q", "rag_context": "c"}, {})
+    call = workflow.grade_documents({"citations": [{"id": "x"}], "original_query": "q", "rag_context": "c"}, {})
     with pytest.raises(TimeoutError):
         asyncio.run(call)
     model.ainvoke.assert_awaited_once()
+
+
+def test_agent_intent_without_unified_understanding_does_not_call_provider():
+    workflow = agent_workflow.AgentWorkflow.__new__(agent_workflow.AgentWorkflow)
+    workflow._get_llm_service = Mock(side_effect=AssertionError('unexpected intent provider call'))
+    result = asyncio.run(workflow.analyze_intent({"messages": [HumanMessage(content="question")]}, {}))
+    assert result["intent"] == "qa"
+    workflow._get_llm_service.assert_not_called()
 
 
 @pytest.mark.parametrize("exc", [llm.requests.exceptions.Timeout(), llm.requests.exceptions.ConnectionError(), llm.httpx.ReadTimeout("timeout"), llm.httpx.RemoteProtocolError("truncated"), llm.requests.exceptions.ChunkedEncodingError("truncated")])
@@ -63,15 +67,18 @@ def test_normal_stream_failure_is_terminal(rewrite):
     async def failed_stream(**kwargs):
         yield "partial"
         raise TimeoutError("secret")
-    fake = SimpleNamespace(rewrite_query=AsyncMock(side_effect=TimeoutError("secret")), generate_stream=failed_stream)
-    service.llm_service = fake
+    fake = SimpleNamespace(model='fixture', understand_query=AsyncMock(side_effect=TimeoutError("secret")), generate_stream=failed_stream)
+    service._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    service._request_llm = fake
     service._retrieve_with_new_service = AsyncMock()
     message = SimpleNamespace(role=SimpleNamespace(value="user"), content="question")
     async def run():
         return [item async for item in service._chat_stream_normal(
             messages=[message], kb_ids=["kb"] if rewrite else [], top_k=1,
             score_threshold=0, model_id=None, rerank_enabled=False,
-            rerank_score_threshold=0, rerank_model_id=None, use_rewrite=rewrite)]
+            rerank_score_threshold=0, rerank_model_id=None, use_rewrite=True)]
+    if not rewrite:
+        fake.understand_query = AsyncMock(return_value={'intent': 'greeting', 'rewrite_query': ''})
     events = asyncio.run(run())
     assert events[-1][0] == "error"
     assert events[-1][1]["status"] == "UNKNOWN"
@@ -153,10 +160,12 @@ def test_stream_incomplete_is_terminal_after_partial(monkeypatch, finish_reason,
     service._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     from app.services.chat import ChatService
     chat = ChatService.__new__(ChatService)
-    chat.llm_service = service
+    service.understand_query = AsyncMock(return_value={'intent': 'greeting', 'rewrite_query': ''})
+    chat._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    chat._request_llm = service
     message = SimpleNamespace(role=SimpleNamespace(value="user"), content="question")
     async def run():
-        return [item async for item in chat._chat_stream_normal(messages=[message], kb_ids=[], top_k=1, score_threshold=0, model_id=None, rerank_enabled=False, rerank_score_threshold=0, rerank_model_id=None)]
+        return [item async for item in chat._chat_stream_normal(messages=[message], kb_ids=[], top_k=1, score_threshold=0, model_id=None, rerank_enabled=False, rerank_score_threshold=0, rerank_model_id=None, use_rewrite=True)]
     events = asyncio.run(run())
     assert ("answer_chunk", {"content": "partial"}) in events
     assert events[-1][0] == "error" and events[-1][1]["status"] == status

@@ -91,12 +91,22 @@ def setup_service(monkeypatch, saved=None):
         captured.append(kwargs['messages'])
         yield 'offline answer'
     service = chat.ChatService.__new__(chat.ChatService)
-    service.llm_service = SimpleNamespace(generate_stream=stream)
+    service.llm_service = SimpleNamespace(
+        model='offline', base_url='http://fixture', api_key='fixture',
+        generate_stream=stream,
+        understand_query=AsyncMock(return_value={'intent': 'chitchat', 'rewrite_query': ''}),
+    )
+    monkeypatch.setattr(service, '_resolved_llm', lambda model_id: service.llm_service)
+    monkeypatch.setattr(chat, 'get_runtime_settings', lambda: SimpleNamespace(
+        default_llm_model='fixture', max_chat_history_rounds=20, revision=1, degraded=False))
+    monkeypatch.setattr(chat, '_resolve_knowledge_scope', lambda kb_ids: ['synthetic-kb'])
+    monkeypatch.setattr(chat, '_scope_preflight', lambda kb_ids: None)
     service._retrieve_with_new_service = AsyncMock()
     return service, store, captured
 
 
 async def collect(service, text, **kwargs):
+    kwargs.setdefault('use_rewrite', True)
     return [event async for event in service.chat_stream([Message(role=MessageRole.USER, content=text)], kb_ids=[], **kwargs)]
 
 
@@ -111,6 +121,7 @@ def test_actual_normal_once_read_and_current_turn_override(monkeypatch):
 
 
 def test_current_output_request_trace_and_rewrite_boundaries(monkeypatch):
+    monkeypatch.setattr(grounded_generation.get_settings(), 'FALLBACK_STRATEGY', 'fixed')
     events = []
     monkeypatch.setattr(chat, 'trace_event', lambda name, **data: events.append((name, data)))
     service, store, captured = setup_service(monkeypatch)
@@ -125,8 +136,8 @@ def test_current_output_request_trace_and_rewrite_boundaries(monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *args): pass
     monkeypatch.setattr(chat, 'Session', Session)
-    rewrite = AsyncMock(return_value='rewritten Redis question')
-    service.llm_service.rewrite_query = rewrite
+    rewrite = AsyncMock(return_value={'rewrite_query': 'rewritten Redis question', 'intent': 'kb_search'})
+    service.llm_service.understand_query = rewrite
     service._retrieve_with_new_service.return_value = ([], {'retrieval_status':'NO_RESULTS'})
     for saved in (snapshot(answer_style='concise'), snapshot()):
         store.get_preferences.return_value = saved
@@ -215,9 +226,9 @@ def test_agent_generation_and_auxiliary_inputs_unchanged(monkeypatch):
     state.update(citations=[{'chunk_id':'one'}], rag_context='raw evidence', retrieval_status='SUCCESS')
     run(workflow.grade_documents(state, {}))
     run(workflow.agent_node(state, {}))
-    assert [stage for stage,_ in calls] == ['intent', 'agent_chat', 'agent', 'quality', 'agent']
+    assert [stage for stage,_ in calls] == ['agent_chat', 'agent', 'quality', 'agent']
     for index, (stage, messages) in enumerate(calls):
-        assert any(policy in str(m.content) for m in messages) == (index in (1, 4))
+        assert any(policy in str(m.content) for m in messages) == (index in (0, 3))
     assert all(policy not in str(m) for messages in routed for m in messages)
     assert state['rag_context'] == 'raw evidence'
     assert state['preference_policy'] == policy
@@ -258,7 +269,7 @@ def test_direct_chat_merges_preference_into_existing_system(monkeypatch):
     async def request():
         return [event async for event in service.chat_stream([
             Message(role='system', content='Existing higher-priority instruction'),
-            Message(role='user', content='你好')], kb_ids=[])]
+            Message(role='user', content='你好')], kb_ids=[], use_rewrite=True)]
     events = run(request())
     assert events[-1][0] == 'done'
     assert len(captured) == 1
@@ -378,7 +389,7 @@ def test_historic_memory_commands_cannot_override_current_snapshot(monkeypatch, 
         Message(role='assistant', content='已删除全部长期偏好，恢复系统默认设置。'),
         Message(role='user', content='你好')]
     async def request():
-        return [event async for event in service.chat_stream(history, kb_ids=[])]
+        return [event async for event in service.chat_stream(history, kb_ids=[], use_rewrite=True)]
     run(request())
     assert [row['content'] for row in captured[0] if row['role'] != 'system'] == ['之前的问题', '之前的回答', '你好']
     assert '详细' not in str(captured[0]) and '表格' not in str(captured[0])

@@ -18,6 +18,7 @@ from typing import List, Dict, Any, Optional, Literal, Tuple
 from datetime import datetime
 
 from sqlmodel import Session, select
+from sqlalchemy import and_
 
 from app.models import DocumentChunk, FileDocument, KnowledgeBase, RetrievalLog, generate_uuid, CustomModel
 from app.services.vector_store import VectorStoreService
@@ -229,6 +230,28 @@ class RetrievalService:
     - hybrid: 混合检索（向量 + BM25）
     """
 
+    @staticmethod
+    def _vector_scope(session, kb_id):
+        # Read pointers and legacy chunks together, so one document cannot
+        # appear under both its retired IDs and a newly active build.
+        from app.services.file_versions import inactive_file_ids
+        inactive = inactive_file_ids(session, [kb_id])
+        rows = session.exec(select(FileDocument.id, FileDocument.active_build_id, DocumentChunk.id)
+            .select_from(FileDocument).outerjoin(DocumentChunk, and_(
+                DocumentChunk.file_id == FileDocument.id, FileDocument.active_build_id.is_(None),
+                DocumentChunk.chunk_type != 'parent')).where(
+            FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None),
+        )).all()
+        legacy, builds = [], []
+        for file_id, build_id, chunk_id in rows:
+            if file_id in inactive:
+                continue
+            if build_id:
+                builds.append(build_id)
+            elif chunk_id:
+                legacy.append(chunk_id)
+        return legacy, builds
+
     def __init__(self):
         self.vector_store = VectorStoreService()
         self.bm25_index = get_bm25_index()
@@ -385,11 +408,13 @@ class RetrievalService:
         all_results = []
         for kb_id in kb_ids:
             query_vector = await self._embed_query_for_kb(session, kb_id, query)
+            allowed_ids, allowed_build_ids = self._vector_scope(session, kb_id)
             results = self.vector_store.query(
                 kb_id=kb_id,
                 query_vector=query_vector,
                 top_k=top_k,
-                score_threshold=score_threshold
+                score_threshold=score_threshold,
+                allowed_ids=allowed_ids, allowed_build_ids=allowed_build_ids,
             )
 
             # 补充知识库信息
@@ -430,7 +455,7 @@ class RetrievalService:
             rows = []
             for kb_id in dict.fromkeys(kb_ids):
                 for result in self.bm25_index.search(
-                    session=session, query=query, kb_id=kb_id, top_k=top_k
+                    session=session, query=query, kb_id=kb_id, top_k=top_k, live_only=True
                 ):
                     rows.append({**result, "id": result["chunk_id"],
                                  "score": result["bm25_score"], "kb_id": kb_id})
@@ -523,9 +548,11 @@ class RetrievalService:
             for kb_id in dict.fromkeys(kb_ids):
                 # Rewrites and lexical variants must not multiply paid embeddings.
                 query_vector = await self._embed_query_for_kb(session, kb_id, query)
+                allowed_ids, allowed_build_ids = self._vector_scope(session, kb_id)
                 results = self.vector_store.query(
                     kb_id=kb_id, query_vector=query_vector,
-                    top_k=150, score_threshold=score_threshold)
+                    top_k=150, score_threshold=score_threshold,
+                    allowed_ids=allowed_ids, allowed_build_ids=allowed_build_ids)
                 vector_results.extend({**r, "kb_id": kb_id} for r in results)
         except Exception as e:
             if is_unknown_provider_error(e):
@@ -641,7 +668,7 @@ class RetrievalService:
             file_doc = session.get(FileDocument, chunk.file_id)
             # The collection's KB label is not an authority for SQL content.
             # Reject stale/misplaced hits even when expansion is disabled.
-            if (not file_doc or (allowed_kb_ids is not None and file_doc.kb_id not in allowed_kb_ids)
+            if (not file_doc or file_doc.deleted_at is not None or (allowed_kb_ids is not None and file_doc.kb_id not in allowed_kb_ids)
                     or (r.get('kb_id') and r['kb_id'] != file_doc.kb_id)):
                 event('retrieval.source_rejected', reason='source_scope_mismatch', chunk_id=chunk_id)
                 continue
@@ -672,6 +699,9 @@ class RetrievalService:
             from app.services.pdf_provenance import source_metadata
             provenance = (source_metadata(file_doc.local_path, chunk.content, chunk.page_number,
                                          chunk.content_type) if file_doc else {})
+            if chunk.source_metadata_json:
+                import json
+                provenance = json.loads(chunk.source_metadata_json)
 
             enriched.append({
                 "id": chunk_id,

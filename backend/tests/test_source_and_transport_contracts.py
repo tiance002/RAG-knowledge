@@ -58,7 +58,8 @@ def test_verified_ca_on_remote_image_call(tmp_path, monkeypatch):
                                               request=httpx.Request("POST", "https://example.invalid"))
     create = Mock(return_value=client)
     monkeypatch.setattr(vlm.httpx, "AsyncClient", create)
-    asyncio.run(vlm.VLMService().describe_image(str(image)))
+    asyncio.run(vlm.VLMService(base_url="https://example.invalid/v1", model="synthetic-vlm",
+                               api_key="synthetic").describe_image(str(image)))
     verification = create.call_args.kwargs.get("verify", True)
     assert verification is True or isinstance(verification, ssl.SSLContext) and verification.check_hostname
 

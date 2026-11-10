@@ -123,12 +123,17 @@ def test_actual_chat_preserves_request_and_only_writes_authorized_command(monkey
         yield "offline answer"
 
     service = chat.ChatService.__new__(chat.ChatService)
-    service.llm_service = SimpleNamespace(generate_stream=stream)
+    llm = SimpleNamespace(
+        model='fixture', generate_stream=stream,
+        understand_query=AsyncMock(return_value={'intent': 'chitchat', 'rewrite_query': ''}),
+    )
+    monkeypatch.setattr(service, '_resolved_llm', lambda model_id: llm)
+    monkeypatch.setattr(chat, '_resolve_knowledge_scope', lambda kb_ids: ['synthetic-kb'])
     service._retrieve_with_new_service = AsyncMock()
 
     async def collect():
         return [event async for event in service.chat_stream(
-            [Message(role=MessageRole.USER, content=text)], kb_ids=[])]
+            [Message(role=MessageRole.USER, content=text)], kb_ids=[], use_rewrite=True)]
 
     events = asyncio.run(collect())
     assert events[-1][0] == "done"

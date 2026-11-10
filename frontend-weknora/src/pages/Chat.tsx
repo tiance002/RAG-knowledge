@@ -4,6 +4,7 @@ import { FolderOutlined, DownOutlined, SendOutlined, CloseOutlined, StopOutlined
 import ReactMarkdown from 'react-markdown';
 import { useChatHistory } from '../chatHistory';
 import type { Conversation, Message } from '../chatHistory';
+import { createConversationId } from '../conversationId';
 import './Chat.css';
 
 type Model = { id: string; name: string; type: string };
@@ -68,7 +69,9 @@ export default function Chat() {
     if (!text.trim() || busy) return;
     if (!model || !models.some(item => item.id === model)) { setError('请先选择对话模型；如果列表为空，请在模型配置中添加。'); return; }
     setError(''); setPickerOpen(false);
-    const conversationId = id || crypto.randomUUID();
+    let conversationId: string;
+    try { conversationId = id || createConversationId(); }
+    catch (e) { setError(e instanceof Error ? e.message : '无法创建会话'); return; }
     const next: Message[] = [...messages, { role: 'user', content: text.trim() }];
     const startedAt = Date.now();
     put({ id: conversationId, title: session?.title || text.trim().slice(0, 48), updatedAt: startedAt, model, kbIds, mode,

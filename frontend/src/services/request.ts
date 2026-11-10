@@ -31,11 +31,12 @@ request.interceptors.response.use(
     return response.data;
   },
   (error: AxiosError) => {
-    const errorMessage = (error.response?.data as { message?: string })?.message
+    const detail = (error.response?.data as { detail?: string | { code?: string; message?: string } })?.detail;
+    const errorMessage = (typeof detail === 'string' ? detail : detail?.message)
+      || (error.response?.data as { message?: string })?.message
       || error.message
       || '请求失败';
-    const detail = (error.response?.data as { detail?: { code?: string } })?.detail;
-    if (detail?.code !== 'FILE_NAME_CONFLICT') message.error(errorMessage);
+    if (typeof detail !== 'object' || detail?.code !== 'FILE_NAME_CONFLICT') message.error(errorMessage);
     return Promise.reject(error);
   }
 );

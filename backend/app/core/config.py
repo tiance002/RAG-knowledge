@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     MEMORY_REDIS_URL: str | None = None
     CHROMA_DB_DIR: str = "./storage/chroma_db"
+    CHROMA_HOST: str | None = None
+    CHROMA_PORT: int = 8001
+    FILE_TASK_ARTIFACT_DIR: str | None = None
     UPLOAD_DIR: str = "./storage/uploads"
     IMAGE_DIR: str = "./storage/images"
 
@@ -76,7 +79,7 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str | None = None
     CELERY_RESULT_BACKEND: str | None = None
     CELERY_QUEUE_NAME: str = "amrag_ingest"
-    CELERY_WORKER_CONCURRENCY: int = 1
+    CELERY_WORKER_CONCURRENCY: int = 2
     CELERY_TASK_TIME_LIMIT: int = 3600
 
     # 任务配置
@@ -153,7 +156,8 @@ def ensure_directories():
     dirs = [
         settings.UPLOAD_DIR,
         settings.IMAGE_DIR,
-        settings.CHROMA_DB_DIR,
     ]
+    if not settings.CHROMA_HOST:
+        dirs.append(settings.CHROMA_DB_DIR)
     for d in dirs:
         os.makedirs(d, exist_ok=True)

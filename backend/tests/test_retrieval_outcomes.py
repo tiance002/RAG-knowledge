@@ -16,6 +16,7 @@ def service():
     svc = retrieval.RetrievalService.__new__(retrieval.RetrievalService)
     svc.cache = Mock()
     svc.vector_store = Mock()
+    svc._vector_scope = Mock(return_value=([], []))  # Transport test uses no SQL session.
     svc.bm25_index = Mock()
     svc._embed_query_for_kb = AsyncMock(return_value=[0.1])
     return svc

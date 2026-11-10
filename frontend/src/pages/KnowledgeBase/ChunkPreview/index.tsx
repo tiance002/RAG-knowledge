@@ -232,30 +232,10 @@ const ChunkPreview: React.FC = () => {
   const handleReParseProcess = async (config: ParseConfig) => {
       if (!fileId) return;
       try {
-          await parseFile(fileId, config);
-          message.success('已触发重新解析，完成后将自动入库');
-          // 这里我们只是触发了解析，但因为是直接入库，我们可以返回详情页让用户等待，
-          // 或者在此页面等待并自动 confirm。
-          // 既然用户选择了直接入库，我们应该让用户回到文件列表查看进度。
+          await parseFile(fileId, { ...config, auto_vectorize: true });
+          message.success('已提交重新解析和入库任务');
           setReconfigVisible(false);
           navigate(`/kb/${kbId}`);
-          
-          // 如果需要自动 vectorization，Detail 页面需要处理，或者我们在这里等待？
-          // 为了简单，我们只触发 parse。Detail 页面需要手动点击确认入库，除非我们传递状态。
-          // 但根据需求 "处理并入库"，应该自动。
-          // 我们可以调用 parseFile 后，再起一个后台任务监控？
-          // 或者让 Detail 页面的 polling 逻辑处理（如果我们在 parseFile 中传递了标记？API 不支持）。
-          // 既然是 "Re-parse Process"，我们其实可以复用 Detail 页面的逻辑。
-          // 但这里是 Preview 页面。
-          // 让我们在 Detail 页面实现自动处理逻辑（通过 autoProcessFileId）。
-          // 但这里 navigate 回去，Detail 页面并不知道。
-          
-          // 既然已经在 Preview 页面，我们可以等待解析完成，然后调用 vectorizeFile。
-          waitForParsing(fileId).then(async () => {
-             await vectorizeFile(fileId);
-             message.success('已开始向量化');
-          });
-          
       } catch (error) {
           message.error('提交失败');
       }
@@ -299,7 +279,12 @@ const ChunkPreview: React.FC = () => {
 
     setSaving(true);
     try {
-      await updateChunk(chunkId, { content });
+      const saved = await updateChunk(chunkId, { content, file_id: fileId });
+      if ('task_id' in saved.data) {
+        message.success('修改已提交，发布后生效。可在处理任务中查看进度');
+        setDetailModalVisible(false);
+        return;
+      }
       message.success('保存成功');
       setChunks((prev) =>
         prev.map((c) => (c.id === chunkId ? { ...c, content } : c))

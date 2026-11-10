@@ -43,7 +43,7 @@ def test_status_api_reports_rejection_without_losing_ready_index(monkeypatch, tm
     monkeypatch.setattr(parse, 'engine', engine)
     # Exercise HTTP validation + real index operation with a synchronous isolated
     # dispatcher. Celery delivery is covered by test_celery_dispatch separately.
-    def isolated_dispatch(file_id, operation, payload):
+    def isolated_dispatch(file_id, operation, payload, **options):
         try:
             if operation == "index": parse.process_submitted_chunks(file_id, payload["chunks_data"], vector_model=payload.get("vector_model"))
             else: parse.process_file_parsing(file_id, **payload)
@@ -108,13 +108,23 @@ def test_status_api_reports_rejection_without_losing_ready_index(monkeypatch, tm
         assert captured[-1][1][0]['heading_text'] == 'Section'
         with Session(engine) as session:
             assert session.get(DocumentChunk, 'old').content == 'old evidence'
+        edit = client.put('/chunks/old', json={'content': 'renewed evidence'})
+        assert edit.status_code == 200 and edit.json()['data']['task_id'] == 'fixture'
+        assert captured[-1][1][0]['content'] == 'renewed evidence'
+        assert client.put('/chunks/foreign', json={'content': 'unconfirmed preview'}).status_code == 200
+        with Session(engine) as session:
+            lexical = BM25Index()
+            assert lexical.search(session, 'renewed', 'kb') == []
+            assert [row['chunk_id'] for row in lexical.search(session, 'old', 'kb')] == ['old']
+            assert lexical.search(session, 'unconfirmed', 'kb') == []
         Store.fail_delete = True
-        assert client.delete('/files/ready').status_code == 500
-        assert source.exists() and client.get('/files/ready').json()['data']['chunk_count'] == 1
-        Store.fail_delete = False
         assert client.delete('/files/ready').status_code == 200
         assert not source.exists()
     with Session(engine) as session:
-        from app.models import IndexStats
+        from app.models import BM25Posting, IndexStats, FileIndexBuild
+        from sqlmodel import select
         assert session.get(DocumentChunk, 'old') is None
+        retired = session.exec(select(FileIndexBuild).where(FileIndexBuild.file_id == 'ready')).one()
+        assert retired.state == 'RETIRED' and '"old"' in retired.manifest
         assert session.get(IndexStats, 'kb').total_docs == 0
+        assert session.exec(select(BM25Posting)).all() == []

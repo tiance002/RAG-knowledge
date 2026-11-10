@@ -11,7 +11,10 @@ def source_member(chunk, seed, relation, source_path=None):
     """Describe an actually selected DB chunk; unknown locators stay unknown."""
     is_seed = str(chunk.id) == str(seed.get('id'))
     metadata = dict(seed.get('source_metadata') or {}) if is_seed else {}
-    if not is_seed and source_path and PurePath(source_path).suffix.lower() in {'.xlsx', '.csv'}:
+    if not is_seed and getattr(chunk, 'source_metadata_json', None):
+        import json
+        metadata = json.loads(chunk.source_metadata_json)
+    elif not is_seed and source_path and PurePath(source_path).suffix.lower() in {'.xlsx', '.csv'}:
         from app.services.pdf_provenance import source_metadata
         metadata = source_metadata(source_path, chunk.content, chunk.page_number, chunk.content_type)
     # Office/TXT index page placeholders are not verified source pagination.

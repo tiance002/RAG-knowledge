@@ -304,6 +304,22 @@ with c.base.isolated_redis(out) as redis_url:
  c.base.configure_runtime(m,out,redis_url)
  with g.installed():
   c.safety.assert_runtime_isolation(out,redis_url);c.base.build_index(m)
+  # Adapt the historical test transport to the current model timeout contract.
+  from contextlib import asynccontextmanager
+  from app.services.llm import LLMService
+  bind_original = g.bind_services
+  @asynccontextmanager
+  async def bind_current_services():
+   async with bind_original():
+    original_model = LLMService.get_chat_model
+    def model_with_timeout(service, *args, timeout=None, **kwargs):
+     model = original_model(service, *args, **kwargs)
+     if timeout is not None: model.request_timeout = timeout
+     return model
+    LLMService.get_chat_model = model_with_timeout
+    try: yield
+    finally: LLMService.get_chat_model = original_model
+  g.bind_services = bind_current_services
   skipped=asyncio.run(c.run_plan(m,out,g,selected))
 trials=c.rows((out/'trials.jsonl').read_bytes())
 assert len(trials)==2 and len(calls)==6 and all(row['state']=='RETURNED' for row in trials) and not skipped
@@ -313,7 +329,7 @@ assert len(c.verify_history(spec)[1])==6
 print(json.dumps({'sentinel_unchanged':True,'real_redis_trials':2,'real_provider_calls':0}))
 '''
     result=subprocess.run([sys.executable,'-c',code,str(PATH),str(source),str(tmp_path/'dry-run')],capture_output=True,text=True,
-                          encoding='utf-8',timeout=120,env=environment)
+                          encoding='utf-8',errors='replace',timeout=120,env=environment)
     assert result.returncode==0,(result.stdout[-2000:],result.stderr[-5000:])
     assert '"sentinel_unchanged": true' in result.stdout
 
@@ -444,6 +460,9 @@ def test_reuse_validates_and_copies_exact_frozen_index(tmp_path,monkeypatch):
 
 
 def test_lock_and_startup_failure_do_not_burn_grant(history,tmp_path,monkeypatch):
+    # Exercise the owned-runtime path with the fresh-process precondition.
+    monkeypatch.delitem(sys.modules, 'app.core.database', raising=False)
+    monkeypatch.delitem(sys.modules, 'app.core.config', raising=False)
     monkeypatch.setenv('M2_AB_API_KEY','synthetic')
     output=tmp_path/'out'; locks=tmp_path/'var/preferences-acceptance/m2-continuation-locks';locks.mkdir(parents=True)
     active=locks/(history['parent_manifest_sha256']+'.active');active.write_bytes(b'existing')

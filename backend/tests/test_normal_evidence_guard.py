@@ -18,16 +18,23 @@ class FakeSession:
 
 def collect(monkeypatch, results, status, kb_ids, question="根据知识库回答"):
     monkeypatch.setenv('RAG_GROUNDED_GENERATION', 'false')
+    from app.services import grounded_generation
+    monkeypatch.setattr(grounded_generation.get_settings(), 'FALLBACK_STRATEGY', 'fixed')
     monkeypatch.setattr(chat, "Session", FakeSession)
     service = chat.ChatService.__new__(chat.ChatService)
     async def generate_stream(**kwargs):
         yield "普通聊天内容"
-    service.llm_service = SimpleNamespace(generate_stream=generate_stream)
+    service._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    service._request_llm = SimpleNamespace(
+        model='fixture',
+        generate_stream=generate_stream,
+        understand_query=AsyncMock(return_value={'intent': 'greeting', 'rewrite_query': ''}),
+    )
     service._retrieve_with_new_service = AsyncMock(return_value=(results, {"retrieval_status": status}))
     async def run():
         return [event async for event in service._chat_stream_normal(
             [Message(role=MessageRole.USER, content=question)], kb_ids, 5, 0.1,
-            None, False, 0.0, None)]
+            None, False, 0.0, None, use_rewrite=not kb_ids)]
     return asyncio.run(run()), service
 
 

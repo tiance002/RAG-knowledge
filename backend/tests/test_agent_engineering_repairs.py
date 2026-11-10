@@ -231,6 +231,8 @@ def test_agent_sse_uses_global_mapping_and_discloses_usage_scope(monkeypatch, mi
                        'data': {'output': output}}
     monkeypatch.setattr(aw, 'AgentWorkflow', lambda: SimpleNamespace(app=App()))
     obj = chat.ChatService.__new__(chat.ChatService)
+    obj._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    obj._request_llm = SimpleNamespace(model='fixture', base_url='http://fixture', api_key='fixture')
     async def collect():
         return [item async for item in obj._chat_stream_langgraph(
             [Message(role=MessageRole.USER, content='q')], ['allowed'], 5, 0.1, None)]

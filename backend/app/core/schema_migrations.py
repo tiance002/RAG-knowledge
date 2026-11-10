@@ -11,8 +11,10 @@ ADDITIVE_COLUMNS = {
     "file_documents": {
         "original_name": "VARCHAR", "display_name": "VARCHAR",
         "sha256": "VARCHAR", "supersedes_file_id": "VARCHAR",
+        "desired_generation": "INTEGER NOT NULL DEFAULT 0",
+        "active_build_id": "VARCHAR", "deleted_at": "DATETIME",
     },
-    "document_chunks": {"start_offset": "INTEGER", "end_offset": "INTEGER"},
+    "document_chunks": {"start_offset": "INTEGER", "end_offset": "INTEGER", "source_metadata_json": "VARCHAR"},
 }
 
 
@@ -48,6 +50,10 @@ def apply_additive_schema_migrations(engine):
                     changes.append(f"{table}.{name}")
         if connection.exec_driver_sql("PRAGMA table_info(file_documents)").fetchall():
             connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_file_documents_sha256 ON file_documents (sha256)")
+        if "image_path" in {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(document_chunks)")}:
+            connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_document_chunks_image_path ON document_chunks(image_path)")
+    from app.core.file_task_migration import migrate_file_tasks
+    migrate_file_tasks(engine)
     return changes
 
 

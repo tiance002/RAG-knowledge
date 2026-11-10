@@ -15,6 +15,7 @@ def test_vector_observation_preserves_results(monkeypatch, tmp_path):
     monkeypatch.setenv('RAG_OBSERVATION_LOG', str(log))
     service = retrieval.RetrievalService.__new__(retrieval.RetrievalService)
     service.vector_store = SimpleNamespace(query=lambda **kwargs: [{'id': 'a', 'score': .8, 'content': 'private text'}])
+    service._vector_scope = lambda session, kb_id: (['a'], [])
     async def embed(*args):
         return [1.0]
     service._embed_query_for_kb = embed

@@ -18,19 +18,44 @@ class VectorCache:
   result=array('d');result.frombytes(row[1]);assert len(result)==row[0];return result.tolist()
 
 def bulk_bm25(session,kb_id,chunks):
- from app.models import ChunkIndex,IndexStats,generate_uuid
- from app.services.bm25 import tokenize
- from sqlalchemy import insert
- n=0;avg=0.;df=Counter();batch=[]
- for cid,text in chunks:
-  terms=Counter(tokenize(text))
-  if not terms:continue
-  length=sum(terms.values());avg=(avg*n+length)/(n+1);n+=1;df.update(terms.keys())
-  batch.append({'id':generate_uuid(),'chunk_id':cid,'kb_id':kb_id,'terms':json.dumps(terms,ensure_ascii=False),'doc_length':length})
-  if len(batch)==256:session.execute(insert(ChunkIndex),batch);batch=[]
- if batch:session.execute(insert(ChunkIndex),batch)
- if n:session.add(IndexStats(kb_id=kb_id,total_docs=n,avg_doc_length=avg,term_doc_freq=json.dumps(df,ensure_ascii=False)))
- session.commit()
+    """Build a fresh benchmark KB in one transaction, using its stored child chunks."""
+    from itertools import islice
+    from sqlmodel import select
+    from app.models import BM25Posting, ChunkIndex, DocumentChunk, FileDocument, IndexStats, generate_uuid
+    from app.services.bm25 import tokenize
+
+    if session.exec(select(ChunkIndex.id).where(ChunkIndex.kb_id == kb_id).limit(1)).first() or session.get(IndexStats, kb_id):
+        raise ValueError("bulk_bm25 requires a fresh benchmark index")
+    count, average, df = 0, 0., Counter()
+    chunks = iter(chunks)
+    while batch := list(islice(chunks, 256)):
+        owned = dict(session.exec(select(DocumentChunk.id, DocumentChunk.chunk_type)
+                     .join(FileDocument).where(FileDocument.kb_id == kb_id,
+                     DocumentChunk.id.in_([cid for cid, _ in batch]))).all())
+        indices, postings = [], []
+        for cid, content in batch:
+            if cid not in owned:
+                raise ValueError(f"BM25 benchmark chunk outside supplied KB: {cid}")
+            if owned[cid] == "parent":
+                continue
+            terms = Counter(tokenize(content))
+            if not terms:
+                continue
+            length = sum(terms.values())
+            average = (average * count + length) / (count + 1)
+            count += 1
+            df.update(terms.keys())
+            index_id = generate_uuid()
+            indices.append(dict(id=index_id, chunk_id=cid, kb_id=kb_id,
+                                terms=json.dumps(terms, ensure_ascii=False), doc_length=length))
+            postings.extend(dict(kb_id=kb_id, index_id=index_id, term=term, tf=tf) for term, tf in terms.items())
+        if indices:
+            session.execute(ChunkIndex.__table__.insert(), indices)
+            session.execute(BM25Posting.__table__.insert(), postings)
+    if count:
+        session.add(IndexStats(kb_id=kb_id, total_docs=count, avg_doc_length=average,
+                               term_doc_freq=json.dumps(df, ensure_ascii=False)))
+    session.commit()
 
 def verify_bulk_bm25():
  from sqlmodel import SQLModel,Session,create_engine,select

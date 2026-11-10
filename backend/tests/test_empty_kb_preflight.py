@@ -105,6 +105,7 @@ def test_http_sse_fault_is_explicit_and_does_not_retry(db, monkeypatch, failure)
         session.commit()
     monkeypatch.setenv('RAG_GROUNDED_GENERATION', 'true')
     monkeypatch.setattr(chat.ChatService, '__init__', lambda self: setattr(self, 'llm_service', MagicMock()))
+    monkeypatch.setattr(chat.ChatService, '_resolved_llm', lambda self, model_id: self.llm_service)
     evidence = [{'id': 'c1', 'file_id': 'ready', 'file_name': 'source.pdf', 'page_number': 1, 'content': 'Amount: 10 dollars'}]
     retrieve = AsyncMock(side_effect=RuntimeError('controlled fault') if failure == 'retrieval' else None,
                          return_value=(evidence, {'retrieval_status': 'SUCCESS'}))

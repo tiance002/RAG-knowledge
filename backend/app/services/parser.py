@@ -16,6 +16,7 @@ from docx.text.paragraph import Paragraph
 
 from app.core.config import get_settings
 from app.services.embedding import EmbeddingService
+from app.services.task_effect_context import raise_if_effect_error
 import asyncio
 
 try:
@@ -133,6 +134,7 @@ class TextSplitter:
                 )
                 print(f"🔧 [TextSplitter] 初始化 LangChain Token-based Splitter (chunk_size={self.chunk_size} tokens, 编码器=cl100k_base, 兼容 GPT-4/Qwen/DeepSeek)", flush=True)
             except Exception as e:
+                raise_if_effect_error(e)
                 print(f"⚠️ [TextSplitter] 初始化 LangChain Splitter 失败: {e}，回退到基于字符的切分", flush=True)
 
     def count_tokens(self, text: str) -> int:
@@ -213,6 +215,7 @@ class TextSplitter:
                 # RecursiveCharacterTextSplitter.split_text 返回 List[str]
                 return self.langchain_splitter.split_text(text)
             except Exception as e:
+                raise_if_effect_error(e)
                 print(f"❌ [TextSplitter] LangChain 切分失败: {e}，回退到规则切分", flush=True)
 
         # 回退到基于字符的切分逻辑
@@ -350,14 +353,14 @@ class StructuredSplitter:
     def _init_semantic_splitter(self):
         """初始化语义切分器"""
         # 优先使用传入的 base_url，否则使用全局配置
-        raw_base_url = self.embedding_base_url or settings.EMBEDDING_BASE_URL
+        raw_base_url = settings.EMBEDDING_BASE_URL if self.embedding_base_url is None else self.embedding_base_url
         
         # 清洗 base_url (EmbeddingService 内部也会处理，但为了 log 清晰)
         base_url = raw_base_url.rstrip("/")
         
         # 优先使用传入的模型，否则使用全局默认配置
-        model_name = self.embedding_model or settings.EMBEDDING_MODEL
-        api_key = self.embedding_api_key or settings.EMBEDDING_API_KEY
+        model_name = settings.EMBEDDING_MODEL if self.embedding_model is None else self.embedding_model
+        api_key = settings.EMBEDDING_API_KEY if self.embedding_api_key is None else self.embedding_api_key
         
         print(f"🔧 [StructuredSplitter] Initializing EmbeddingServiceAdapter with base_url: {base_url}, model: {model_name}, has_key: {bool(api_key)}")
         
@@ -450,6 +453,7 @@ class StructuredSplitter:
                         final_chunks.append(chunk)
                 return final_chunks
             except Exception as e:
+                raise_if_effect_error(e)
                 print(f"❌ [StructuredSplitter] 语义切分失败: {e}，回退到固定切分", flush=True)
                 # Fallback to fixed split below
         
@@ -823,9 +827,12 @@ class StructuredSplitter:
 class FileParser:
     """文件解析器"""
 
-    def __init__(self, kb_id: str):
+    def __init__(self, kb_id: str, *, image_namespace=None, parser_settings=None, audit_flat=False):
         self.kb_id = kb_id
-        self.image_dir = os.path.join(settings.IMAGE_DIR, kb_id)
+        self.settings = parser_settings or settings
+        self.audit_flat = audit_flat
+        self.image_prefix = kb_id if image_namespace is None else f"{kb_id}/{image_namespace}"
+        self.image_dir = os.path.join(self.settings.IMAGE_DIR, self.image_prefix)
         os.makedirs(self.image_dir, exist_ok=True)
 
     @observe("ingest.parser")
@@ -921,7 +928,7 @@ class FileParser:
         # 返回相对路径或文件名，用于前端展示和后续处理
         # 这里返回文件名，前端通过 /static/images/{kb_id}/{filename} 访问
         # 或者后端统一处理路径
-        return f"{self.kb_id}/{image_filename}"
+        return f"{self.image_prefix}/{image_filename}"
 
     def _process_text_content(self, text: str, page_num: int) -> List[ParsedChunk]:
         """处理文本内容（根据切分策略）"""
@@ -971,9 +978,9 @@ class FileParser:
         return chunks
 
     def _parse_pdf(self, file_path: str) -> List[ParsedChunk]:
-        if settings.PDF_PARSER_MODE == "legacy":
+        if self.settings.PDF_PARSER_MODE == "legacy":
             return self._parse_pdf_legacy(file_path)
-        if settings.PDF_PARSER_MODE != "enhanced":
+        if self.settings.PDF_PARSER_MODE != "enhanced":
             raise ValueError("PDF_PARSER_MODE_INVALID")
         from pathlib import Path
         from app.services.pdf_pipeline import parse_page
@@ -1013,9 +1020,9 @@ class FileParser:
                 raise ValueError('PDF_PASSWORD_REQUIRED')
             for page in doc:
                 result = parse_page(page, source_sha256=source_sha,
-                    tessdata=settings.PDF_TESSDATA_DIR, dpi=settings.PDF_OCR_DPI,
-                    scan_tables=settings.PDF_SCANNED_TABLES_ENABLED,
-                    tables_enabled=settings.PDF_TABLES_ENABLED)
+                    tessdata=self.settings.PDF_TESSDATA_DIR, dpi=self.settings.PDF_OCR_DPI,
+                    scan_tables=self.settings.PDF_SCANNED_TABLES_ENABLED,
+                    tables_enabled=self.settings.PDF_TABLES_ENABLED)
                 pages.append(result.record)
                 pending = []
                 events = [(p.locator.get('bbox', p.locator.get('table_bbox'))[1],
@@ -1050,7 +1057,7 @@ class FileParser:
                         pending.append(piece)
                 emit_text(pending)
         emit_text(aggregate)
-        self.pdf_manifest_path = write_manifest(settings.PDF_AUDIT_DIR, source_sha, pages, chunks)
+        self.pdf_manifest_path = write_manifest(self.settings.PDF_AUDIT_DIR, source_sha, pages, chunks, flat=self.audit_flat)
         if not chunks or all(p['status'] == 'failed' for p in pages):
             raise ValueError('PDF_NO_SEARCHABLE_CONTENT: see page diagnostics')
         if any(p['status'] in ('failed', 'partial') for p in pages):
@@ -1151,6 +1158,7 @@ class FileParser:
                             }
                         ))
                     except Exception as e:
+                        raise_if_effect_error(e)
                         print(f"PDF 图片提取失败 (Page {page_num}): {e}")
             
             # 页面结束处理
@@ -1271,6 +1279,7 @@ class FileParser:
                                         chunks.append(image_chunk)
                                         
                                 except Exception as e:
+                                    raise_if_effect_error(e)
                                     print(f"Word 图片提取失败: {e}")
             
             # 处理结构化模式的文本收集和标题提取
@@ -1349,6 +1358,7 @@ class FileParser:
                             # 转换为 Markdown，index=False 隐藏 pandas 索引，默认使用 columns 作为 headers
                             md_table = df.to_markdown(index=False)
                         except Exception as e:
+                            raise_if_effect_error(e)
                             # 降级处理：如果转换失败（如列数不一致），则不指定 columns
                             print(f"表格转换标准模式失败，降级处理: {e}")
                             df = pd.DataFrame(rows_data)
@@ -1534,7 +1544,7 @@ class FileParser:
                 f.write(image_bytes)
             
             # 相对路径: kb_id/standalone/filename
-            saved_path = f"{self.kb_id}/standalone/{image_filename}"
+            saved_path = f"{self.image_prefix}/standalone/{image_filename}"
             
             chunks.append(ParsedChunk(
                 content=f"[图片: {saved_path}]",
@@ -1548,6 +1558,7 @@ class FileParser:
                 }
             ))
         except Exception as e:
+            raise_if_effect_error(e)
             print(f"Error parsing image file {file_path}: {e}")
             # 如果出错，可能返回空或者抛出异常
             raise e
@@ -1614,7 +1625,7 @@ class FileParser:
                         metadata={"source_locator": locator, "currency_format_status": format_status,
                                   "currency_formats": formats},
                     ))
-        write_manifest(settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1")
+        write_manifest(self.settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1", flat=self.audit_flat)
         return chunks
 
     def _parse_csv(self, file_path: str) -> List[ParsedChunk]:
@@ -1634,5 +1645,5 @@ class FileParser:
                 content=rows.to_markdown(index=False), page_number=i // 20 + 1,
                 content_type="table", metadata={"source_locator": locator},
             ))
-        write_manifest(settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1")
+        write_manifest(self.settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1", flat=self.audit_flat)
         return chunks

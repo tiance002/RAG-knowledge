@@ -5,6 +5,11 @@ from test_e20_context_delivery import db, seed_row, build
 
 
 def test_same_local_parent_never_crosses_file_or_kb(db):
+    # A parent must exist in the same file before its context can be delivered.
+    db.add(DocumentChunk(id='parent', file_id='file', chunk_type='parent',
+                         content='SEED_PART\nSIBLING_GOLD'))
+    db.get(DocumentChunk, 'seed').parent_id = 'parent'
+    db.get(DocumentChunk, 'sibling').parent_id = 'parent'
     db.add(KnowledgeBase(id='other-kb', name='Other', embedding_model='none', vlm_model='none'))
     db.add_all([FileDocument(id='same-kb-file', kb_id='kb', name='other.txt', local_path='none', size=0), FileDocument(id='other-file', kb_id='other-kb', name='other.txt', local_path='none', size=0)])
     db.add_all([DocumentChunk(id='wrong-file', file_id='same-kb-file', parent_id='parent', original_index=0, content='WRONG_FILE'), DocumentChunk(id='wrong-kb', file_id='other-file', parent_id='parent', original_index=0, content='WRONG_KB')])
@@ -80,7 +85,7 @@ def test_authorized_scope_rejects_forged_seed(db):
 
 
 def test_seed_larger_than_limit_is_explicitly_omitted(db):
-    row=rerank.expand_context([seed_row()],db,window_size=0,max_parent_length=3,include_source_members=True)[0]
+    row=rerank.expand_context([seed_row()],db,window_size=0,max_context_chars=3,include_source_members=True)[0]
     assert row['content'] == '' and row['original_content'] == ''
     assert row['context_group']['truncation_status']=='SEED_OMITTED_OVER_LIMIT'
 
@@ -90,6 +95,7 @@ def test_hybrid_empty_or_failure_does_not_repeat_vector_call(monkeypatch):
     from unittest.mock import AsyncMock, Mock
     from app.services.retrieval import RetrievalService
     service=RetrievalService.__new__(RetrievalService)
+    service._vector_scope=lambda session,kb_id: (['c'], [])  # Transport double; authorization tested separately.
     service._embed_query_for_kb=AsyncMock(return_value=[1.0])
     service.vector_store=SimpleNamespace(query=Mock(side_effect=RuntimeError('synthetic storage error')))
     service.bm25_index=SimpleNamespace(search=Mock(return_value=[]))
@@ -144,6 +150,7 @@ def test_hybrid_route_failures_have_distinct_statuses(vector,bm25,expected,capsy
     from types import SimpleNamespace
     from app.services.retrieval import RetrievalService
     service=RetrievalService.__new__(RetrievalService)
+    service._vector_scope=lambda session,kb_id: (['c'], [])  # Transport double; authorization tested separately.
     service._embed_query_for_kb=AsyncMock(return_value=[1.])
     service.vector_store=SimpleNamespace(query=Mock(side_effect=vector if isinstance(vector,Exception) else None,return_value=vector if isinstance(vector,list) else None))
     service.bm25_index=SimpleNamespace(search=Mock(side_effect=bm25 if isinstance(bm25,Exception) else None,return_value=bm25 if isinstance(bm25,list) else None))
@@ -163,6 +170,7 @@ def test_hybrid_postprocessing_failure_does_not_reissue_vector(capsys):
     from unittest.mock import AsyncMock,Mock
     from app.services.retrieval import RetrievalService
     service=RetrievalService.__new__(RetrievalService)
+    service._vector_scope=lambda session,kb_id: (['c'], [])  # Transport double; authorization tested separately.
     service._embed_query_for_kb=AsyncMock(return_value=[1.])
     service.vector_store=SimpleNamespace(query=Mock(return_value=[{'id':'c','score':.8}]))
     service.bm25_index=SimpleNamespace(search=Mock(return_value=[]))
@@ -242,11 +250,14 @@ def test_recall_expansion_exception_http_reports_seed_fallback(db,monkeypatch):
 
 def test_chat_sse_exposes_expansion_exception_seed_fallback(monkeypatch):
     import asyncio
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from app.schemas import Message,MessageRole
     from app.services import chat
     service=chat.ChatService.__new__(chat.ChatService)
-    service.llm_service=None
+    service._request_settings=SimpleNamespace(max_chat_history_rounds=20)
+    service._request_llm=SimpleNamespace(model='fixture')
+    monkeypatch.setenv('RAG_GROUNDED_GENERATION', 'false')
     service._retrieve_with_new_service=AsyncMock(return_value=([seed_row()],{'retrieval_status':'UNKNOWN','expansion_delivery_status':'SEED_ONLY'}))
     class FakeSession:
         def __init__(self,*args): pass

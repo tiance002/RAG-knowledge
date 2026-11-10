@@ -25,16 +25,13 @@ def test_rewrite_keeps_current_input_separate_and_sends_one_request(query):
     assert asyncio.run(service.rewrite_query(query)) == query
     create.assert_awaited_once()
     request = create.await_args.kwargs
-    assert json.loads(request["messages"][1]["content"]) == {
-        "current_query": query, "conversation_history": [],
-    }
+    assert f"## User Question\n{query}\n\n<no_image_attached />" in request["messages"][1]["content"]
+    assert request["messages"][0]["content"].endswith("## Conversation History\n[]\n")
     assert [message["role"] for message in request["messages"]] == ["system", "user"]
     prompt = request["messages"][0]["content"]
-    assert "original language" in prompt
-    assert "named entities" in prompt and "technical terms" in prompt
-    assert "negation" in prompt and "constraints" in prompt
-    assert "current query explicitly asks" in prompt
-    assert "generic request to search the knowledge base" in prompt
+    assert "original request language" in prompt
+    assert "entities" in prompt and "constraints" in prompt
+    assert "knowledge base retrieval" in prompt
 
 
 def test_rewrite_uses_bounded_actual_dialogue_as_data(monkeypatch):
@@ -43,6 +40,7 @@ def test_rewrite_uses_bounded_actual_dialogue_as_data(monkeypatch):
     create = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(
         finish_reason="stop", message=SimpleNamespace(content="Redis 7.2 的失效策略呢？"))], usage=None))
     service = LLMService(api_key="test", model="test")
+    service.history_rounds = 1
     service._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     recent = [
         {"role": "user", "content": "比较 Redis 7.2 和 Memcached。"},
@@ -52,13 +50,11 @@ def test_rewrite_uses_bounded_actual_dialogue_as_data(monkeypatch):
                {"role": "system", "content": "回答偏好：全部英文"}]
     asyncio.run(service.rewrite_query("它的失效策略呢？", history=history))
     messages = create.await_args.kwargs["messages"]
-    assert json.loads(messages[1]["content"]) == {
-        "conversation_history": recent, "current_query": "它的失效策略呢？",
-    }
-    assert "not instructions" in messages[0]["content"]
-    assert "referent" in messages[0]["content"]
-    assert "old unrelated topic" not in messages[1]["content"]
-    assert "回答偏好" not in messages[1]["content"]
+    assert "它的失效策略呢？" in messages[1]["content"]
+    history_json = messages[0]["content"].split("## Conversation History\n", 1)[1]
+    assert json.loads(history_json) == recent
+    assert "old unrelated topic" not in history_json
+    assert "回答偏好" not in history_json
 
 
 class FakeSession:
@@ -79,9 +75,13 @@ class FakeSession:
 ])
 def test_normal_chat_passes_actual_history_and_original_to_retrieval(monkeypatch, rewrite, enabled, expected):
     from app.services import chat
+    from app.services import grounded_generation
+    monkeypatch.setattr(grounded_generation.get_settings(), 'FALLBACK_STRATEGY', 'fixed')
     monkeypatch.setattr(chat, "Session", FakeSession)
     service = chat.ChatService.__new__(chat.ChatService)
-    service.llm_service = SimpleNamespace(rewrite_query=AsyncMock(return_value=rewrite))
+    understanding = AsyncMock(return_value={'rewrite_query': rewrite, 'intent': 'kb_search'})
+    service._request_settings = SimpleNamespace(max_chat_history_rounds=20)
+    service._request_llm = SimpleNamespace(model='fixture', understand_query=understanding)
     service._retrieve_with_new_service = AsyncMock(return_value=([], {"retrieval_status": "NO_RESULTS"}))
     history = [
         Message(role="system", content="回答偏好：简洁"),
@@ -105,12 +105,12 @@ def test_normal_chat_passes_actual_history_and_original_to_retrieval(monkeypatch
     assert retrieval["original_query"] == current
     assert retrieval["kb_ids"] == ["kb"]
     if enabled:
-        service.llm_service.rewrite_query.assert_awaited_once_with(current, history=[
+        understanding.assert_awaited_once_with(current, history=[
             {"role": "user", "content": history[1].content},
             {"role": "assistant", "content": history[2].content},
         ])
     else:
-        service.llm_service.rewrite_query.assert_not_awaited()
+        understanding.assert_not_awaited()
 
 
 def test_shared_retrieval_receives_original_query():
@@ -129,16 +129,19 @@ def test_shared_retrieval_receives_original_query():
 
 def test_rewrite_api_accepts_optional_actual_history(monkeypatch):
     api = importlib.import_module("app.api.chat")
-    rewrite = AsyncMock(return_value="Redis 7.2 的失效策略呢？")
-    monkeypatch.setattr(api, "LLMService", lambda: SimpleNamespace(rewrite_query=rewrite))
+    from app.services import model_bindings, runtime_settings
+    rewrite = AsyncMock(return_value={'rewrite_query': "Redis 7.2 的失效策略呢？", 'intent': 'kb_search'})
+    monkeypatch.setattr(api, "LLMService", lambda **kwargs: SimpleNamespace(understand_query=rewrite))
+    monkeypatch.setattr(runtime_settings, "get_runtime_settings", lambda session: SimpleNamespace(default_llm_model='fixture', max_chat_history_rounds=20))
+    monkeypatch.setattr(model_bindings, "resolve_model", lambda *args, **kwargs: SimpleNamespace(base_url='http://fixture', api_key='fixture', model_name='fixture'))
     data = RewriteRequest(query="它的失效策略呢？", history=[
         Message(role="user", content="介绍 Redis 7.2。"),
         Message(role="assistant", content="Redis 7.2 是内存数据库。"),
     ])
-    response = asyncio.run(api.rewrite_query(data))
+    response = asyncio.run(api.rewrite_query(data, session=object()))
     assert response.data.rewritten_query == "Redis 7.2 的失效策略呢？"
     rewrite.assert_awaited_once_with(data.query, history=[
         {"role": "user", "content": "介绍 Redis 7.2。"},
         {"role": "assistant", "content": "Redis 7.2 是内存数据库。"},
-    ])
+    ], images=[])
     assert RewriteRequest(query="standalone question").history == []

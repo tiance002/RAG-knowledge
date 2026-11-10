@@ -148,6 +148,8 @@ async def delete_knowledge_base(
     session: Session = Depends(get_session),
 ):
     """删除知识库（移入回收站）"""
+    from app.api.files import begin_file_mutation, reject_busy_files
+    begin_file_mutation(session)
     kb = session.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(
@@ -155,6 +157,7 @@ async def delete_knowledge_base(
             detail={"code": 40401, "message": "知识库不存在"},
         )
 
+    reject_busy_files(session, select(FileDocument.id).where(FileDocument.kb_id == kb_id))
     kb.is_deleted = True
     session.add(kb)
     session.commit()
@@ -188,6 +191,9 @@ async def permanent_delete_knowledge_base(
     session: Session = Depends(get_session),
 ):
     """永久删除知识库"""
+    from app.api.files import begin_file_mutation, reject_busy_files
+    from app.services.index_builds import retire_file_builds
+    begin_file_mutation(session)
     kb = session.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(
@@ -195,26 +201,20 @@ async def permanent_delete_knowledge_base(
             detail={"code": 40401, "message": "知识库不存在"},
         )
 
-    # 删除向量库
-    try:
-        vector_service = VectorStoreService()
-        vector_service.delete_collection(kb_id)
-    except Exception:
-        pass  # 忽略向量库删除错误
+    reject_busy_files(session, select(FileDocument.id).where(FileDocument.kb_id == kb_id))
 
     # 删除数据库记录（手动级联删除文件和 chunks）
     from app.models import DocumentChunk
+    from app.services.bm25 import BM25Index
+    BM25Index.clear_kb_index(session, kb_id)
     
     # 获取所有文件
     files = session.exec(select(FileDocument).where(FileDocument.kb_id == kb_id)).all()
+    from app.services.file_retirement import retire_source, clean_source, retire_collection
+    sources = [retire_source(session, doc) for doc in files]
+    retire_collection(session, kb_id)
     for file_doc in files:
-        # 删除物理文件
-        if os.path.exists(file_doc.local_path):
-            try:
-                os.remove(file_doc.local_path)
-            except OSError:
-                pass
-        
+        retire_file_builds(session, file_doc.id)
         # 删除 chunks
         chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_doc.id)).all()
         for chunk in chunks:
@@ -224,5 +224,7 @@ async def permanent_delete_knowledge_base(
 
     session.delete(kb)
     session.commit()
+    for retirement_id in sources:
+        clean_source(session.get_bind(), retirement_id)
     
     return ApiResponse(message="永久删除成功")

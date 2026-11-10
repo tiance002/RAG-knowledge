@@ -35,6 +35,7 @@ import {
 import type { UploadProps, TabsProps } from 'antd';
 import { PageHeader } from '@/components/common';
 import RecallTest from '../RecallTest';
+import TaskMonitor from '@/file-tasks/TaskMonitor';
 import ParseModal, { ParseConfig } from './ParseModal';
 import {
   getKnowledgeBaseDetail,
@@ -464,6 +465,7 @@ const KnowledgeBaseDetail: React.FC = () => {
 
   // Tab 配置
   const tabItems: TabsProps['items'] = [
+    { key: 'tasks', label: '处理任务', children: kbId && activeTab === 'tasks' ? <TaskMonitor key={kbId} kbId={kbId} /> : null },
     {
       key: 'files',
       label: '文件管理',

@@ -3,6 +3,7 @@
  */
 
 import request from './request';
+import { submitOnce } from '../file-tasks/requestKey';
 import type {
   FileInfo,
   FileUploadResponse,
@@ -77,14 +78,16 @@ export const getFileChunks = async (fileId: string): Promise<ApiResponse<ChunkIn
 /** 更新 Chunk 内容 */
 export const updateChunk = (
   chunkId: string,
-  data: UpdateChunkRequest
-): Promise<ApiResponse<ChunkInfo>> => {
-  return request.put(`/chunks/${chunkId}`, data);
+  data: UpdateChunkRequest & { file_id?: string }
+): Promise<ApiResponse<ChunkInfo | { task_id: string }>> => {
+  return submitOnce(`edit/${chunkId}`, data, key =>
+    request.put(`/chunks/${chunkId}`, data, { headers: { 'Idempotency-Key': key } }));
 };
 
 /** 确认入库（触发向量化） */
-export const vectorizeFile = (fileId: string): Promise<ApiResponse<void>> => {
-  return request.post(`/files/${fileId}/vectorize`);
+export const vectorizeFile = (fileId: string): Promise<ApiResponse<{ task_id: string }>> => {
+  return submitOnce(`index/${fileId}`, null, key =>
+    request.post(`/files/${fileId}/vectorize`, undefined, { headers: { 'Idempotency-Key': key } }));
 };
 
 /** 提交分块结果（用于预览模式确认） */
@@ -92,8 +95,10 @@ export const submitChunks = (
   fileId: string,
   chunks: any[],
   vector_model?: string
-): Promise<ApiResponse<void>> => {
-  return request.post(`/files/${fileId}/chunks/submit`, { chunks, vector_model });
+): Promise<ApiResponse<{ task_id: string }>> => {
+  const data = { chunks, vector_model };
+  return submitOnce(`submit/${fileId}`, data, key =>
+    request.post(`/files/${fileId}/chunks/submit`, data, { headers: { 'Idempotency-Key': key } }));
 };
 
 /** 手动触发文件解析 (支持带配置) */
@@ -103,6 +108,7 @@ export const parseFile = (fileId: string, config?: {
   chunk_overlap?: number; 
   preview?: boolean;
   auto_vectorize?: boolean; // 新增：是否自动向量化
-}): Promise<ApiResponse<void>> => {
-  return request.post(`/files/${fileId}/parse`, config);
+}): Promise<ApiResponse<{ task_id: string }>> => {
+  return submitOnce(`parse/${fileId}`, config, key =>
+    request.post(`/files/${fileId}/parse`, config, { headers: { 'Idempotency-Key': key } }));
 };

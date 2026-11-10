@@ -16,7 +16,8 @@ def service(monkeypatch):
     monkeypatch.setattr(memory, 'get_memory_service', lambda:
                         SimpleNamespace(get_preferences=AsyncMock(return_value=prefs)))
     instance = chat.ChatService.__new__(chat.ChatService)
-    instance.llm_service = SimpleNamespace(model='offline-model')
+    monkeypatch.setattr(instance, '_resolved_llm', lambda model_id: SimpleNamespace(model='offline-model'))
+    monkeypatch.setattr(chat, '_resolve_knowledge_scope', lambda kb_ids: ['synthetic-kb'])
     return instance
 
 

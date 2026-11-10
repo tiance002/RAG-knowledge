@@ -65,12 +65,13 @@ def test_explicit_source_request_routes_to_qa_without_model(question):
     workflow._get_llm_service.assert_not_called()
 
 
-def test_greeting_remains_chat_fast_path():
+def test_completed_greeting_understanding_routes_to_chat_without_second_classifier():
     from unittest.mock import Mock
     from langchain_core.messages import HumanMessage
     workflow = agent_workflow.AgentWorkflow.__new__(agent_workflow.AgentWorkflow)
     workflow._get_llm_service = Mock(side_effect=AssertionError("must not call intent model"))
-    result = asyncio.run(workflow.analyze_intent({"messages": [HumanMessage(content="你好")]}, {}))
+    result = asyncio.run(workflow.analyze_intent({"messages": [HumanMessage(content="你好")],
+                                                   "understanding_intent": "chat"}, {}))
     assert result["intent"] == "chat"
     workflow._get_llm_service.assert_not_called()
 
