@@ -9,9 +9,9 @@ from typing import List, Dict, Any, AsyncGenerator, Tuple
 from app.schemas import Message
 from app.services.llm import LLMService, is_unknown_provider_error, should_abort_provider_error, provider_error_payload
 
-from app.services.rerank import RerankService, batch_rerank, expand_context
+from app.services.rerank import RerankService, async_batch_rerank, expand_context
 from app.services.retrieval import get_retrieval_service
-from app.services.conversation_history import bound_conversation
+from app.services.conversation_history import bound_conversation, message_role
 from app.services.runtime_settings import get_runtime_settings
 from app.services.model_bindings import resolve_model
 
@@ -25,6 +25,16 @@ import time
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+
+def _has_prior_conversation(messages):
+    # Read only role metadata from raw input before history trimming.
+    current = next((i for i in range(len(messages) - 1, -1, -1)
+                    if message_role(messages[i]) == 'user'), None)
+    if current is None:
+        return True
+    return any(message_role(item) in ('user', 'assistant') for item in messages[:current])
 
 
 def _resolve_knowledge_scope(kb_ids: List[str]) -> List[str]:
@@ -135,7 +145,7 @@ class ChatService:
 
             rerank_service = RerankService(session)
             original_results = results
-            results = batch_rerank(
+            results = await async_batch_rerank(
                 query=query,
                 candidates=results,
                 rerank_service=rerank_service,
@@ -467,6 +477,50 @@ class ChatService:
                             original_count=original_count, added_count=len(added),
                             locators=[{'file_id': x['fileId'], 'page': x['source_metadata']['page'],
                                        'table_bbox': x['source_metadata']['table_bbox']} for x in added])
+            from app.services.grounded_generation import grounded_stream_enabled, stream_grounded_candidate
+            if grounded_stream_enabled():
+                from contextlib import aclosing
+                streamed_text = []
+                final = {}
+                chat_messages = [{"role": msg.role.value, "content": msg.content} for msg in messages]
+                stream = stream_grounded_candidate(current_llm_service, chat_messages, citations,
+                    model_id=actual_model_id, spreadsheet_context=spreadsheet_context,
+                    pdf_context=pdf_context, preference_policy=preference_policy)
+                try:
+                    async with aclosing(stream):
+                        async for kind, value in stream:
+                            if kind == 'chunk':
+                                streamed_text.append(value)
+                                yield ('answer_chunk', {'content': value})
+                            elif kind == 'complete':
+                                final = value
+                except Exception as exc:
+                    trace_event('qa.error', status='UNKNOWN' if is_unknown_provider_error(exc) else 'FAILED',
+                                error_type=type(exc).__name__, response_delivery='streaming')
+                    error = provider_error_payload(exc, stage='grounded_answer')
+                    error['generation_status'] = 'UNKNOWN' if error.get('status') == 'UNKNOWN' else 'FAILED'
+                    error['partial'] = bool(streamed_text)
+                    error['response_delivery'] = 'streaming'
+                    yield ('error', error)
+                    return
+                finish = final.get('finish_reason')
+                usage = final.get('usage')
+                content = ''.join(streamed_text)
+                generation_status = ('TRUNCATED' if finish == 'length' else
+                                     'UNKNOWN' if finish != 'stop' else
+                                     'EMPTY' if not content.strip() else 'COMPLETED')
+                trace_event('qa.validation', status='NOT_RUN', reason_codes=['owner_disabled'])
+                trace_event('qa.answer', answer_mode='GROUNDED_GENERATION', validation_status='NOT_RUN',
+                            semantic_relevance='UNKNOWN', answer_completeness='UNKNOWN', response_delivery='streaming')
+                if generation_status == 'COMPLETED' and omitted_images:
+                    yield ('answer_chunk', {'content': '\n\n另有图片资料，其内容需要进一步核验。'})
+                yield ('done', {'usage': usage or {}, 'usage_status': 'PROVIDER_REPORTED' if usage else 'UNKNOWN',
+                                'response_delivery': 'streaming', 'retrieval_status': status, 'degraded': bool(metrics.get('degraded')),
+                                'fallback_used': bool(metrics.get('fallback_used')),
+                                'answer_mode': 'GROUNDED_GENERATION', 'generation_status': generation_status,
+                                'validation_status': 'NOT_RUN', 'source_mapping_status': context_summary['source_mapping_status'],
+                                'expansion_delivery_status': context_summary['expansion_delivery_status']})
+                return
             try:
                 chat_messages = [{"role": msg.role.value, "content": msg.content} for msg in messages]
                 generation_options = {'model_id': actual_model_id}
@@ -631,8 +685,12 @@ class ChatService:
             "context_window": kwargs.get("context_window", 1),
         }
 
+        prior = kwargs.get('has_prior_conversation')
+        if type(prior) is not bool:
+            prior = _has_prior_conversation(messages)
         initial_state = {
             "messages": langchain_messages,
+            "has_prior_conversation": prior,
             "kb_ids": kb_ids,
             "search_params": search_params,
             "retry_count": 0,
@@ -693,7 +751,7 @@ class ChatService:
                     node_name = event.get("metadata", {}).get("langgraph_node")
                     
                     # 监听所有关键节点的输出
-                    if node_name in ["intent_analysis", "agent", "tools", "grading", "process_tool_output", "generate_chat"]:
+                    if node_name in ["intent_analysis", "agent", "tools", "direct_retrieval", "grading", "process_tool_output", "generate_chat"]:
                         output = data.get("output")
                         if output and isinstance(output, dict):
                             for key in ('validation_status', 'grading_status', 'grading_scope',
@@ -741,7 +799,7 @@ class ChatService:
                                              has_streamed = True # 避免重复
                             
                             # 处理 citations (只有变化时才发送)
-                            citations = (output.get('source_registry') if node_name == 'tools' else
+                            citations = (output.get('source_registry') if node_name in ('tools', 'direct_retrieval') else
                                          output.get('citations') if node_name == 'agent' else None)
                             if citations and citations != last_citations:
                                 yield ("rag_result", {
@@ -883,6 +941,7 @@ class ChatService:
                              'stage': 'query_understanding', 'retryable': False})
             return
 
+        has_prior_conversation = _has_prior_conversation(messages)
         from app.services.memory import get_memory_service, MemoryUnavailable
         from app.services.memory_commands import parse_preference_commands, apply_preference_commands, resolve_display_preferences, normalize_preference_history
         memory_service = get_memory_service()
@@ -982,6 +1041,7 @@ class ChatService:
                 context_window=context_window,
                 preference_policy=preference_policy,
                 use_rewrite=use_rewrite,
+                has_prior_conversation=has_prior_conversation,
             ):
                 yield item
         else:

@@ -185,6 +185,7 @@ def test_embedding_http_attempt_and_header(monkeypatch):
     class Client:
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
+        async def aclose(self): pass
         async def post(self, *args, **kwargs): return await post(*args, **kwargs)
     monkeypatch.setattr(embedding.httpx, "AsyncClient", lambda **kwargs: Client())
     service = embedding.EmbeddingService(base_url="https://example.invalid", api_key="secret", model="embed")
@@ -218,6 +219,7 @@ def test_embedding_timeout_stops_sequential_batch(monkeypatch):
     class Client:
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
+        async def aclose(self): pass
         async def post(self, *args, **kwargs): return await send(*args, **kwargs)
     monkeypatch.setattr(embedding.httpx, "AsyncClient", lambda **kwargs: Client())
     service = embedding.EmbeddingService(base_url="https://example.invalid/api/embeddings", api_key="secret", model="embed")

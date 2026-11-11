@@ -10,6 +10,8 @@ import requests
 from typing import List, Dict, AsyncGenerator, Any
 from langchain_openai import ChatOpenAI
 import logging
+import sys
+import os
 import json
 import time
 import uuid
@@ -21,6 +23,7 @@ from types import SimpleNamespace
 from openai import APIStatusError
 
 from app.core.config import get_settings
+from app.services.provider_http import ProviderBorrowingTransport
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -82,6 +85,8 @@ def _provider_attempt_recorded(stage: str, model: str, *, stream: bool = False):
     attempt = {"local_request_id": uuid.uuid4().hex, "stage": stage, "model": _safe_model(model), "attempt_count": 1, "provider_request_id": None}
     started = time.monotonic()
     event("provider.request_started", **attempt)
+    # Usage is attached only from a provider response, never estimated.
+    attempt["usage_status"] = "UNKNOWN"
     try:
         yield attempt
     except BaseException as exc:
@@ -140,6 +145,75 @@ def _response_usage(response):
     return result or None
 
 
+
+def _numeric_usage(usage):
+    """Normalize only actual nonnegative provider counters; never fill gaps."""
+    if hasattr(usage, 'model_dump'):
+        usage = usage.model_dump()
+    if not isinstance(usage, dict):
+        return {}, []
+    result, invalid = {}, []
+    aliases = {'input_tokens': ('input_tokens', 'prompt_tokens'),
+               'output_tokens': ('output_tokens', 'completion_tokens'),
+               'total_tokens': ('total_tokens',)}
+    for canonical, names in aliases.items():
+        values = [usage[name] for name in names if name in usage and usage[name] is not None]
+        if not values:
+            continue
+        if any(type(value) is not int or value < 0 for value in values) or len(set(values)) != 1:
+            invalid.append(canonical)
+            continue
+        result[canonical] = values[0]
+    return result, invalid
+
+
+def attach_provider_usage(attempt, response=None, *, raw_usage=None):
+    """Add numeric provider usage to the existing attempt, fail open.
+
+    HTTP JSON is read only when the response body was already consumed. Raw
+    text, credentials, nested metadata and inferred token values are excluded.
+    """
+    try:
+        if raw_usage is None and response is not None:
+            if isinstance(response, httpx.Response):
+                if not response.is_stream_consumed:
+                    return
+                body = response.json()
+                raw_usage = body.get('usage') if isinstance(body, dict) else None
+            elif isinstance(response, requests.Response):
+                if response._content is False or response._content is None:
+                    return
+                body = response.json()
+                raw_usage = body.get('usage') if isinstance(body, dict) else None
+            else:
+                raw_usage, status = trace_response_usage(response)
+                if status != 'PROVIDER_REPORTED':
+                    return
+        numeric, invalid = _numeric_usage(raw_usage)
+        current = dict(attempt.get('usage') or {})
+        invalid_fields = set(attempt.get('usage_invalid_fields') or ()) | set(invalid)
+        for key in invalid_fields:
+            current.pop(key, None)
+        for key, value in numeric.items():
+            if key in invalid_fields:
+                continue
+            if key in current and current[key] != value:
+                invalid_fields.add(key)
+                current.pop(key, None)
+            else:
+                current[key] = value
+        if current:
+            attempt['usage'] = current
+            attempt['usage_status'] = 'PROVIDER_REPORTED'
+        else:
+            attempt.pop('usage', None)
+            attempt['usage_status'] = 'UNKNOWN'
+        if invalid_fields:
+            attempt['usage_invalid_fields'] = sorted(invalid_fields)
+    except Exception:
+        pass
+
+
 def _completion_status(finish_reason):
     return 'TRUNCATED' if finish_reason == 'length' else 'UNKNOWN' if finish_reason is None else 'RETURNED'
 
@@ -190,13 +264,50 @@ def _langchain_messages(messages):
     return rows
 
 
-async def invoke_provider_http_async(send, *, stage, model_name):
-    with provider_attempt(stage, model_name) as attempt:
+async def invoke_provider_http_async(send, *, stage, model_name, check_status=True, messages=None, model_parameters=None):
+    from app.services.observability import native_enabled
+    context = (provider_generation(stage, model_name, messages, **(model_parameters or {}))
+               if native_enabled() and messages is not None else None)
+    if context is None:
+        with provider_attempt(stage, model_name) as attempt:
+            response = await send()
+            attempt["provider_request_id"] = _provider_id(response)
+            attach_provider_usage(attempt, response)
+            from app.services.task_effect_context import record_provider_id
+            record_provider_id(attempt["provider_request_id"], getattr(response, "status_code", None))
+            if check_status:
+                response.raise_for_status()
+            return response
+    with context as (attempt, observation):
         response = await send()
         attempt["provider_request_id"] = _provider_id(response)
+        attach_provider_usage(attempt, response)
         from app.services.task_effect_context import record_provider_id
-        record_provider_id(attempt["provider_request_id"], response.status_code)
-        response.raise_for_status()
+        record_provider_id(attempt["provider_request_id"], getattr(response, "status_code", None))
+        if check_status:
+            response.raise_for_status()
+        if observation is not None:
+            try:
+                choices = getattr(response, 'choices', None)
+                if choices is not None:
+                    choice = choices[0] if choices else None
+                    text = getattr(getattr(choice, 'message', None), 'content', None)
+                    finish = getattr(choice, 'finish_reason', None)
+                    usage = _response_usage(response)
+                else:
+                    data = response.json()
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    choice = (data.get('choices') or [{}])[0]
+                    text = (choice.get('message') or {}).get('content')
+                    finish = choice.get('finish_reason')
+                    usage = _response_usage(SimpleNamespace(usage=data.get('usage')))
+                code = getattr(response, 'status_code', None)
+                status = 'FAILED' if isinstance(code, int) and not 200 <= code < 300 else _completion_status(finish)
+                _update_generation(observation, output=capture(text, content_role='provider_response') if text is not None else None,
+                                   usage=usage, finish_reason=finish, execution_status=status)
+            except Exception:
+                _update_generation(observation, execution_status='UNKNOWN')
         return response
 
 
@@ -206,12 +317,14 @@ def invoke_provider_http(send, *, stage, model_name, check_status=True, messages
         with provider_attempt(stage, model_name) as attempt:
             response = send()
             attempt["provider_request_id"] = _provider_id(response)
+            attach_provider_usage(attempt, response)
             if check_status:
                 response.raise_for_status()
             return response
     with provider_generation(stage, model_name, messages, **(model_parameters or {})) as (attempt, observation):
         response = send()
         attempt["provider_request_id"] = _provider_id(response)
+        attach_provider_usage(attempt, response)
         if check_status:
             response.raise_for_status()
         if observation is not None:
@@ -256,6 +369,7 @@ async def invoke_provider_model(model, messages, *, config, stage, model_name, t
         with provider_attempt(stage, model_name) as attempt:
             response = await invoke_once(config)
             attempt["provider_request_id"] = _provider_id(response)
+            attach_provider_usage(attempt, response)
             from app.services.metrics import record_provider_usage
             record_provider_usage(stage, getattr(response, "usage_metadata", None))
             return response
@@ -272,6 +386,7 @@ async def invoke_provider_model(model, messages, *, config, stage, model_name, t
             with _provider_attempt_recorded(stage, model_name) as attempt:
                 response = await invoke_once(invocation_config)
                 attempt["provider_request_id"] = _provider_id(response)
+                attach_provider_usage(attempt, response)
                 from app.services.metrics import record_provider_usage
                 record_provider_usage(stage, getattr(response, "usage_metadata", None))
                 response_metadata = getattr(response, 'response_metadata', {}) or {}
@@ -324,7 +439,8 @@ class LLMService:
                 timeout=120.0,
                 max_retries=0,
                 http_client=httpx.AsyncClient(
-                    trust_env=False
+                    trust_env=False,
+                    transport=ProviderBorrowingTransport(base_url=self.base_url, api_key=self.api_key, stage="llm", trust_env=False),
                 )
             )
         return self._client
@@ -376,6 +492,7 @@ class LLMService:
                     temperature=0.3,
                 )
                 attempt["provider_request_id"] = _provider_id(response)
+                attach_provider_usage(attempt, response)
                 model_response(response, role="rewrite", model=self.model)
                 choice = response.choices[0]
                 reason = getattr(choice, 'finish_reason', None)
@@ -431,6 +548,8 @@ class LLMService:
         system_prompt: str = None,
         model_id: str = None,
         temperature: float = 0.7,
+        *, max_tokens: int | None = None, stage: str = "answer_stream", on_final=None,
+        generation_metadata: dict | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         流式生成回答
@@ -446,10 +565,13 @@ class LLMService:
         request_messages.extend(messages)
         observe_model_history(request_messages)
         if enabled():
-            event("llm.request", input=capture(request_messages, content_role='provider_request'), prompt=snapshot(request_messages), model=target_model, max_tokens=None, temperature=temperature)
+            event("llm.request", input=capture(request_messages, content_role='provider_request'), prompt=snapshot(request_messages), model=target_model, max_tokens=max_tokens, temperature=temperature)
 
         try:
-            with provider_generation("answer_stream", target_model, request_messages, stream=True, temperature=temperature) as (attempt, observation):
+            generation_parameters = {} if max_tokens is None else {"max_tokens": max_tokens}
+            with provider_generation(stage, target_model, request_messages, stream=True, temperature=temperature, **generation_parameters) as (attempt, observation):
+                if generation_metadata:
+                    _update_generation(observation, **generation_metadata)
                 print(f"DEBUG_LLM: Sending request to {target_model}")
                 # print(f"DEBUG_LLM: Messages structure: {request_messages}") # 调试用，注意日志脱敏
 
@@ -458,6 +580,7 @@ class LLMService:
                     messages=request_messages,
                     stream=True,
                     temperature=temperature,
+                    **generation_parameters,
                 )
 
                 attempt["stream_started"] = True
@@ -466,8 +589,14 @@ class LLMService:
                 observed_parts = []
                 finish_reason = None
                 stream_usage = None
+                raw_usage = None
                 try:
                     async for chunk in response:
+                        usage = getattr(chunk, 'usage', None)
+                        if usage is not None:
+                            attach_provider_usage(attempt, raw_usage=usage)
+                            if on_final is not None:
+                                raw_usage = usage.model_dump() if hasattr(usage, 'model_dump') else usage
                         if observation is not None:
                             stream_usage = _response_usage(chunk) or stream_usage
                         if chunk.choices and getattr(chunk.choices[0], 'finish_reason', None):
@@ -478,6 +607,21 @@ class LLMService:
                                 observed_parts.append(chunk.choices[0].delta.content)
                             yield chunk.choices[0].delta.content
                 finally:
+                    if on_final is not None:
+                        try:
+                            on_final({'finish_reason': finish_reason, 'usage': raw_usage})
+                        except Exception:
+                            pass
+                    close = getattr(response, "close", None)
+                    if close is not None:
+                        pending_error = sys.exc_info()[0] is not None
+                        try:
+                            result = close()
+                            if hasattr(result, "__await__"):
+                                await result
+                        except BaseException:
+                            if not pending_error:
+                                raise
                     if observation is not None:
                         _update_generation(observation, output=capture(''.join(observed_parts), content_role='provider_response'),
                                            finish_reason=finish_reason, usage=stream_usage)
@@ -526,6 +670,7 @@ class LLMService:
                     temperature=0.7,
                 )
                 attempt["provider_request_id"] = _provider_id(response)
+                attach_provider_usage(attempt, response)
                 model_response(response, model=target_model)
                 if observation is not None:
                     _update_generation(observation, output=capture(response.choices[0].message.content or '', content_role='provider_response'),
@@ -542,6 +687,12 @@ class LLMService:
                        *, timeout: float | None = None) -> ChatOpenAI:
         """获取 LangChain ChatOpenAI 实例"""
         options = {} if timeout is None else {"timeout": timeout}
+        # LangChain owns proxy configuration and rejects a custom async client
+        # alongside OPENAI_PROXY. Preserve its existing proxy path in that case.
+        if not os.environ.get("OPENAI_PROXY"):
+            options["http_async_client"] = httpx.AsyncClient(
+                follow_redirects=True, transport=ProviderBorrowingTransport(
+                    base_url=self.base_url, api_key=self.api_key, stage="llm", trust_env=True))
         return ChatOpenAI(
             model=self.model,
             openai_api_key=self.api_key,

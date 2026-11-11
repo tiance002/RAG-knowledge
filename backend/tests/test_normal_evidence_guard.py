@@ -94,7 +94,7 @@ def test_empty_scored_rerank_marks_low_relevance(monkeypatch):
     candidate = {'id': 'chunk-1', 'file_id': 'file-1', 'content': 'source text', 'score': 0.9}
     service.retrieval_service = SimpleNamespace(search=AsyncMock(return_value=([candidate], {'retrieval_status': 'SUCCESS'})))
     monkeypatch.setattr(chat, 'RerankService', lambda session: object())
-    monkeypatch.setattr(chat, 'batch_rerank', lambda **kwargs: [])
+    monkeypatch.setattr(chat, 'async_batch_rerank', AsyncMock(return_value=[]))
     results, metrics = asyncio.run(service._retrieve_with_new_service(
         session=None, query='q', kb_ids=['kb'], top_k=5, score_threshold=0,
         search_mode='fulltext', vector_weight=0.7, bm25_weight=0.3,

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from contextlib import asynccontextmanager
 import os
+import asyncio
 
 from app.core.config import get_settings, ensure_directories
 from app.core.database import engine, init_db
@@ -44,11 +45,21 @@ async def lifespan(app: FastAPI):
         if isinstance(route, APIRoute):
             print(f"   {route.methods} {route.path}")
 
-    yield
-    # 关闭时执行
-    from app.services.observability import flush_observations
-    flush_observations()
-    print("应用关闭")
+    from app.services.provider_http import managed_provider_http
+    from app.services.bounded_chroma_executor import managed_chroma_executor
+    try:
+        async with managed_provider_http(preinitialize=True):
+            async with managed_chroma_executor():
+                yield
+    finally:
+        # Drain after requests and their outer spans have closed. The SDK does
+        # not guarantee an overall timeout for this flush.
+        from app.services.observability import flush_observations, flush_policy
+        if flush_policy() == 'LIFESPAN':
+            await asyncio.to_thread(flush_observations, emit_timing=False)
+        else:
+            flush_observations(emit_timing=False)
+        print("应用关闭")
 
 
 # 创建 FastAPI 应用
@@ -91,6 +102,10 @@ async def log_requests(request: Request, call_next):
         print(f"[Error] {request.url.path}: {str(e)}")
         sys.stdout.flush()
         raise e
+
+# Opt-in timing is outermost among application middleware.
+from app.services.performance_timing import RequestLifecycleMiddleware
+app.add_middleware(RequestLifecycleMiddleware)
 
 # 静态文件服务（图片预览）
 if os.path.exists(settings.IMAGE_DIR):

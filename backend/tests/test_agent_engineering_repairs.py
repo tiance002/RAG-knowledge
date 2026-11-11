@@ -305,11 +305,11 @@ def test_tool_partial_rerank_failure_preserves_unknown_evidence(monkeypatch):
         return_value=(rows, {'retrieval_status': 'SUCCESS'}))))
     class Rerank:
         def __init__(self, session): self.calls = 0
-        def rerank(self, *args, **kwargs):
+        async def arerank(self, *args, **kwargs):
             self.calls += 1
             return [{'index': 0, 'score': 0.9}] if self.calls == 1 else []
     monkeypatch.setattr(rt, 'RerankService', Rerank)
-    monkeypatch.setattr(rt, 'batch_rerank', lambda **kw: rerank.batch_rerank(**kw, max_context_tokens=5))
+    monkeypatch.setattr(rt, 'async_batch_rerank', lambda **kw: rerank.async_batch_rerank(**kw, max_context_tokens=5))
     result = json.loads(asyncio.run(rt.search_knowledge_base.coroutine(
         query='q', kb_ids=['kb'], use_rerank=True, rerank_top_k=2, rerank_score_threshold=0.5)))
     citations = {c['chunk_id']: c for c in result['citations']}

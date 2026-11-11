@@ -81,7 +81,7 @@ def test_image_type_survives_tool_metadata(search):
 def test_empty_rerank_preserves_real_retrieval_as_unknown(search, monkeypatch):
     search.return_value = ([{'id': 'chunk-1', 'file_id': 'file-1', 'content': 'real evidence', 'score': 0.8}],
                            {'retrieval_status': 'SUCCESS'})
-    monkeypatch.setattr(retrieval_tool, 'RerankService', lambda session: SimpleNamespace(rerank=lambda *a, **k: []))
+    monkeypatch.setattr(retrieval_tool, 'RerankService', lambda session: SimpleNamespace(arerank=AsyncMock(return_value=[])))
     result = json.loads(asyncio.run(retrieval_tool.search_knowledge_base.coroutine(query='q', kb_ids=['kb'], use_rerank=True)))
     assert result['retrieval_status'] == 'UNKNOWN'
     assert result['citations'][0]['content'] == 'real evidence'

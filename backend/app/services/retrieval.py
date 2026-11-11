@@ -1,4 +1,5 @@
 import re
+from app.services.performance_timing import timed_stage
 from app.services.observability import native_operation, event, candidates, observe, enabled
 from app.services.llm import is_unknown_provider_error
 """
@@ -14,6 +15,9 @@ from app.services.llm import is_unknown_provider_error
 
 import time
 import json
+import math
+import os
+from urllib.parse import urlsplit
 from typing import List, Dict, Any, Optional, Literal, Tuple
 from datetime import datetime
 
@@ -28,6 +32,55 @@ from app.services.query_expansion import distinct_queries, expand_queries
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+def _query_embedding_reuse_enabled():
+    return os.getenv('RAG_QUERY_EMBEDDING_REUSE_ENABLED', 'false').lower() == 'true'
+
+
+def _query_embedding_reuse_key(service, binding, query):
+    """Private exact identity for the supported single-text OpenAI contract.
+
+    This is deliberately conservative: no URL/text normalization, no inferred
+    vector parameters, no legacy/multimodal adapters or effect-scope bypass.
+    The returned key contains credentials and must never be emitted or stored.
+    """
+    from app.services.task_effect_context import has_active_effect_scope
+    if has_active_effect_scope() or type(query) is not str or '[图片:' in query:
+        return None
+    base, model, credential = service.base_url, binding.model_name, service.api_key
+    if (not all(type(value) is str for value in (base, model, credential))
+            or not base or not model or model != service.model
+            or 'doubao' in model.lower() or 'volces.com' in base.lower()
+            or type(binding.binding_id) is not str or not binding.binding_id
+            or binding.model_type != 'embedding'
+            or binding.source not in ('custom_model', 'deployment')
+            or type(binding.context_length) is not int or binding.context_length <= 0):
+        return None
+    clean = base.rstrip('/')
+    endpoint = clean if clean.endswith('/embeddings') else clean + '/embeddings'
+    try:
+        parsed = urlsplit(endpoint)
+        if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment
+                or not parsed.path.endswith('/v1/embeddings')):
+            return None
+    except ValueError:
+        return None
+    # There are currently no dimensions/encoding/normalization request options.
+    # Version the actual supported contract instead of inventing their values.
+    return ('openai-single-text-v1', binding.binding_id, binding.source,
+            binding.model_type, binding.context_length, base, endpoint, model,
+            credential, query)
+
+
+def _reusable_query_vector(vector):
+    try:
+        return (type(vector) is list and bool(vector)
+                and all(type(value) in (int, float) and math.isfinite(value) for value in vector))
+    except (OverflowError, TypeError, ValueError):
+        return False
 
 
 class _HybridNoCandidates(Exception):
@@ -253,10 +306,13 @@ class RetrievalService:
         return legacy, builds
 
     def __init__(self):
-        self.vector_store = VectorStoreService()
+        from app.services.bounded_chroma_executor import chroma_executor_enabled
+        self.vector_store = (VectorStoreService(lazy_retrieval=True)
+                             if chroma_executor_enabled() else VectorStoreService())
         self.bm25_index = get_bm25_index()
 
-    async def _embed_query_for_kb(self, session: Session, kb_id: str, query: str) -> List[float]:
+    async def _embed_query_for_kb(self, session: Session, kb_id: str, query: str,
+                                *, query_vectors=None) -> List[float]:
         from app.services.model_bindings import resolve_model, ModelBindingError
         kb = session.get(KnowledgeBase, kb_id)
         if kb is None:
@@ -266,7 +322,15 @@ class RetrievalService:
         binding = resolve_model(session, "embedding", kb.embedding_model, use_default=False)
         embedding_service = EmbeddingService(base_url=binding.base_url,
             api_key=binding.api_key, model=binding.model_name)
-        return await embedding_service.embed_query(query, model_id=binding.model_name)
+        key = (_query_embedding_reuse_key(embedding_service, binding, query)
+               if query_vectors is not None and _query_embedding_reuse_enabled() else None)
+        if key is not None and key in query_vectors:
+            event('embedding.query_reuse', scope='retrieval.search', status='HIT')
+            return list(query_vectors[key])
+        vector = await embedding_service.embed_query(query, model_id=binding.model_name)
+        if key is not None and _reusable_query_vector(vector):
+            query_vectors[key] = tuple(vector)
+        return vector
 
     @observe("retrieval.search")
     async def search(
@@ -393,6 +457,19 @@ class RetrievalService:
 
         return results, metrics
 
+    async def _query_vector_store(self, **kwargs):
+        from app.services.bounded_chroma_executor import chroma_executor_enabled, ChromaExecutorCapabilityError
+        if chroma_executor_enabled():
+            try:
+                return await self.vector_store.query_async(**kwargs)
+            except ChromaExecutorCapabilityError as exc:
+                reason = str(exc)
+                if not reason or len(reason) > 96 or not all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_' for c in reason):
+                    reason = 'CHROMA_CAPABILITY_UNKNOWN'
+                event('chroma.capability', status='BLOCKED', reason_code=reason)
+                raise
+        return self.vector_store.query(**kwargs)
+
     @native_operation("retrieval.vector", as_type="retriever")
     async def _vector_search(
         self,
@@ -406,10 +483,11 @@ class RetrievalService:
         start_time = time.time()
 
         all_results = []
+        reuse_kwargs = {'query_vectors': {}} if _query_embedding_reuse_enabled() else {}
         for kb_id in kb_ids:
-            query_vector = await self._embed_query_for_kb(session, kb_id, query)
+            query_vector = await self._embed_query_for_kb(session, kb_id, query, **reuse_kwargs)
             allowed_ids, allowed_build_ids = self._vector_scope(session, kb_id)
-            results = self.vector_store.query(
+            results = await self._query_vector_store(
                 kb_id=kb_id,
                 query_vector=query_vector,
                 top_k=top_k,
@@ -445,6 +523,7 @@ class RetrievalService:
 
         return all_results, metrics
 
+    @timed_stage('bm25')
     def _bm25_query_results(
         self, session: Session, queries: List[str], kb_ids: List[str], top_k: int,
         query_offset: int = 0,
@@ -544,12 +623,13 @@ class RetrievalService:
         failed_routes = 0
         vector_start = time.time()
         vector_results = []
+        reuse_kwargs = {'query_vectors': {}} if _query_embedding_reuse_enabled() else {}
         try:
             for kb_id in dict.fromkeys(kb_ids):
                 # Rewrites and lexical variants must not multiply paid embeddings.
-                query_vector = await self._embed_query_for_kb(session, kb_id, query)
+                query_vector = await self._embed_query_for_kb(session, kb_id, query, **reuse_kwargs)
                 allowed_ids, allowed_build_ids = self._vector_scope(session, kb_id)
-                results = self.vector_store.query(
+                results = await self._query_vector_store(
                     kb_id=kb_id, query_vector=query_vector,
                     top_k=150, score_threshold=score_threshold,
                     allowed_ids=allowed_ids, allowed_build_ids=allowed_build_ids)
@@ -633,6 +713,7 @@ class RetrievalService:
         }
         return merged_results, metrics, fallback_used
 
+    @timed_stage('retrieval_enrichment')
     def _enrich_results(
         self,
         session: Session,

@@ -12,6 +12,7 @@ import re
 import json
 import math
 import logging
+import time
 from collections import Counter
 from typing import List, Dict, Any
 from datetime import datetime
@@ -21,6 +22,7 @@ from sqlalchemy import literal_column, func, or_
 
 from app.models import BM25Posting, ChunkIndex, IndexStats, DocumentChunk, FileDocument, FileStatus, generate_uuid
 from app.core.config import get_settings
+from app.services.performance_timing import timed_stage
 
 settings = get_settings()
 
@@ -193,6 +195,7 @@ class BM25Index:
         self._increment_stats(session, kb_id, term_freq, doc_length)
 
     @staticmethod
+    @timed_stage('ingest.bm25.prepare')
     def prepare_file_index(rows):
         """Tokenize a replacement before taking the publication write lock."""
         prepared = []
@@ -203,10 +206,11 @@ class BM25Index:
             if frequencies:
                 prepared.append({'id': generate_uuid(), 'chunk_id': row['id'],
                     'doc_length': sum(frequencies.values()),
-                    'terms': json.dumps(frequencies, ensure_ascii=False), 'frequencies': frequencies})
+                    'terms': json.dumps(frequencies, ensure_ascii=False, separators=(',', ':')), 'frequencies': frequencies})
         return prepared
 
     @staticmethod
+    @timed_stage('ingest.bm25.remove')
     def begin_file_replacement(session, file_id, kb_id):
         """Remove prior physical postings and return their aggregate delta; no commit."""
         old = session.exec(select(ChunkIndex.id, ChunkIndex.doc_length, ChunkIndex.terms)
@@ -223,18 +227,25 @@ class BM25Index:
         return len(old), sum(length for _, length, _ in old), old_df
 
     @staticmethod
+    @timed_stage('ingest.bm25.replace')
     def finish_file_replacement(session, kb_id, removed, prepared):
         """Batch insert replacement and update KB-wide stats once in caller transaction."""
         removed_count, removed_length, removed_df = removed
         stats = session.get(IndexStats, kb_id, populate_existing=True)
         total = stats.total_docs if stats else 0
         total_length = (stats.avg_doc_length * total) if stats else 0
-        frequencies = Counter(json.loads(stats.term_doc_freq)) if stats else Counter()
+        started = time.perf_counter()
+        prior_json = stats.term_doc_freq if stats else '{}'
+        frequencies = Counter(json.loads(prior_json))
+        decode_ms = (time.perf_counter() - started) * 1000
         if removed_count > total or any(frequencies[t] < count for t, count in removed_df.items()):
             raise ValueError('BM25_STATS_INCONSISTENT')
-        frequencies.subtract(removed_df)
+        delta = Counter()
         for row in prepared:
-            frequencies.update(row['frequencies'].keys())
+            delta.update(row['frequencies'].keys())
+        delta.subtract(removed_df)
+        changed_terms = sum(value != 0 for value in delta.values())
+        frequencies.update(delta)
         frequencies = {term: count for term, count in frequencies.items() if count > 0}
         new_total = total - removed_count + len(prepared)
         new_length = total_length - removed_length + sum(row['doc_length'] for row in prepared)
@@ -244,7 +255,10 @@ class BM25Index:
             stats = IndexStats(kb_id=kb_id)
         stats.total_docs = new_total
         stats.avg_doc_length = max(0.0, new_length / new_total) if new_total else 0.0
-        stats.term_doc_freq = json.dumps(frequencies, ensure_ascii=False)
+        started = time.perf_counter()
+        stats.term_doc_freq = (json.dumps(frequencies, ensure_ascii=False, separators=(',', ':'))
+                               if changed_terms else prior_json)
+        encode_ms = (time.perf_counter() - started) * 1000
         stats.updated_at = datetime.utcnow()
         session.add(stats)
         if prepared:
@@ -255,6 +269,12 @@ class BM25Index:
                 for row in prepared for term, tf in row['frequencies'].items()]
             if postings:
                 session.execute(BM25Posting.__table__.insert(), postings)
+        logging.getLogger(__name__).info(
+            'BM25_FILE_REPLACEMENT stats_decode_ms=%.3f stats_encode_ms=%.3f '
+            'stats_before_bytes=%d stats_after_bytes=%d changed_terms=%d chunks=%d postings=%d',
+            decode_ms, encode_ms, len(prior_json.encode('utf-8')),
+            len(stats.term_doc_freq.encode('utf-8')), changed_terms, len(prepared),
+            sum(len(row['frequencies']) for row in prepared))
 
     @staticmethod
     def _remove_postings(session: Session, chunk_id: str, kb_id: str) -> None:

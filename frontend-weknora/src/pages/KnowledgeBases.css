@@ -15,3 +15,5 @@
 .kb-card-foot { margin-top:14px; padding-top:9px; }
 .kb-empty-panel { border:0; background:#fff; }
 @media(max-width:600px) { .kb-toolbar { gap:8px; } .kb-toolbar input { width:150px; } .kb-grid { grid-template-columns:1fr; } }
+.kb-modal .kb-toggle-row{display:flex;align-items:flex-start;gap:11px;padding:14px;background:#f5faf7;border:1px solid #e4eee7;border-radius:9px;color:#385446}.kb-modal .kb-toggle-row input{width:auto;margin:2px 0 0;flex:0 0 auto;accent-color:#258158}.kb-toggle-row span{display:flex;flex-direction:column;gap:5px}.kb-toggle-row strong{font-size:13px}.kb-toggle-row small{font-size:12px;line-height:1.6;color:#82958a}.kb-parent-child-note{margin:12px 0;padding:10px 12px;border-radius:7px;background:#f4f8ff;color:#60728c;font-size:12px;line-height:1.6}.kb-parent-child-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.kb-parent-child-fields label{display:block;color:#52695c;font-size:12px}.kb-parent-child-fields input{display:block}
+@media(max-width:600px){.kb-parent-child-fields{grid-template-columns:1fr}}

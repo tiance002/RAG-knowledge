@@ -2,11 +2,12 @@
 对话 API 路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 from typing import AsyncGenerator
 import json
+from contextlib import nullcontext
 
 from app.core.database import get_session
 from app.models import KnowledgeBase
@@ -61,6 +62,7 @@ async def chat_completions(
     data: ChatRequest,
     session: Session = Depends(get_session),
     memory_scope: PreferenceScope = Depends(get_preference_scope),
+    request: Request = None,
 ):
     """对话接口 (SSE 流式响应)"""
     # 验证知识库存在
@@ -76,8 +78,7 @@ async def chat_completions(
         """生成 SSE 事件流"""
         chat_service = ChatService()
 
-        try:
-            async for event_type, event_data in chat_service.chat_stream(
+        stream = chat_service.chat_stream(
                 messages=data.messages,
                 kb_ids=data.kb_ids,
                 use_rewrite=data.use_rewrite,
@@ -97,7 +98,9 @@ async def chat_completions(
                 context_window=data.context_window,
                 memory_scope=memory_scope,
                 web_search_enabled=data.web_search_enabled,
-            ):
+            )
+        try:
+            async for event_type, event_data in stream:
                 from app.services.metrics import sse_event
                 sse_event(event_type, event_data)
                 # 格式化 SSE 事件
@@ -120,9 +123,32 @@ async def chat_completions(
             sse_event("error", error_data)
             yield f"event: error\n"
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        finally:
+            await stream.aclose()
+
+    async def identified_sse():
+        # Explicitly enabled on an evaluation API only. These headers correlate
+        # records; they never authorize prompt/document capture or alter scope.
+        from app.services.trace_schema import capture_scope, capture_identity
+        from app.services.performance_timing import performance_identity
+        identity = performance_identity(request.scope) if request is not None and not any(capture_identity().values()) else {}
+        inner = generate_sse()
+        try:
+            while True:
+                # Do not keep a ContextVar token open across a public yield:
+                # ASGI may close the generator from a copied cancellation task.
+                with capture_scope(**identity) if identity else nullcontext():
+                    try:
+                        item = await anext(inner)
+                    except StopAsyncIteration:
+                        break
+                yield item
+        finally:
+            with capture_scope(**identity) if identity else nullcontext():
+                await inner.aclose()
 
     return StreamingResponse(
-        generate_sse(),
+        identified_sse(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

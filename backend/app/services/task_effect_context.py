@@ -7,6 +7,11 @@ _runner = ContextVar('ingest_effect_runner', default=None)
 _provider_ids = ContextVar('ingest_provider_ids', default=None)
 
 
+def has_active_effect_scope():
+    """Let optional query optimizations preserve ingestion effect accounting."""
+    return _runner.get() is not None
+
+
 @contextmanager
 def effect_scope(runner):
     token = _runner.set(runner)

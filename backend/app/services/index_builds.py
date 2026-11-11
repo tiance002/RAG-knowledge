@@ -6,8 +6,10 @@ import os
 from pathlib import Path
 from datetime import datetime
 from uuid import uuid4
+from contextlib import contextmanager, nullcontext
+from time import perf_counter
 
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
 from app.core.database import engine
@@ -16,6 +18,102 @@ from app.models import (FileDocument, FileIndexBuild, DocumentChunk, ContentType
 from app.services.vector_store import VectorStoreService
 from app.services.bm25 import get_bm25_index
 from app.services.parent_child import remap_and_validate_graph
+
+
+_SQL_BATCH_SIZE = 500
+
+
+@contextmanager
+def _publication_phase(stage, **counts):
+    """Content-free timings; measurement failures never change publication."""
+    started, outcome = perf_counter(), 'RETURNED'
+    try:
+        yield counts
+    except BaseException as exc:
+        outcome = 'UNKNOWN' if getattr(exc, 'provider_status', None) == 'UNKNOWN' else 'FAILED'
+        raise
+    finally:
+        try:
+            from app.services.observability import event
+            event('performance.stage', stage_name=stage, stage=stage,
+                  duration_ms=(perf_counter() - started) * 1000,
+                  execution_status=outcome, timing_scope='synchronous_function',
+                  includes_children=True, **counts)
+        except Exception:
+            pass
+
+
+def _prior_chunk_provenance(session, file_id, chunks_data, rows):
+    """Bound lookups and keep the previous exact provenance reuse predicate."""
+    ids = list(dict.fromkeys(row['id'] for row in chunks_data if row.get('id')))
+    found = {}
+    with _publication_phase('index_build_prepare', requested_id_count=len(ids), lookup_batch_count=0,
+                            prior_row_count=0, reused_provenance_count=0) as counts:
+        prior_by_id = {}
+        for start in range(0, len(ids), _SQL_BATCH_SIZE):
+            prior_rows = session.exec(select(DocumentChunk.id, DocumentChunk.content, DocumentChunk.page_number,
+                DocumentChunk.content_type, DocumentChunk.source_metadata_json).where(
+                    DocumentChunk.file_id == file_id, DocumentChunk.id.in_(ids[start:start + _SQL_BATCH_SIZE]),
+                    DocumentChunk.source_metadata_json.is_not(None))).all()
+            prior_by_id.update((prior.id, prior) for prior in prior_rows)
+            counts['lookup_batch_count'] += 1
+        counts['prior_row_count'] = len(prior_by_id)
+        for original, remapped in zip(chunks_data, rows):
+            prior = prior_by_id.get(original.get('id'))
+            if (prior and prior.source_metadata_json and prior.content == original.get('content', '')
+                    and prior.page_number == original.get('page_number')
+                    and prior.content_type.value == original.get('content_type', 'text')):
+                found[remapped['id']] = prior.source_metadata_json
+        counts['reused_provenance_count'] = len(found)
+    return found
+
+
+def _replace_sql_chunks(session, file_id, rows, provenances):
+    """Replace only this file's projection in the caller's fenced transaction."""
+    with _publication_phase('index_build_sql_replace', proposed_chunk_count=len(rows), insert_batch_count=0) as counts:
+        # BM25 rows have already been removed. No DocumentChunk ORM instances
+        # are loaded in this private publication session, so no identity-map
+        # synchronization or relationship cascade is needed here.
+        removed = session.execute(delete(DocumentChunk).where(DocumentChunk.file_id == file_id)
+            .execution_options(synchronize_session=False))
+        counts['deleted_chunk_count'] = removed.rowcount
+        for start in range(0, len(rows), _SQL_BATCH_SIZE):
+            batch = []
+            for index, row in enumerate(rows[start:start + _SQL_BATCH_SIZE], start=start):
+                try:
+                    content_type = ContentType(row.get('content_type', 'text'))
+                except ValueError:
+                    content_type = ContentType.TEXT
+                batch.append(dict(id=row['id'], file_id=file_id, content=row.get('content', ''),
+                    page_number=row.get('page_number'), content_type=content_type,
+                    image_path=row.get('image_path'), original_index=index, parent_id=row.get('parent_id'),
+                    heading_level=row.get('heading_level'), heading_text=row.get('heading_text'),
+                    chunk_type=row.get('chunk_type') or 'content', token_count=row.get('token_count') or 0,
+                    start_offset=row.get('start_offset'), end_offset=row.get('end_offset'),
+                    source_metadata_json=provenances.get(row['id']), created_at=datetime.utcnow()))
+            session.execute(DocumentChunk.__table__.insert(), batch)
+            counts['insert_batch_count'] += 1
+    return counts['deleted_chunk_count']
+
+
+def _write_verified_vectors(service, kb_id, documents, embeddings, vector_ids):
+    operation = getattr(service, 'collection_operation', None)
+    with (operation(kb_id) if callable(operation) else nullcontext(service)) as write_service:
+        with _publication_phase('index_build_vector_write', vector_count=len(embeddings)):
+            write_service.validate_dimension(kb_id, embeddings[0])
+            write_service.add_documents(kb_id, documents, embeddings)
+        with _publication_phase('index_build_vector_verify', vector_count=len(embeddings)):
+            actual = write_service.get_documents(kb_id, vector_ids, include=['documents', 'metadatas', 'embeddings'])
+            observed = {key: (content, metadata, vector) for key, content, metadata, vector in zip(
+                actual['ids'], actual['documents'], actual['metadatas'], actual['embeddings'])}
+            if len(observed) != len(documents) or any(
+                d['id'] not in observed or observed[d['id']][0] != d['content'] or
+                observed[d['id']][1] != d['metadata'] or
+                len(observed[d['id']][2]) != len(vector) or
+                any(not math.isclose(float(a), float(b), rel_tol=1e-6, abs_tol=1e-7)
+                    for a, b in zip(observed[d['id']][2], vector))
+                for d, vector in zip(documents, embeddings)):
+                raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
 
 
 def _manifest(data):
@@ -142,18 +240,13 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
     if any(not math.isfinite(float(value)) for vector in embeddings for value in vector):
         raise ValueError("EMBEDDING_NONFINITE")
     build_id = str(uuid4())
-    with Session(engine, expire_on_commit=False) as session:
+    with _publication_phase('index_build_stage', proposed_chunk_count=len(rows), searchable_chunk_count=len(searchable)), \
+            Session(engine, expire_on_commit=False) as session:
         doc = session.get(FileDocument, claim.file_id)
         if not doc:
             raise ValueError("FILE_NOT_FOUND")
         kb_id, file_name, source_path = doc.kb_id, doc.name, doc.local_path
-        prior_provenance = {}
-        for original, remapped in zip(chunks_data, rows):
-            prior = session.get(DocumentChunk, original.get('id')) if original.get('id') else None
-            if (prior and prior.file_id == claim.file_id and prior.source_metadata_json
-                    and prior.content == original.get('content', '') and prior.page_number == original.get('page_number')
-                    and prior.content_type.value == original.get('content_type', 'text')):
-                prior_provenance[remapped['id']] = prior.source_metadata_json
+        prior_provenance = _prior_chunk_provenance(session, claim.file_id, chunks_data, rows)
         checkpoint = manifest or {}
         payload = {"vector_ids": [r["id"] for r in searchable], "chunk_ids": [r["id"] for r in rows],
                    "embedding_model": vector_model, "dimension": len(embeddings[0]) if embeddings else 0,
@@ -196,24 +289,14 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
         documents.append({'id': row['id'], 'content': chunk.content, 'metadata': metadata})
     service = VectorStoreService()
     if embeddings:
-        service.validate_dimension(kb_id, embeddings[0])
-        service.add_documents(kb_id, documents, embeddings)
-        actual = service.get_documents(kb_id, payload["vector_ids"], include=["documents", "metadatas", "embeddings"])
-        observed = {key: (content, metadata, vector) for key, content, metadata, vector in zip(
-            actual["ids"], actual["documents"], actual["metadatas"], actual["embeddings"])}
-        if len(observed) != len(documents) or any(
-            d["id"] not in observed or observed[d["id"]][0] != d["content"] or
-            observed[d["id"]][1] != d['metadata'] or
-            len(observed[d['id']][2]) != len(vector) or
-            any(not math.isclose(float(a), float(b), rel_tol=1e-6, abs_tol=1e-7)
-                for a, b in zip(observed[d['id']][2], vector))
-            for d, vector in zip(documents, embeddings)):
-            raise RuntimeError("BUILD_VECTOR_VERIFICATION_FAILED")
+        _write_verified_vectors(service, kb_id, documents, embeddings, payload['vector_ids'])
 
     bm25 = get_bm25_index()
-    prepared_bm25 = bm25.prepare_file_index(rows)
+    with _publication_phase('index_build_bm25_prepare', proposed_chunk_count=len(rows), searchable_chunk_count=len(searchable)):
+        prepared_bm25 = bm25.prepare_file_index(rows)
     retired = []
-    with Session(engine, expire_on_commit=False) as session:
+    with _publication_phase('index_build_publish', proposed_chunk_count=len(rows), publication_committed=False) as publication, \
+            Session(engine, expire_on_commit=False) as session:
         if not guard_claim_in_session(session, claim):
             session.rollback()
             raise RuntimeError("BUILD_CLAIM_LOST")
@@ -233,25 +316,7 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
             kb.embedding_model = vector_model
         retired = retire_file_builds(session, claim.file_id)
         removed_bm25 = bm25.begin_file_replacement(session, claim.file_id, kb_id)
-        old_chunks = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == claim.file_id)).all()
-        for chunk in old_chunks:
-            session.delete(chunk)
-        session.flush()
-        new_chunks = []
-        for index, row in enumerate(rows):
-            try:
-                content_type = ContentType(row.get("content_type", "text"))
-            except ValueError:
-                content_type = ContentType.TEXT
-            chunk = DocumentChunk(id=row["id"], file_id=claim.file_id, content=row.get("content", ""),
-                page_number=row.get("page_number"), content_type=content_type,
-                image_path=row.get("image_path"), original_index=index, parent_id=row.get("parent_id"),
-                heading_level=row.get("heading_level"), heading_text=row.get("heading_text"),
-                chunk_type=row.get("chunk_type") or "content", token_count=row.get("token_count") or 0,
-                start_offset=row.get("start_offset"), end_offset=row.get("end_offset"),
-                source_metadata_json=provenances.get(row['id']))
-            session.add(chunk)
-            new_chunks.append(chunk)
+        _replace_sql_chunks(session, claim.file_id, rows, provenances)
         session.flush()
         bm25.finish_file_replacement(session, kb_id, removed_bm25, prepared_bm25)
         build = session.get(FileIndexBuild, build_id)
@@ -262,8 +327,10 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
         kb = session.get(KnowledgeBase, kb_id)
         if kb:
             session.flush()
-            kb.chunk_count = session.exec(select(func.count(DocumentChunk.id)).join(FileDocument).where(
-                FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None))).one()
+            with _publication_phase('index_build_recount') as recount:
+                kb.chunk_count = session.exec(select(func.count(DocumentChunk.id)).join(FileDocument).where(
+                    FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None))).one()
+                recount['live_kb_chunk_count'] = kb.chunk_count
             kb.updated_at = datetime.utcnow()
             session.add(kb)
         session.add(build)
@@ -272,6 +339,8 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
         if not complete_in_session(session, claim, result):
             session.rollback()
             raise RuntimeError("BUILD_CLAIM_LOST")
-        session.commit()
+        with _publication_phase('index_build_commit'):
+            session.commit()
+        publication['publication_committed'] = True
     # Retired vectors stay available for in-flight readers until the sweeper grace elapses.
     return result

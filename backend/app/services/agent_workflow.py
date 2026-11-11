@@ -96,6 +96,7 @@ class AgentState(TypedDict):
     intent: str  # 'chat', 'qa'
     understanding_intent: str | None  # Intent from the optional unified query understanding
     retrieval_query: str | None # Optional once-per-request clarified retrieval query
+    has_prior_conversation: bool # Raw inbound history, before round trimming.
     original_query: str # 用户原始问题
     current_plan: str # 当前执行计划
     
@@ -437,6 +438,7 @@ class AgentWorkflow:
         
         # 添加节点
         workflow.add_node("intent_analysis", self.analyze_intent)
+        workflow.add_node("direct_retrieval", self.direct_first_retrieval)
         workflow.add_node("agent", self.agent_node)
         workflow.add_node("tools", self.run_tools)
         workflow.add_node("process_tool_output", self.process_tool_output) # Observation
@@ -452,7 +454,8 @@ class AgentWorkflow:
             self.route_based_on_intent,
             {
                 "chat": "generate_chat",
-                "qa": "agent"
+                "qa": "agent",
+                "direct_retrieval": "direct_retrieval",
             }
         )
         
@@ -468,6 +471,7 @@ class AgentWorkflow:
         
         # Tools -> Process Output
         workflow.add_edge("tools", "process_tool_output")
+        workflow.add_edge("direct_retrieval", "process_tool_output")
         
         # Process Output -> Grading
         workflow.add_edge("process_tool_output", "grading")
@@ -532,7 +536,46 @@ class AgentWorkflow:
         }
 
     def route_based_on_intent(self, state: AgentState):
+        # Experimental workflow only. Complex tool selection and unresolved
+        # conversational/image inputs retain the existing model-led entry.
+        if (os.getenv("RAG_AGENT_FIRST_RETRIEVAL", "MODEL").strip().upper() == "DIRECT_KB_V1"
+                and state.get("intent") == "qa" and state.get("kb_ids")
+                and state.get("has_prior_conversation") is False
+                and not state.get("retrieval_attempt_count")
+                and not state.get("executed_retrieval_requests")
+                and not state.get("retrieval_blocked")
+                and len(self.tools) == 1
+                and getattr(self.tools[0], "name", None) == "search_knowledge_base"):
+            users = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
+            query = state.get("retrieval_query") or state.get("original_query")
+            # A truthy retrieval_query can also be the unchanged original
+            # question after failed understanding. V1 therefore leaves every
+            # multi-turn request on the existing model-led path.
+            if (len(users) == 1 and isinstance(users[-1].content, str)
+                    and isinstance(query, str) and query.strip()):
+                return "direct_retrieval"
         return state["intent"]
+
+    @observe("agent.direct_first_retrieval")
+    async def direct_first_retrieval(self, state: AgentState, config: RunnableConfig):
+        """Deterministic tool dispatch; this is not a model-generated call.
+
+        Keep the protocol pair in history so the final model sees a valid tool
+        exchange. The normal tool executor, source registry, grader and retry
+        loop remain authoritative.
+        """
+        dispatch = AIMessage(
+            content="", tool_calls=[{
+                "name": "search_knowledge_base", "id": "workflow_" + uuid.uuid4().hex,
+                "args": {"query": state.get("retrieval_query") or state["original_query"]},
+            }], additional_kwargs={"execution_origin": "workflow_direct_retrieval"})
+        event("agent.first_retrieval", action="DIRECT_KB_V1",
+              origin="workflow_direct_retrieval", model_selection_status="NOT_RUN")
+        result = await self.run_tools(
+            {**state, "messages": [*state["messages"], dispatch]}, config)
+        result["messages"] = [dispatch, *result.get("messages", [])]
+        result["agent_steps"] = [{"step": "action", "content": "工作流直接执行首次知识库检索"}]
+        return result
 
     @observe("agent.agent_node")
     async def agent_node(self, state: AgentState, config: RunnableConfig):
@@ -635,6 +678,15 @@ class AgentWorkflow:
         from app.services.grounded_generation import _routed_chat_model, _routed_response_identity, _router_outcome
         model = _routed_chat_model(llm, self.tools)
         from app.services.grounded_generation import enforce_request_budget
+        projection_mode = os.getenv('RAG_AGENT_EVIDENCE_PROJECTION', 'OFF').strip().upper()
+        if projection_mode != 'OFF':
+            from app.services.agent_evidence_projection import VERSION, project_agent_evidence_messages
+            if projection_mode != VERSION:
+                raise ValueError('Unsupported Agent evidence projection mode')
+            invocation_messages, projection_stats = project_agent_evidence_messages(
+                invocation_messages, canonical_context=_source_context,
+                tools=getattr(model, 'kwargs', {}).get('tools'))
+            event('agent.evidence_projection', **projection_stats)
         enforce_request_budget(invocation_messages, getattr(model, 'kwargs', {}).get('tools'))
         
         _observe_model_request("agent", invocation_messages, llm.model, provider_model=model)
@@ -808,7 +860,9 @@ class AgentWorkflow:
                         attempt_count -= 1
                     scope_hash = hashlib.sha256(json.dumps(final_args["kb_ids"], sort_keys=True).encode("utf-8")).hexdigest()
                     event("agent.actual_query", retrieval_attempt_id=last_attempt_id,
-                          tool_call_id=tool_call.get("id"), origin="agent_tool_call",
+                          tool_call_id=tool_call.get("id"), origin=(
+                              "workflow_direct_retrieval" if last_message.additional_kwargs.get(
+                                  "execution_origin") == "workflow_direct_retrieval" else "agent_tool_call"),
                           retrieval_attempt_count=attempt_count, query=snapshot(final_args.get("query")) if enabled() else None,
                           kb_scope_sha256=scope_hash, retry_count=state.get("retry_count", 0),
                           requested_parameters=safe_settings(requested),

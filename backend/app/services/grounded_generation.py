@@ -5,7 +5,7 @@ import re
 from urllib.parse import urlsplit
 from app.core.config import get_settings
 from app.services.observability import event, model_response, snapshot, capture, observe_model_history
-from app.services.llm import provider_generation, _provider_id, _response_usage, _update_generation, _completion_status, is_unknown_provider_error
+from app.services.llm import provider_generation, _provider_id, _response_usage, _update_generation, _completion_status, is_unknown_provider_error, attach_provider_usage
 
 
 def grounded_generation_enabled():
@@ -175,8 +175,7 @@ def enforce_request_budget(messages, tools=None):
     return request_chars
 
 
-async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS", preference_policy=''):
-    """Return content, finish reason and usage; the caller checks completion."""
+def _build_grounded_request(llm, messages, citations, spreadsheet_context=None):
     evidence = '\n\n'.join(
         f"[{i}] 来源：{c.get('fileName', '未知')} {c.get('location', '')}\n{c['content']}"
         for i, c in enumerate(citations, 1)
@@ -192,6 +191,12 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
                    + '\n来源：' + proof['source'])
     # PDF expansion content, headers and notes are already present in citations.
     request_messages = [{'role': 'system', 'content': prompt}] + list(messages)
+    return prompt, request_messages
+
+
+async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS", preference_policy=''):
+    """Return content, finish reason and usage; the caller checks completion."""
+    prompt, request_messages = _build_grounded_request(llm, messages, citations, spreadsheet_context)
     llm, target, route, router_config = _route_generation(
         llm, model_id, request_messages, citations, retrieval_status=retrieval_status, return_decision=True)
     if preference_policy:
@@ -223,6 +228,7 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
                 temperature=0.7, stream=False, **provider_parameters,
             )
             attempt['provider_request_id'] = _provider_id(response)
+            attach_provider_usage(attempt, response)
             if route is not None:
                 identity_status = _routed_response_identity(response, target, stage='grounded_answer')
                 _update_generation(observation, requested_model_id=target, provider_model_id=getattr(response, 'model', None),
@@ -293,6 +299,50 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
     return result
 
 
+def grounded_stream_enabled():
+    return os.getenv('RAG_GROUNDED_STREAM_ENABLED', 'false').strip().lower() == 'true' and routing_is_off()
+
+
+async def stream_grounded_candidate(llm, messages, citations, *, model_id=None,
+                                    spreadsheet_context=None, pdf_context=None, preference_policy=''):
+    """Yield provider deltas and explicit completion; caller owns terminal SSE."""
+    from contextlib import aclosing
+    from app.services.llm import ProviderStreamError
+    prompt, request_messages = _build_grounded_request(llm, messages, citations, spreadsheet_context)
+    if preference_policy:
+        request_messages[0] = {'role': 'system', 'content': prompt + '\n\n' + preference_policy}
+    enforce_request_budget(request_messages)
+    target = model_id or llm.model
+    delivered = delivered_evidence_records(citations)
+    event('memory.delivery', stage='grounded_answer', preference_policy_applied=bool(preference_policy))
+    event('grounded.request', model=target, prompt=snapshot(request_messages), evidence_count=len(citations))
+    event('context.delivery', delivery_target='provider_request', is_final_model_delivery=True,
+          delivery_status='PREPARED_FOR_PROVIDER', delivered_evidence_ids=[r['evidence_id'] for r in delivered],
+          output=capture(delivered, content_role='context_sent'))
+    event('grounded.request.sent', input=capture(request_messages, content_role='provider_request'),
+          model=target, max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS, temperature=0.7)
+    final = {}
+    pieces = []
+    stream = llm.generate_stream(messages=request_messages, model_id=target,
+                                 max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS,
+                                 stage='grounded_answer', on_final=final.update,
+                                 generation_metadata={'delivered_evidence_ids': [r['evidence_id'] for r in delivered],
+                                     'context_group_ids': list(dict.fromkeys(c['context_group_id'] for c in citations if c.get('context_group_id')))})
+    try:
+        async with aclosing(stream):
+            async for chunk in stream:
+                pieces.append(chunk)
+                yield 'chunk', chunk
+    except ProviderStreamError as exc:
+        if exc.provider_status != 'TRUNCATED':
+            raise
+    content = ''.join(pieces)
+    event('grounded.candidate', candidate=snapshot(content))
+    event('grounded.response', output=capture(content, content_role='provider_response'),
+          finish_reason=final.get('finish_reason'), model=target)
+    yield 'complete', final
+
+
 async def generate_no_results_fallback(llm, question):
     """Return (text, strategy, finish_reason, usage) for confirmed NO_RESULTS.
 
@@ -317,6 +367,7 @@ async def generate_no_results_fallback(llm, question):
             model=target, messages=messages, max_tokens=settings.LLM_ANSWER_MAX_TOKENS,
             temperature=0.7, stream=False)
         attempt['provider_request_id'] = _provider_id(response)
+        attach_provider_usage(attempt, response)
         choice = response.choices[0]
         content = choice.message.content or ''
         finish = getattr(choice, 'finish_reason', None)

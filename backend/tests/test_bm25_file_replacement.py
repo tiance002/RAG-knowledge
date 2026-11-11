@@ -71,3 +71,18 @@ def test_batch_failure_rolls_back_every_posting_and_statistic():
             raise RuntimeError('abort')
     assert snapshot(e)==before
     e.dispose()
+
+
+def test_unchanged_document_frequency_preserves_existing_json_bytes():
+    e, idx = make_fixture()
+    before = snapshot(e)
+    with Session(e) as s:
+        raw = s.get(IndexStats, 'kb').term_doc_freq
+        existing = s.exec(select(DocumentChunk).where(DocumentChunk.file_id == 'target')).all()
+        prepared = idx.prepare_file_index([dict(id=c.id, content=c.content) for c in existing])
+        removed = idx.begin_file_replacement(s, 'target', 'kb')
+        idx.finish_file_replacement(s, 'kb', removed, prepared)
+        s.commit()
+        assert s.get(IndexStats, 'kb').term_doc_freq == raw
+    assert snapshot(e) == before
+    e.dispose()

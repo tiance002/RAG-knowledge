@@ -1,8 +1,10 @@
 """Observational fingerprints for persisted file chunks; not a database index version."""
 import hashlib
 import json
+from app.services.performance_timing import timed_stage
 
 
+@timed_stage('source_fingerprint')
 def file_lineage(file_id, source_path, chunks):
     source_sha256 = None
     try:

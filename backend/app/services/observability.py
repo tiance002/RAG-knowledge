@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import re
+import sys
 import time
 import uuid
 from app.services.metrics import record_provider_usage
@@ -131,6 +132,22 @@ def sanitize(value, key='', *, final_export=False):
         return value
     if key == 'search_mode' and value in ('vector', 'fulltext', 'hybrid'):
         return value
+    performance_enums = {
+        'stage_name': ('chroma', 'bm25', 'retrieval_enrichment', 'source_fingerprint', 'observability_flush',
+                       'provider_local_wait', 'provider_slot_finished', 'provider_client_initialize',
+                       'ingest.bm25.prepare', 'ingest.bm25.remove', 'ingest.bm25.replace',
+                       'index_build_prepare', 'index_build_stage', 'index_build_vector_write',
+                       'index_build_vector_verify', 'index_build_bm25_prepare',
+                       'index_build_sql_replace', 'index_build_publish',
+                       'index_build_recount', 'index_build_commit',
+                       'ingest_chroma_collection_get', 'ingest_chroma_collection_get_or_create',
+                       'ingest_chroma_count', 'ingest_chroma_dimension_query',
+                       'ingest_chroma_add', 'ingest_chroma_get'),
+        'timing_scope': ('synchronous_function', 'synchronous_client_flush',
+                         'chat_generator_including_flush_excluding_outer_span_close'),
+    }
+    if key in performance_enums and value in performance_enums[key]:
+        return value
     preference_enums = {
         'answer_style': ('concise', 'normal', 'detailed'),
         'knowledge_level': ('beginner', 'intermediate', 'expert'),
@@ -156,6 +173,8 @@ def sanitize(value, key='', *, final_export=False):
     if key in ('action', 'decision', 'next_action') and value in ('SCHEDULED', 'EXHAUSTED', 'RETRY', 'CONTINUE', 'STOP', 'END', 'ANSWER', 'NO_RETRY', 'NOT_RUN', 'NOT_SCHEDULED', 'PROMPT_AGENT'):
         return value
     if key == 'execution_status' and value in ('RETURNED', 'FAILED', 'UNKNOWN', 'TRUNCATED', 'CANCELLED', 'NOT_RUN'):
+        return value
+    if key == 'response_delivery' and value == 'streaming':
         return value
     if key == 'sse_terminal' and value in ('done', 'error'):
         return value
@@ -377,11 +396,44 @@ def _record(row):
         pass
 
 
-def flush_observations():
+def flush_observations(*, emit_timing=True):
     """Flush an already initialized client without affecting application shutdown."""
+    started = time.perf_counter()
+    outcome = 'NOT_RUN'
     try:
         if _client is not None:
+            outcome = 'RETURNED'
             _client.flush()
+    except Exception:
+        outcome = 'FAILED'
+    finally:
+        timing = dict(stage_name='observability_flush',
+                      duration_ms=(time.perf_counter() - started) * 1000,
+                      execution_status=outcome, timing_scope='synchronous_client_flush',
+                      includes_children=False)
+        if emit_timing:
+            event('performance.stage', **timing)
+        elif enabled():
+            # A new SDK span after the final flush would itself remain queued.
+            _record({'stage': 'performance.stage', 'event': 'stage',
+                     'time': time.time(), 'metadata': timing})
+
+
+def flush_policy():
+    """Unknown configuration keeps the existing per-request behavior."""
+    value = os.getenv('RAG_OBSERVABILITY_FLUSH_POLICY', 'REQUEST').strip().upper()
+    return value if value in ('REQUEST', 'LIFESPAN') else 'REQUEST'
+
+
+def flush_request_observations():
+    if flush_policy() == 'REQUEST':
+        flush_observations()
+        return
+    # Deferred is not a successful export; the SDK batch queue owns delivery.
+    try:
+        event('performance.stage', stage_name='observability_flush',
+              duration_ms=0.0, execution_status='NOT_RUN',
+              timing_scope='synchronous_client_flush', includes_children=False)
     except Exception:
         pass
 
@@ -824,6 +876,17 @@ def langchain_callback_config(config=None, *, messages=None, tool_input=None, to
         return result, False, 'CALLBACK_UNAVAILABLE'
 
 
+
+async def _close_observed_stream(inner, has_pending_error):
+    """Close the wrapped generator without replacing an existing failure."""
+    try:
+        await inner.aclose()
+    except BaseException as exc:
+        if not has_pending_error:
+            return exc
+    return None
+
+
 def observe(name):
     def decorator(fn):
         if inspect.isasyncgenfunction(fn):
@@ -835,8 +898,12 @@ def observe(name):
                         async for item in inner:
                             yield item
                     finally:
-                        await inner.aclose()
+                        close_error = await _close_observed_stream(inner, sys.exc_info()[0] is not None)
+                        if close_error is not None:
+                            raise close_error
                     return
+                pipeline_started = time.perf_counter()
+                terminal_at = None
                 with span(name):
                     parts, terminal, chunk_count, terminal_data, cancelled = [], None, 0, {}, False
                     previous_raw_hash = _raw_answer_hash.get()
@@ -867,8 +934,9 @@ def observe(name):
                                            **runtime_identity())
                         except Exception:
                             pass
+                    inner = fn(*args, **kwargs)
                     try:
-                        async for item in fn(*args, **kwargs):
+                        async for item in inner:
                             if name == 'qa.request' and enabled() and isinstance(item, tuple) and len(item) == 2:
                                 kind, data = item
                                 if kind == 'answer_chunk':
@@ -877,11 +945,13 @@ def observe(name):
                                 elif kind in ('done', 'error'):
                                     terminal = kind
                                     terminal_data = data
+                                    terminal_at = time.perf_counter()
                             yield item
                     except (GeneratorExit, asyncio.CancelledError):
                         cancelled = True
                         raise
                     finally:
+                        close_error = await _close_observed_stream(inner, sys.exc_info()[0] is not None)
                         if name == 'qa.request' and enabled():
                             try:
                                 answer = ''.join(parts)
@@ -901,11 +971,21 @@ def observe(name):
                             except Exception:
                                 pass
                             finally:
-                                flush_observations()
+                                flush_request_observations()
+                                event('qa.performance',
+                                      server_pipeline_ms=(time.perf_counter() - pipeline_started) * 1000,
+                                      post_terminal_cleanup_ms=((time.perf_counter() - terminal_at) * 1000
+                                                                if terminal_at is not None else None),
+                                      timing_scope='chat_generator_including_flush_excluding_outer_span_close',
+                                      sse_terminal=terminal,
+                                      generation_status=terminal_data.get('generation_status'),
+                                      cancelled=cancelled)
                         if raw_token is not None:
                             _reset_context(_raw_answer_hash, raw_token, previous_raw_hash)
                         if qa_token is not None:
                             _reset_context(_qa_context, qa_token, previous_qa_context)
+                        if close_error is not None:
+                            raise close_error
             return stream
         if inspect.iscoroutinefunction(fn):
             @functools.wraps(fn)
