@@ -58,7 +58,7 @@ def _review(record, object_hash):
 
 
 def validate_launch(context, *, phase=None, candidate=None, fixtures=None, models=None,
-                    evidence=None, directory=None, role_profile=None):
+                    evidence=None, directory=None, role_profile=None, boundary=None):
     """No model/capsule effects. Unknown identity stops, never authorizes by flag.
 
     The expected plan hash comes from the caller's frozen run configuration.
@@ -74,7 +74,17 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
     if (plan.get('schema') != 'rsi-launch/v1' or plan.get('run_id') != context.run_id
             or selected_phase != context.phase or selected_phase not in plan.get('allowed_phases',[])):
         raise ValueError('LAUNCH_RUN_OR_PHASE_MISMATCH')
+    collecting = selected_phase == 'COVERAGE_COLLECTION'
+    if collecting and boundary != 'CAPSULE_EXECUTION':
+        raise ValueError('COVERAGE_COLLECTION_CAPSULE_ONLY')
+    if boundary == 'MODEL_REQUEST':
+        from .http_worker import transport_identity
+        actual_transport = transport_identity()
+        if (actual_transport['mode'] != 'DIRECT' or 'transport_identity' in plan):
+            if plan.get('transport_identity') != actual_transport:
+                raise ValueError('LAUNCH_TRANSPORT_IDENTITY_MISMATCH')
     if directory is not None:
+
         expected=Path(plan.get('run_directory','')).resolve()
         actual=Path(directory).resolve()
         if actual!=expected and not (context.phase=='AUTONOMOUS_SEARCH' and actual.is_relative_to(expected)):
@@ -123,7 +133,7 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
         from .role_profiles import profile_manifest
         if plan.get('role_profile')!=profile_manifest(role_profile):raise ValueError('LAUNCH_ROLE_PROFILE_MISMATCH')
     configured = plan.get('models',{})
-    if (not configured or any('astra' in str(v).lower() for v in configured.values())
+    if (not configured or any(any(name in str(v).lower() for name in ('astra','terra')) for v in configured.values())
             or models is not None and configured != models
             or not set(configured.values()) <= set(price.get('prices',{}))):
         raise ValueError('LAUNCH_MODEL_IDENTITY_MISMATCH')
@@ -140,21 +150,27 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
         raise ValueError('LAUNCH_DATA_PROFILE_REQUIRED')
     families = read_binding(plan['source_families'])
     exposure = read_binding(plan['exposure_snapshot'])
-    coverage = read_binding(plan['coverage'])
-    _review(coverage.get('review'), digest(coverage.get('matrix')))
+    coverage = None if collecting else read_binding(plan['coverage'])
+    if not collecting:_review(coverage.get('review'), digest(coverage.get('matrix')))
     if (not families or not exposure):
         raise ValueError('LAUNCH_DATA_READINESS_REQUIRED')
     # Rebuild coverage and source exposure through their trusted adapters.
     from .source_relations import recompute_coverage
     from .exposure import validate_snapshot
-    actual_coverage=recompute_coverage(coverage)
+    actual_coverage=None if collecting else recompute_coverage(coverage)
+    if not collecting:
+        from .source_relations import verify_coverage_execution
+        verify_coverage_execution(coverage, policy)
     checked_exposure=validate_snapshot(exposure,require_final=selected_phase=='FINAL_VERIFICATION')
     if families!=checked_exposure.get('sources'):raise ValueError('LAUNCH_SOURCE_FAMILIES_CHANGED')
-    if actual_coverage.get('status')!='PASS' or actual_coverage.get('matrix')!=coverage.get('matrix'):
+    bind_fixture_sources(plan, checked_exposure)
+    if not collecting and (actual_coverage.get('status')!='PASS' or actual_coverage.get('matrix')!=coverage.get('matrix')):
         raise ValueError('LAUNCH_COVERAGE_NOT_REPRODUCIBLE')
+    if collecting:
+        collection_tasks(plan, registry)
     if selected_phase=='BASELINE_QUALIFICATION' and planned_candidate['record'].get('origin') in {'OPENAI_MODEL_PROPOSAL','RSI_MODEL_PROPOSAL'}:
         raise ValueError('ORDINARY_CHILD_CANNOT_SELF_QUALIFY')
-    if selected_phase != 'BASELINE_QUALIFICATION':
+    if selected_phase not in {'BASELINE_QUALIFICATION','COVERAGE_COLLECTION'}:
         qualification = read_binding(plan['qualification'])
         if qualification.get('status') == 'BASELINE_QUALIFIED':
             from .baseline_qualification import verify_baseline_qualification
@@ -211,6 +227,79 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
         raise ValueError('LAUNCH_EXPERIMENT_POLICY_REQUIRED')
     return {'schema':'rsi-launch-validation/v1','run_id':context.run_id,'phase':selected_phase,
             'plan_sha256':context.plan_sha256,'status':'PASS','production_changed':False}
+
+
+def bind_fixture_sources(plan, snapshot):
+    """Join relational fixture assertions to the live-verified exposure identities."""
+    fields=('source_id','content_sha256','document_id','version','source_family_id',
+            'relation','related_source_ids','exposure_status','review_status')
+    relational=[]
+    for fixture in plan.get('fixtures',{}):
+        manifest=Path(fixture)/'manifest.json'
+        if manifest.is_file() and load(manifest).get('profile')=='source-relations/v1':
+            relational.append(Path(fixture))
+    if not relational:return
+    rows=snapshot.get('sources')
+    if not isinstance(rows,list) or any(not isinstance(row,dict) or not row.get('source_id') for row in rows):
+        raise ValueError('LAUNCH_FIXTURE_EXPOSURE_MISMATCH')
+    sources={row['source_id']:row for row in rows}
+    if len(sources)!=len(rows):raise ValueError('LAUNCH_FIXTURE_EXPOSURE_MISMATCH')
+    for fixture in relational:
+        for spec in load(fixture/'relations.restricted.json').values():
+            for sid,source in spec['sources'].items():
+                expected={key:(sid if key=='source_id' else source.get(key)) for key in fields}
+                if ('source_id' in source and source['source_id']!=sid
+                        or sid not in sources or any(value is None for value in expected.values())
+                        or expected!={key:sources[sid].get(key) for key in fields}):
+                    raise ValueError('LAUNCH_FIXTURE_EXPOSURE_MISMATCH')
+
+
+def collection_tasks(plan, registry):
+    """Validate reviewed intentions, never substitute intentions for captures."""
+    collection = read_binding(plan['coverage_collection'])
+    subject = {k:v for k,v in collection.items() if k != 'review'}
+    _review(collection.get('review'), digest(subject))
+    if (collection.get('schema') != 'rsi-coverage-collection-plan/v1'
+            or collection.get('fixtures') != plan.get('fixtures')
+            or not isinstance(collection.get('tasks'), list) or not collection['tasks']):
+        raise ValueError('LAUNCH_COLLECTION_PLAN_REQUIRED')
+    from .experiment import executor
+    from .query_aware import QueryRegistry
+    from .state import canonical
+    tasks = {}
+    for fixture in plan['fixtures']:
+        for item in load(Path(fixture)/'cases.json'):
+            case = executor.checked_case(item['case'])
+            tasks[(str(Path(fixture).resolve()), item['qid'])] = (case, bytes_hash(canonical(case)))
+    seen = set()
+    for task in collection['tasks']:
+        key = (task.get('fixture_path'), task.get('qid'))
+        if key not in tasks or key in seen or task.get('prepare_input_sha256') != tasks[key][1]:
+            raise ValueError('LAUNCH_COLLECTION_TASK_MISMATCH')
+        seen.add(key)
+        member_ids = {c['id'] for c in tasks[key][0]['chunks']}
+        controls = task.get('controls')
+        if not isinstance(controls,list) or len(controls)<2:
+            raise ValueError('LAUNCH_COLLECTION_CONTROLS_REQUIRED')
+        kinds=set(); signatures=set()
+        for control in controls:
+            kind=control.get('kind');removed=control.get('removed_member_ids')
+            if (kind not in {'POSITIVE','MEMBER_REMOVAL'} or not isinstance(removed,list)
+                    or len(set(removed))!=len(removed) or not set(removed)<=member_ids
+                    or (kind=='POSITIVE') != (not removed)):
+                raise ValueError('LAUNCH_COLLECTION_CONTROLS_REQUIRED')
+            candidate=QueryRegistry(registry).get(control.get('candidate',{}).get('candidate_id',''))
+            QueryRegistry(registry).require_not_quarantined(candidate['candidate_id'])
+            identity={'candidate_id':candidate['candidate_id'],'worker_sha256':bytes_hash(candidate['worker']),
+                      'config_sha256':bytes_hash(candidate['config'])}
+            if (identity!=control.get('candidate') or kind=='POSITIVE' and identity!=plan['candidate']):
+                raise ValueError('LAUNCH_COLLECTION_CANDIDATE_MISMATCH')
+            signature=(identity['worker_sha256'],identity['config_sha256'])
+            if signature in signatures:raise ValueError('LAUNCH_COLLECTION_CONTROL_DUPLICATE')
+            signatures.add(signature);kinds.add(kind)
+        if kinds!={'POSITIVE','MEMBER_REMOVAL'}:raise ValueError('LAUNCH_COLLECTION_CONTROLS_REQUIRED')
+    if seen!=set(tasks):raise ValueError('LAUNCH_COLLECTION_TASK_MISMATCH')
+    return collection['tasks']
 
 
 def guard_real(evidence, launch, **expected):

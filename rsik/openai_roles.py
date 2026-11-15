@@ -160,7 +160,7 @@ class OpenAIRoles:
         for attempt in range(2):
             if self.transport is single_request:
                 from .launch import validate_launch
-                validate_launch(self.launch)
+                validate_launch(self.launch,boundary="MODEL_REQUEST")
             if self.before_request:self.before_request()
             context = {'public': deepcopy(public), 'diagnosis': diagnosis}
             if attempt:

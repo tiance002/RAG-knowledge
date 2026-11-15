@@ -165,6 +165,7 @@ def test_coverage_recomputes_six_classes_from_paired_captures(tmp_path):
             'negative_sha256': hashlib.sha256(negative_path.read_bytes()).hexdigest(),
             'removed_member_ids': ['m2']})
     record = {'schema': 'rsi-source-relations-coverage/v1', 'base_dir': str(tmp_path),
+              'review_policy': 'research-source-family/v1',
               'fixtures': ['fixture'], 'controls': controls,
               'status': 'PASS', 'positive_controls_passed': True, 'negative_controls_passed': True}
     result = recompute_coverage(record)

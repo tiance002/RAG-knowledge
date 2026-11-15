@@ -150,6 +150,7 @@ def launch_binding_control(tmp_path,monkeypatch):
     # Dedicated contract controls isolate the launch joins; the actual source
     # adapter's positive/negative cases have their own independent tests.
     monkeypatch.setattr(relations,'recompute_coverage',lambda _: {'status':'PASS','matrix':matrix})
+    monkeypatch.setattr(relations,'verify_coverage_execution',lambda *args:None,raising=False)
     sources={'SYNTHETIC':{'source_family_id':'SYNTHETIC_FAMILY'}}
     monkeypatch.setattr(exposure,'validate_snapshot',lambda *a,**k:{'sources':sources})
     registry=QueryRegistry(tmp_path/'query'/'registry')

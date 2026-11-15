@@ -16,6 +16,7 @@ import re
 import queue
 import shlex
 import subprocess
+import sys
 import tarfile
 import threading
 import time
@@ -196,28 +197,64 @@ for line in sys.stdin:
         self.reader = threading.Thread(target=read_responses, daemon=True)
         self.reader.start()
 
+    def context_identity(self):
+        identity = {'capsule_job_id': getattr(self, 'job', None),
+                    'sequence': self.sequence}
+        launch = getattr(self, 'launch_context', None)
+        if launch is not None:
+            identity.update(launch_run_id=launch.run_id, launch_plan_sha256=launch.plan_sha256)
+            if launch.phase == 'COVERAGE_COLLECTION':
+                try:
+                    plan = json.loads(Path(launch.plan_path).read_bytes())
+                    identity['coverage_collection_sha256'] = plan['coverage_collection']['sha256']
+                except Exception:
+                    identity['coverage_collection_sha256'] = 'UNKNOWN'
+        return identity
+
+    def rpc_failure(self, request, reason, error=None):
+        self._transport_uncertain = True
+        record = {'operation': 'rpc_failure', 'requested_operation': request.get('op'),
+                  'transport_status': 'UNKNOWN', 'reason': reason,
+                  'error_type': type(error).__name__ if error else None,
+                  'errno': getattr(error, 'errno', None), **self.context_identity()}
+        self.receipts.append(record)
+
     def rpc(self, request, *, timeout=115):
         payload = {'job': self.job, **request}
         with self.transport_lock:
-            if self.transport is None:
-                self.start_transport()
-            if self.transport.poll() is not None:
-                raise RuntimeError('INFRA_FAILURE: SSH transport is terminal; no blind replay')
-            self.transport.stdin.write(json.dumps({'program': REMOTE_PROGRAM, 'request': payload}) + '\n')
-            self.transport.stdin.flush()
+            if getattr(self, '_transport_uncertain', False):
+                raise RuntimeError('INFRA_FAILURE: capsule transport outcome unknown; no blind replay')
+            channel_step = 'TRANSPORT_START_FAILED'
+            try:
+                if self.transport is None:
+                    self.start_transport()
+                channel_step = 'PIPE_WRITE_FAILED'
+                if self.transport.poll() is not None:
+                    self.rpc_failure(request, 'TERMINAL_TRANSPORT')
+                    raise RuntimeError('INFRA_FAILURE: SSH transport is terminal; no blind replay')
+                self.transport.stdin.write(json.dumps({'program': REMOTE_PROGRAM, 'request': payload}) + '\n')
+                self.transport.stdin.flush()
+            except (OSError, ValueError) as error:
+                self.rpc_failure(request, channel_step, error)
+                raise RuntimeError('INFRA_FAILURE: capsule RPC write failed; remote outcome unknown; no blind replay') from error
             try:
                 response = self.responses.get(timeout=timeout)
             except queue.Empty:
-                self.transport.kill()
-                self.transport.wait(timeout=5)
+                self.rpc_failure(request, 'RESPONSE_TIMEOUT')
+                try:
+                    self.transport.kill()
+                    self.transport.wait(timeout=5)
+                except Exception:
+                    pass
                 raise RuntimeError('RECOVERY_ERROR: capsule response unknown; inspect live container before retry')
             if 'transport_error' in response or 'rpc_error' in response:
+                self.rpc_failure(request, 'REMOTE_OR_READER_FAILURE')
                 raise RuntimeError('INFRA_FAILURE: capsule RPC failed; restricted transport log retained')
             return response
 
     def setup(self):
         from .launch import validate_launch
-        validate_launch(getattr(self,'launch_context',None),evidence=self.evidence_policy)
+        validate_launch(getattr(self,'launch_context',None),evidence=self.evidence_policy,boundary='CAPSULE_EXECUTION')
         subprocess.run(['git', '-C', str(self.business_root), 'diff', '--quiet', BASE_COMMIT,
                         '--', 'backend/app'], check=True)
         data = source_archive(self.business_root)
@@ -227,7 +264,7 @@ for line in sys.stdin:
         if receipt.get('code_archive_sha256') != hashlib.sha256(data).hexdigest():
             raise ValueError('EXECUTION_ARCHIVE_MISMATCH')
         self.code_archive_sha256 = receipt['code_archive_sha256']
-        self.receipts.append({'operation': 'setup', 'job': self.job, 'code_bytes': len(data), **receipt})
+        self.receipts.append({'operation': 'setup', 'job': self.job, 'code_bytes': len(data), **receipt, **self.context_identity()})
         return receipt
 
     @property
@@ -245,6 +282,28 @@ for line in sys.stdin:
         files = {'worker.py': worker.read_bytes(), 'input.json': Path(paths[0]).read_bytes()}
         if stage == 'deliver':
             files['config.json'] = Path(paths[1]).read_bytes()
+        collection_matches = None
+        launch = getattr(self, 'launch_context', None)
+        if getattr(launch, 'phase', None) == 'COVERAGE_COLLECTION':
+            from .launch import validate_launch, collection_tasks
+            from .experiment import load, executor
+            from .state import canonical
+            validate_launch(launch, evidence=self.evidence_policy, boundary='CAPSULE_EXECUTION')
+            tasks = collection_tasks(load(launch.plan_path), launch.registry)
+            input_hash = hashlib.sha256(files['input.json']).hexdigest()
+            if stage == 'prepare':
+                if files['worker.py'] != (ROOT/'scripts/rsi_delivery_worker.py').read_bytes():
+                    raise ValueError('COLLECTION_UNLISTED_PREPARE_WORKER')
+                collection_matches = [task for task in tasks if task['prepare_input_sha256']==input_hash]
+                if not collection_matches:raise ValueError('COLLECTION_UNLISTED_PREPARE_INPUT')
+            else:
+                prepared = getattr(self, '_coverage_prepared_inputs', {}).get(input_hash, [])
+                worker_hash = hashlib.sha256(files['worker.py']).hexdigest()
+                config_hash = hashlib.sha256(files['config.json']).hexdigest()
+                allowed = any(task in tasks and any(
+                    c['candidate']['worker_sha256']==worker_hash and c['candidate']['config_sha256']==config_hash
+                    for c in task['controls']) for task in prepared)
+                if not allowed:raise ValueError('COLLECTION_UNLISTED_DELIVERY')
         remaining = 90 if self.deadline is None else min(90, self.deadline - time.monotonic())
         if remaining <= 0:
             raise ValueError('INFRA_FAILURE: bundle deadline expired before starting another worker')
@@ -259,7 +318,7 @@ for line in sys.stdin:
             response['worker_runtime'] = json.loads(base64.b64decode(runtimes[0], validate=True))
         with (Path(cwd) / 'worker.log').open('xb') as log:
             log.write(b'\n'.join(line for line in lines if not line.startswith((b'RSI_CAPTURE_BASE64=', b'RSI_RUNTIME_BASE64='))))
-        self.receipts.append({'operation': stage, 'sequence': self.sequence, **response})
+        self.receipts.append({'operation': stage, **response, **self.context_identity()})
         data = base64.b64decode(captures[0], validate=True) if len(captures) == 1 else None
         with (Path(cwd) / 'execution-receipt.json').open('x', encoding='utf-8') as stream:
             json.dump({'schema': 'rsi-execution-evidence/v2.3', 'stage': stage,
@@ -269,11 +328,15 @@ for line in sys.stdin:
                        'input_sha256': hashlib.sha256(files['input.json']).hexdigest(),
                        'config_sha256': hashlib.sha256(files['config.json']).hexdigest() if 'config.json' in files else None,
                        'code_archive_sha256': self.code_archive_sha256, 'image': self.image,
-                       **response}, stream, sort_keys=True)
+                       **response, **self.context_identity()}, stream, sort_keys=True)
         if response['exit_code'] or response['reason'] or len(captures) != 1 or len(runtimes) != 1:
             raise ValueError('INFRA_FAILURE: isolated worker incomplete; see worker.log')
         data = base64.b64decode(captures[0], validate=True)
         value = json.loads(data.decode('utf-8-sig'))
+        if collection_matches is not None:
+            prepared_hash = hashlib.sha256(canonical(executor.execution_view(value))).hexdigest()
+            if not hasattr(self, '_coverage_prepared_inputs'):self._coverage_prepared_inputs={}
+            self._coverage_prepared_inputs[prepared_hash] = collection_matches
         with Path(paths[-1]).open('xb') as destination:
             destination.write(data)
         return value
@@ -288,24 +351,65 @@ for line in sys.stdin:
             executor.child = original
 
     def close(self):
-        try:
-            if self.ready:
-                self.receipts.append({'operation': 'cleanup', **self.rpc({'op': 'cleanup'})})
-                self.ready = False
-        finally:
-            if self.transport is not None:
+        """Persist local outcomes even when the remote cleanup is unknowable.
+
+        Shutdown errors are data, never a replacement for a caller's primary
+        exception. A failed/uncertain transport is never resent for cleanup.
+        """
+        if getattr(self, '_closed', False):
+            return self._close_outcome
+        active = sys.exc_info()[0]
+        outcome = {'cleanup_status': 'UNKNOWN' if getattr(self, '_transport_uncertain', False)
+                   else 'NOT_REQUIRED', 'shutdown_errors': [],
+                   'primary_exception_type': active.__name__ if active else None}
+        if self.ready:
+            if not getattr(self, '_transport_uncertain', False):
+                try:
+                    response = self.rpc({'op': 'cleanup'})
+                    self.receipts.append({'operation': 'cleanup', **response, **self.context_identity()})
+                    outcome['cleanup_status'] = 'REMOVED' if response.get('status') == 'REMOVED' else 'UNKNOWN'
+                    if outcome['cleanup_status'] == 'REMOVED':self.ready = False
+                except Exception as error:
+                    outcome['cleanup_status'] = 'UNKNOWN'
+                    outcome['shutdown_errors'].append({'step':'remote_cleanup','error_type':type(error).__name__})
+                    self.receipts.append({'operation':'cleanup','status':'UNKNOWN','reason':'CLEANUP_FAILED',
+                                          **self.context_identity()})
+            else:
+                self.receipts.append({'operation': 'cleanup', 'status': 'UNKNOWN',
+                    'reason': 'NOT_ATTEMPTED_UNCERTAIN_TRANSPORT', **self.context_identity()})
+        def shutdown_step(name, action):
+            try:
+                action()
+            except Exception as error:
+                outcome['shutdown_errors'].append({'step':name,'error_type':type(error).__name__,
+                                                   'errno':getattr(error,'errno',None)})
+        if self.transport is not None:
+            def stop_process():
                 if self.transport.poll() is None:
-                    self.transport.stdin.close()
+                    shutdown_step('stdin_close', self.transport.stdin.close)
                     try:
                         self.transport.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         self.transport.kill()
                         self.transport.wait(timeout=5)
-                self.reader.join(timeout=1)
-                self.transport_log.close()
+            shutdown_step('process_shutdown', stop_process)
+            if hasattr(self, 'reader'):shutdown_step('reader_join', lambda:self.reader.join(timeout=1))
+            if hasattr(self, 'transport_log'):shutdown_step('transport_log_close', self.transport_log.close)
+        outcome['transport_status'] = ('UNKNOWN' if getattr(self, '_transport_uncertain', False)
+            else 'SHUTDOWN_ERROR' if outcome['shutdown_errors']
+            else 'CLOSED' if self.transport is not None else 'NOT_STARTED')
+        self._close_outcome = outcome
+        self._closed = True
+        try:
             self.evidence_root.mkdir(parents=True, exist_ok=True)
             path = self.evidence_root / ('capsule-' + self.job + '.json')
             with path.open('x', encoding='utf-8') as stream:
-                json.dump({'image': self.image, 'job': self.job, 'receipts': self.receipts,
+                json.dump({'image': self.image, 'job': self.job, **self.context_identity(),
+                           'receipts': self.receipts, **outcome,
                            'production_mounts': [], 'network': 'none', 'user': '65534:65534',
                            'note': 'Reused existing image, system libraries and read-only venv; no dependency copy.'}, stream, indent=2)
+            outcome['journal_status'] = 'PERSISTED'
+        except Exception as error:
+            outcome['journal_status'] = 'ERROR'
+            outcome['shutdown_errors'].append({'step':'journal_write','error_type':type(error).__name__})
+        return outcome

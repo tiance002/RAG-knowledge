@@ -30,10 +30,41 @@ def _interval(text, start, end, exact):
             and text[start:end] == exact)
 
 
+def numbered_citation_support(case, capture, spec, support):
+    """Bind frozen-worker numbered source headers to exact delivered support.
+
+    This is an explicit fixture contract, not a fabricated citations field.
+    The protected worker already checks its actual numbered formatter output;
+    this adapter independently checks filename, order, member/source ownership
+    and both context/prompt support locations. No answer-quality inference.
+    """
+    try:
+        members,proofs=capture['members'],capture['proof']
+        i=next(i for i,m in enumerate(members) if m['id']==support['member_id'])
+        proof=proofs[i];source=spec['sources'][support['source_id']]
+        file=next(f for f in case['files'] if f['id']==source['file_id'])
+        if members[i]['file_id']!=file['id'] or proof['id']!=support['member_id']:return False
+        start=0 if i==0 else proofs[i-1]['context_end']+2
+        header=capture['context'][start:proof['context_start']]
+        expected=f"[{i+1}] 来源：{file['name']} "
+        if not header.startswith(expected) or not header.endswith('\n') or '\n' in header[:-1]:return False
+        location=spec['member_spans'][support['member_id']]
+        offset=support['start']-location['start'];length=support['end']-support['start']
+        return (_interval(capture['context'],proof['context_start']+offset,
+                          proof['context_start']+offset+length,support['text'])
+                and _interval(capture['messages'][0]['content'],proof['prompt_start']+offset,
+                              proof['prompt_start']+offset+length,support['text']))
+    except (KeyError,TypeError,StopIteration,IndexError):
+        return False
+
+
 def validate_spec(case, spec, source_bytes):
     """Validate fixture assertions, including explicit complete alternatives."""
     if spec.get('profile') != PROFILE or not spec.get('lineage_id'):
         raise ValueError('RELATIONS_PROFILE_REQUIRED')
+    if spec.get('citation_binding_profile','explicit-citations/v1') not in {
+            'explicit-citations/v1','numbered-delivery/v1'}:
+        raise ValueError('RELATIONS_CITATION_PROFILE_REQUIRED')
     source_records = spec['sources']
     if not source_records or set(source_records) != set(source_bytes):
         raise ValueError('RELATIONS_SOURCE_SET_MISMATCH')
@@ -170,9 +201,13 @@ def assess(case, capture, spec, source_bytes):
             citations = capture.get('citations', [])
             supported = False
             for alternative in present:
-                if all(any(isinstance(c, dict) and c.get('atom_id') == atom['atom_id'] and c.get('support_id') == sid
+                if spec.get('citation_binding_profile')=='numbered-delivery/v1':
+                    bound=all(numbered_citation_support(case,capture,spec,supports[sid]) for sid in alternative)
+                else:
+                    bound=all(any(isinstance(c, dict) and c.get('atom_id') == atom['atom_id'] and c.get('support_id') == sid
                            and all(c.get(k) == supports[sid][k] for k in ('source_id','member_id','start','end'))
-                           for c in citations) for sid in alternative):
+                           for c in citations) for sid in alternative)
+                if bound:
                     supported = True
             if not supported:
                 status, reason = 'ABSENT','CITATION_SUPPORT_MISMATCH'
@@ -312,6 +347,100 @@ def _resolve_record_path(value, base):
     return (path if path.is_absolute() else base / path).resolve()
 
 
+def verify_coverage_execution(record, policy):
+    """Require real receipt chains before using coverage for real admission.
+
+    Synthetic evaluator controls remain useful to test predicates, but their
+    captures cannot establish execution or bootstrap a real baseline.
+    """
+    from .experiment import executor, ROOT
+    from .execution_evidence import ExecutionEvidence, check_receipt
+    from .launch import read_binding
+    if (not isinstance(policy, ExecutionEvidence) or not policy.real_eligible
+            or record.get('execution_policy') != policy.to_dict()
+            or record.get('evidence_mode') != 'REAL_REPLAY' or record.get('real_eligible') is not True):
+        raise ValueError('REAL_COVERAGE_EXECUTION_REQUIRED')
+    collection = read_binding(record['collection_plan'])
+    launch = read_binding(record['launch_plan'])
+    if (record.get('launch_plan_sha256') != record['launch_plan']['sha256']
+            or launch.get('schema') != 'rsi-launch/v1'
+            or launch.get('allowed_phases') != ['COVERAGE_COLLECTION']
+            or launch.get('run_id') != record.get('launch_run_id')
+            or launch.get('coverage_collection') != record['collection_plan']
+            or launch.get('execution_policy') != policy.to_dict()
+            or Path(launch.get('run_directory','')).resolve() != Path(record.get('base_dir','.')).resolve()):
+        raise ValueError('COVERAGE_RUN_BINDING_MISMATCH')
+    job = record.get('capsule_job_id')
+    if not isinstance(job,str) or len(job) != 32 or any(c not in '0123456789abcdef' for c in job):
+        raise ValueError('COVERAGE_CAPSULE_JOB_REQUIRED')
+    subject = {k:v for k,v in collection.items() if k != 'review'}
+    review = collection.get('review', {})
+    if (collection.get('schema') != 'rsi-coverage-collection-plan/v1'
+            or review.get('object_sha256') != digest(subject)
+            or review.get('status') not in {'AI_REVIEWED', 'HUMAN_REVIEWED'}):
+        raise ValueError('COVERAGE_COLLECTION_BINDING_INVALID')
+    base = Path(record.get('base_dir', '.')).resolve()
+    runtime = None
+    if not record.get('controls'):
+        raise ValueError('REAL_COVERAGE_CONTROLS_REQUIRED')
+    for control in record['controls']:
+        fixture = _resolve_record_path(control['fixture'], base)
+        if fixture_identity_for_coverage(fixture) != collection['fixtures'].get(str(fixture)):
+            raise ValueError('COVERAGE_COLLECTION_FIXTURE_CHANGED')
+        item = next(i for i in _load(fixture/'cases.json') if i['qid'] == control['qid'])
+        prepare_input = _resolve_record_path(control['prepare_input'], base)
+        prepare_capture = _resolve_record_path(control['prepare_capture'], base)
+        arm_input = _resolve_record_path(control['arm_input'], base)
+        if _load(prepare_input) != executor.checked_case(item['case']):
+            raise ValueError('COVERAGE_PREPARE_INPUT_CHANGED')
+        prepare_receipt = _resolve_record_path(control['prepare_receipt'], base)
+        runtime = check_receipt(policy, prepare_receipt, stage='prepare',
+            worker_hash=sha((ROOT/'scripts/rsi_delivery_worker.py').read_bytes()),
+            input_path=prepare_input, capture_path=prepare_capture, runtime_identity=runtime)
+        _coverage_receipt_run_binding(_load(prepare_receipt), record)
+        snapshot = executor.execution_view(_load(prepare_capture))
+        if _load(arm_input) != snapshot:
+            raise ValueError('COVERAGE_PREPARE_OUTPUT_CHANGED')
+        task = next(t for t in collection['tasks'] if t['fixture_path'] == str(fixture) and t['qid'] == control['qid'])
+        if sha(prepare_input.read_bytes()) != task['prepare_input_sha256']:
+            raise ValueError('COVERAGE_COLLECTION_INPUT_CHANGED')
+        for arm, kind in [('positive', 'POSITIVE'), ('negative', 'MEMBER_REMOVAL')]:
+            candidate = control[arm+'_candidate']
+            expected = [c for c in task['controls'] if c['kind'] == kind and c['candidate'] == candidate
+                        and (kind == 'POSITIVE' or c['removed_member_ids'] == control['removed_member_ids']
+                             and control['atom_id'] in c['atom_ids'])]
+            if len(expected) != 1:
+                raise ValueError('COVERAGE_UNPLANNED_CONTROL')
+            capture = _resolve_record_path(control[arm+'_capture'], base)
+            config = _resolve_record_path(control[arm+'_config'], base)
+            if sha(config.read_bytes()) != candidate['config_sha256']:
+                raise ValueError('COVERAGE_CONTROL_CONFIG_CHANGED')
+            receipt = _resolve_record_path(control[arm+'_receipt'], base)
+            runtime = check_receipt(policy, receipt, stage='deliver',
+                worker_hash=candidate['worker_sha256'], input_path=arm_input, capture_path=capture,
+                config_path=config, canonical_config_hash=sha(canonical(_load(config))), runtime_identity=runtime)
+            _coverage_receipt_run_binding(_load(receipt), record)
+            if _load(capture).get('upstream_sha256') != executor.fingerprint(snapshot):
+                raise ValueError('COVERAGE_UPSTREAM_CHANGED')
+    return {'status':'PASS', 'evidence_mode':'REAL_REPLAY', 'control_count':len(record['controls'])}
+
+
+def _coverage_receipt_run_binding(receipt, record):
+    if (receipt.get('capsule_job_id') != record['capsule_job_id']
+            or receipt.get('launch_run_id') != record['launch_run_id']
+            or receipt.get('launch_plan_sha256') != record['launch_plan_sha256']
+            or receipt.get('coverage_collection_sha256') != record['collection_plan']['sha256']
+            or type(receipt.get('sequence')) is not int or receipt['sequence'] < 1
+            or receipt.get('container_name') != 'rsi-v22-'+record['capsule_job_id'][:10]+'-'+str(receipt['sequence'])):
+        raise ValueError('COVERAGE_RECEIPT_RUN_MISMATCH')
+
+
+def fixture_identity_for_coverage(path):
+    # Share the full byte identity used by actual launch admission.
+    from .launch import fixture_identity
+    return fixture_identity(path)
+
+
 def recompute_coverage(record):
     """Recompute the six-category evidence matrix from frozen fixtures/captures.
 
@@ -354,6 +483,14 @@ def recompute_coverage(record):
             for atom in spec['atoms']:
                 if atom['review']['status'] == 'UNREVIEWED':
                     continue
+                # Different hash labels do not establish independent families.
+                # Preserve UNKNOWN in fixtures, but never credit it as coverage.
+                supporting_sources = [spec['sources'][support['source_id']] for support in atom['supports']]
+                if any(source['relation'] == 'UNKNOWN'
+                       or source['exposure_status'] != 'KNOWN_HISTORY'
+                       or source['review_status'] not in REVIEW_POLICIES[review_policy]
+                       for source in supporting_sources):
+                    continue
                 families = {spec['sources'][support['source_id']]['source_family_id']
                             for support in atom['supports']}
                 example = {'fixture':str(fixture), 'qid':qid, 'atom_id':atom['atom_id'],
@@ -395,7 +532,10 @@ def recompute_coverage(record):
         positive_ids = {member.get('id') for member in positive_capture.get('members', [])}
         negative_ids = {member.get('id') for member in negative_capture.get('members', [])}
         removed = control.get('removed_member_ids')
+        positive_atom = next((row for row in positive_result['atoms'] if row['atom_id'] == atom_id), {})
+        negative_atom = next((row for row in negative_result['atoms'] if row['atom_id'] == atom_id), {})
         if (positive_result['status'] != 'PRESENT' or negative_result['status'] != 'ABSENT'
+                or positive_atom.get('status') != 'PRESENT' or negative_atom.get('status') != 'ABSENT'
                 or not isinstance(removed, list) or not removed
                 or len(set(removed)) != len(removed)
                 or not set(removed) <= positive_ids - negative_ids):
