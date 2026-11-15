@@ -454,6 +454,16 @@ def batch_rerank(
     return filtered_results[:top_k]
 
 
+def candidate_rank_key(row):
+    """Known composite/model scores precede unscored retrieval fallbacks."""
+    for field in ('composite_score', 'rerank_score'):
+        value = row.get(field)
+        if isinstance(value, (int, float)) and math.isfinite(value):
+            return (1, value)
+    value = row.get('score')
+    return (0, value if isinstance(value, (int, float)) and math.isfinite(value) else 0)
+
+
 @observe("retrieval.expand_context")
 @benchmark_timed('parent_expansion')
 def expand_context(top_chunks, session, window_size=None, max_parent_length=None,

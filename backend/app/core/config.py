@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     LLM_ANSWER_MAX_TOKENS: int = 4096
     # Relevance grading only: bound one request, without retrying an unknown result.
     AGENT_GRADING_TIMEOUT_SECONDS: float = 60.0
+    # Agent history bodies are opt-in; dialogue remains bounded separately.
+    AGENT_RETAIN_RETRIEVAL_HISTORY: bool = False
+    AGENT_TOOL_RESULT_INLINE_CHARS: int = Field(default=6000, ge=512, le=32000)
+    AGENT_TOOL_RESULT_STORE_DIR: str | None = None
+    AGENT_TOOL_RESULT_MAX_BYTES: int = Field(default=8 * 1024 * 1024, ge=65536)
+    AGENT_TOOL_RESULT_MAX_ENTRIES: int = Field(default=32, ge=1, le=256)
 
     # Optional Tavily web lookup; only explicit per-request opt-in invokes it.
     TAVILY_API_KEY: str = ""
@@ -120,6 +126,8 @@ class Settings(BaseSettings):
     # ==================== 上下文扩展配置 ====================
     CONTEXT_WINDOW_SIZE: int = 1            # 前后上下文 chunk 数
     MAX_PARENT_LENGTH: int = 4000           # 父文档最大拼接长度（字符）
+    CONTEXT_MAX_CHARS: int = 24000         # Maximum historical evidence context characters
+    GROUNDED_REQUEST_MAX_CHARS: int = 32000 # Serialized messages and tool schemas
 
     # ==================== 对话配置 ====================
     MAX_CHAT_HISTORY_ROUNDS: int = 20       # 最大保留历史对话轮数

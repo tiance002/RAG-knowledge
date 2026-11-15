@@ -15,7 +15,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { sessions, remove, storageError } = useChatHistory();
+  const { sessions, remove, storageError, error, loading, reload, importLegacy, exportLegacy, importing, importStatus, legacyCount } = useChatHistory();
   const current = pathname.startsWith('/chat') ? '智能问答' : navigation.find((item) => pathname.startsWith(item.to))?.label ?? '知识库';
 
   return (
@@ -38,11 +38,11 @@ export default function App() {
         </nav>
         <div className="conversation-history" aria-label="历史会话">
           <div className="history-label">历史会话</div>
-          {storageError && <p className="history-warning" role="alert">本地保存失败，当前会话可能无法保留</p>}
-          {sessions.length === 0 && <p className="history-empty">开始对话后会显示在这里</p>}
+          {storageError && <p className="history-warning" role="alert">浏览器旧历史无法读取；原始存储未被修改<button onClick={exportLegacy}>导出原始备份</button></p>}
+          {loading && <p className="history-empty">正在加载服务端历史…</p>}{error && <p className="history-warning" role="alert">{error}<button onClick={() => void reload()}>重试</button></p>}{legacyCount > 0 && <div className="history-empty"><p>浏览器旧历史：{legacyCount} 个（只读备份）</p><button disabled={importing} onClick={() => void importLegacy()}>{importing ? '正在导入…' : '导入服务端'}</button> <button onClick={exportLegacy}>导出原始备份</button>{importStatus && <p role="status">{importStatus}</p>}</div>}{sessions.length === 0 && <p className="history-empty">开始对话后会显示在这里</p>}
           {sessions.slice().sort((a, b) => b.updatedAt - a.updatedAt).map(item => <div className={`history-item ${pathname === `/chat/${item.id}` ? 'active' : ''}`} key={item.id}>
-            <button className="history-link" title={item.title} onClick={() => { navigate(`/chat/${item.id}`); setMenuOpen(false); }}><MessageOutlined /><span>{item.title}</span></button>
-            <button className="history-delete" aria-label={`删除会话 ${item.title}`} onClick={() => { if (window.confirm(`删除会话“${item.title}”？`)) { remove(item.id); if (pathname === `/chat/${item.id}`) navigate('/chat'); } }}><DeleteOutlined /></button>
+            <button className="history-link" title={item.title} onClick={() => { navigate(`/chat/${item.id}`); setMenuOpen(false); }}><MessageOutlined /><span>{item.legacy ? '[浏览器备份] ' : ''}{item.title}</span></button>
+            {!item.legacy && <button className="history-delete" aria-label={`归档会话 ${item.title}`} onClick={() => { if (window.confirm(`归档会话“${item.title}”？`)) { void remove(item.id).then(() => { if (pathname === `/chat/${item.id}`) navigate('/chat'); }).catch(() => {}); } }}><DeleteOutlined /></button>}
           </div>)}
         </div>
         <div className="sidebar-footer">

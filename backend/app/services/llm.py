@@ -43,6 +43,16 @@ async def safely_closing(resource):
     finally:
         await close_quietly(resource.aclose)
 
+class GenerationInputBudgetExceeded(ValueError):
+    """The final application request was rejected before generation dispatch."""
+    code = "FINAL_REQUEST_OVER_CHAR_BUDGET"
+
+    def __init__(self, request_chars: int, limit_chars: int):
+        super().__init__(self.code)
+        self.request_chars = request_chars
+        self.limit_chars = limit_chars
+
+
 class ProviderStreamError(Exception):
     def __init__(self, status, finish_reason=None):
         super().__init__("Provider stream did not complete")
@@ -312,6 +322,11 @@ async def invoke_provider_model(model, messages, *, config, stage, model_name, t
 
 
 def provider_error_payload(exc: BaseException, *, stage: str, unknown: bool = False) -> dict:
+    if isinstance(exc, GenerationInputBudgetExceeded):
+        return {"error": "生成请求输入超过长度限制，本次生成请求未发送；请减少历史轮次或缩小检索范围后再试。",
+                "status": "FAILED", "code": exc.code, "stage": "generation_input_budget",
+                "generation_request_sent": False, "retryable": False,
+                "request_chars": exc.request_chars, "limit_chars": exc.limit_chars}
     status = getattr(exc, "provider_status", None) or ("UNKNOWN" if unknown else _provider_status(exc))
     local_request_id = getattr(exc, "local_request_id", None)
     provider_request_id = _safe_id(getattr(exc, "provider_request_id", None)) or _provider_id(exc)

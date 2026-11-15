@@ -1,3 +1,4 @@
+import hashlib
 import re
 from app.services.observability import native_operation, event, candidates, observe, enabled
 from app.services.llm import is_unknown_provider_error
@@ -39,6 +40,27 @@ def _hybrid_stage(stage, started, status):
             sort_keys=True), flush=True)
     except Exception:
         pass
+
+
+def _verified_build_manifest(build_id, manifest, digest, cache):
+    """Cache only integrity-checked publication metadata within one request."""
+    key = (build_id, digest)
+    if key not in cache:
+        parsed = None
+        try:
+            if hashlib.sha256(manifest.encode('utf-8')).hexdigest() != digest:
+                raise ValueError('BUILD_MANIFEST_HASH_MISMATCH')
+            payload = json.loads(manifest)
+            chunk_ids = payload['chunk_ids']
+            if not isinstance(chunk_ids, list) or not all(type(value) is str for value in chunk_ids):
+                raise ValueError('BUILD_MANIFEST_CHUNK_IDS_INVALID')
+            dimension = payload.get('dimension')
+            parsed = {'chunk_ids': frozenset(chunk_ids),
+                'dimension': dimension if type(dimension) is int and dimension > 0 else None}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            pass
+        cache[key] = parsed
+    return cache[key]
 
 
 class _HybridNoCandidates(Exception):

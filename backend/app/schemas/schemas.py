@@ -192,7 +192,6 @@ class RecallTestResponse(BaseModel):
     evaluation: Optional[dict] = None
 
 
-
 # ==================== 对话 ====================
 
 class MessageRole(str, Enum):

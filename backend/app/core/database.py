@@ -39,6 +39,7 @@ def init_db():
     # Recovery and workers can initialize the schema without importing FastAPI.
     from app.tasks import dispatch  # noqa: F401
     from app.models import models  # noqa: F401
+    from app.models import conversations  # noqa: F401 - durable chat tables
     from app.services import file_retirement  # noqa: F401
     with engine.begin() as connection:
         if connection.dialect.name == "sqlite":

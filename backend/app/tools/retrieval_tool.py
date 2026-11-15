@@ -35,6 +35,7 @@ async def search_knowledge_base(
     bm25_weight: float = 0.3,
     context_window: int = 0,
     original_query: Optional[str] = None,
+    expand_evidence: bool = True,
 ) -> str:
     """
     Search selected knowledge-base documents when answering questions about their contents.
@@ -55,6 +56,7 @@ async def search_knowledge_base(
         vector_weight: Weight for vector search score in hybrid mode. Default 0.7.
         bm25_weight: Weight for BM25 search score in hybrid mode. Default 0.3.
         context_window: Number of adjacent chunks to include for context expansion. Default 0.
+        expand_evidence: Expand parents and neighbors; disable for on-demand reading.
         
     Returns:
         A JSON string containing:
@@ -150,7 +152,7 @@ async def search_knowledge_base(
 
         # 4. Context Expansion (Optional)
         expansion_failed = False
-        if results and (context_window > 0 or any(r.get("chunk_type") == "child" for r in results)):
+        if expand_evidence and results and (context_window > 0 or any(r.get("chunk_type") == "child" for r in results)):
             try:
                 results = expand_context(
                     top_chunks=results,
@@ -164,59 +166,67 @@ async def search_knowledge_base(
                 event('agent.expansion_failed', error_type=type(e).__name__,
                       retrieval_attempt_id=attempt_id, expansion_delivery_status='SEED_ONLY')
 
-        # Share source-member delivery with ordinary chat; never collapse a
-        # hit into neighbours and then send only its original seed.
-        from pathlib import PurePath
-        from app.services.context_builder import build_chat_context
-        def format_citation(row, text):
-            source = row.get('file_name', 'Unknown File')
-            extension = PurePath(source).suffix.lower()
-            metadata = row.get('source_metadata') or {}
-            if extension in {'.xlsx', '.xls'}:
-                sheet = metadata.get('sheet') or metadata.get('sheet_name')
-                if not sheet:
-                    match = re.match(r'^\s*\[工作表:\s*([^\]\r\n]+)\]', text)
-                    sheet = match.group(1).strip() if match else None
-                location = f'工作表: {sheet}' if sheet else '未知位置'
-            elif extension == '.pdf':
-                page = row.get('page_number')
-                location = f'第 {page} 页' if page is not None else row.get('location_info', '')
-            else:
-                location = row.get('heading_text') or '未知位置'
-            return {'fileName': source, 'fileId': row.get('file_id'),
-                    'kb_id': row.get('kb_id'), 'page_number': row.get('page_number') if extension == '.pdf' else None,
-                    'content_type': row.get('content_type'), 'source_metadata': metadata,
-                    'kb_name': row.get('kb_name', 'Unknown KB'), 'score': row.get('score'),
-                    'rerank_score': row.get('rerank_score'), 'rerank_status': row.get('rerank_status'),
-                    'chunk_id': row.get('id'), 'location': location}
-        citations, summary = build_chat_context(results, format_citation)
-        # Preserve unsupported image presence/locators for the final guard, but
-        # do not send generated captions as verified source text.
-        for row in results:
-            if row.get('content_type') == 'image' and row.get('id'):
-                citations.append({**format_citation(row, ''), 'content': '',
-                                  'evidence_status': 'UNVERIFIED_IMAGE'})
-        if expansion_failed:
-            summary['expansion_delivery_status'] = 'SEED_ONLY'
-        formatted_results = [f"Document {i} (Source: {c['fileName']}, KB: {c['kb_name']}):\n{c['content']}\n"
-                             for i, c in enumerate(citations, 1) if c.get('content_type') != 'image']
-        delivery = []
-        for change in summary['changes']:
-            row = next((r for r in results if r.get('id') == change['candidate_id']), {})
-            original = change['used_original_content']
-            delivery.append({'id': change['candidate_id'], 'content_role': 'context_sent',
-                             'content_field': 'original_content' if original else 'content',
-                             'expanded': bool(row.get('is_expanded')), 'delivered': not change['omitted_from_llm'],
-                             'content_sha256': change['delivered_content_sha256'],
-                             'delivered_evidence_ids': change['delivered_evidence_ids']})
-        event('context.delivery', retrieval_attempt_id=attempt_id, delivery_target='tool_response',
-              is_final_model_delivery=False, candidates=delivery)
-        if summary['source_mapping_status'] == 'UNKNOWN' and retrieval_status in ('SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE'):
-            retrieval_status = 'UNKNOWN'
-        return json.dumps({'context': '\n'.join(formatted_results), 'citations': citations,
-                           'retrieval_status': retrieval_status,
-                           'degraded': bool(retrieval_metrics.get('degraded')),
-                           'fallback_used': bool(retrieval_metrics.get('fallback_used')),
-                           'omitted_images': summary['omitted_images'],
-                           'source_mapping_status': summary['source_mapping_status'],
-                           'expansion_delivery_status': summary.get('expansion_delivery_status', 'UNKNOWN')}, ensure_ascii=False)
+        return _serialize_evidence_results(results, retrieval_status, retrieval_metrics,
+                                           attempt_id, expansion_failed=expansion_failed)
+
+
+def _serialize_evidence_results(results, retrieval_status, retrieval_metrics, attempt_id,
+                                expansion_failed=False):
+    # Share source-member delivery with ordinary chat; never collapse a
+    # hit into neighbours and then send only its original seed.
+    from pathlib import PurePath
+    from app.services.context_builder import build_chat_context
+    def format_citation(row, text):
+        source = row.get('file_name', 'Unknown File')
+        extension = PurePath(source).suffix.lower()
+        metadata = row.get('source_metadata') or {}
+        if extension in {'.xlsx', '.xls'}:
+            sheet = metadata.get('sheet') or metadata.get('sheet_name')
+            if not sheet:
+                match = re.match(r'^\s*\[工作表:\s*([^\]\r\n]+)\]', text)
+                sheet = match.group(1).strip() if match else None
+            location = f'工作表: {sheet}' if sheet else '未知位置'
+        elif extension == '.pdf':
+            page = row.get('page_number')
+            location = f'第 {page} 页' if page is not None else row.get('location_info', '')
+        else:
+            location = row.get('heading_text') or '未知位置'
+        return {'fileName': source, 'fileId': row.get('file_id'),
+                'kb_id': row.get('kb_id'), 'page_number': row.get('page_number') if extension == '.pdf' else None,
+                'content_type': row.get('content_type'), 'source_metadata': metadata,
+                'kb_name': row.get('kb_name', 'Unknown KB'), 'score': row.get('score'),
+                'rerank_score': row.get('rerank_score'), 'rerank_status': row.get('rerank_status'),
+                'chunk_id': row.get('id'), 'parent_id': row.get('parent_id'),
+                'chunk_type': row.get('chunk_type'), 'original_index': row.get('original_index'),
+                'heading_text': row.get('heading_text'), 'location': location}
+    citations, summary = build_chat_context(results, format_citation)
+    # Preserve unsupported image presence/locators for the final guard, but
+    # do not send generated captions as verified source text.
+    for row in results:
+        if row.get('content_type') == 'image' and row.get('id'):
+            citations.append({**format_citation(row, ''), 'content': '',
+                              'evidence_status': 'UNVERIFIED_IMAGE'})
+    if expansion_failed:
+        summary['expansion_delivery_status'] = 'SEED_ONLY'
+    formatted_results = [f"Document {i} (Source: {c['fileName']}, KB: {c['kb_name']}):\n{c['content']}\n"
+                         for i, c in enumerate(citations, 1) if c.get('content_type') != 'image']
+    delivery = []
+    for change in summary['changes']:
+        row = next((r for r in results if r.get('id') == change['candidate_id']), {})
+        original = change['used_original_content']
+        delivery.append({'id': change['candidate_id'], 'content_role': 'context_sent',
+                         'content_field': 'original_content' if original else 'content',
+                         'expanded': bool(row.get('is_expanded')), 'delivered': not change['omitted_from_llm'],
+                         'content_sha256': change['delivered_content_sha256'],
+                         'delivered_evidence_ids': change['delivered_evidence_ids']})
+    event('context.delivery', retrieval_attempt_id=attempt_id, delivery_target='tool_response',
+          is_final_model_delivery=False, candidates=delivery)
+    if summary['source_mapping_status'] == 'UNKNOWN' and retrieval_status in ('SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE'):
+        retrieval_status = 'UNKNOWN'
+    return json.dumps({'context': '\n'.join(formatted_results), 'citations': citations,
+                       'retrieval_status': retrieval_status,
+                       'degraded': bool(retrieval_metrics.get('degraded')),
+                       'fallback_used': bool(retrieval_metrics.get('fallback_used')),
+                       'omitted_images': summary['omitted_images'],
+                       'source_mapping_status': summary['source_mapping_status'],
+                       'expansion_delivery_status': summary.get('expansion_delivery_status', 'UNKNOWN')}, ensure_ascii=False)

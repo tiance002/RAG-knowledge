@@ -61,9 +61,16 @@ def _role_service(role, expected_model):
 
 def _routed_chat_model(service, tools):
     model = service.get_chat_model(streaming=False).bind_tools(tools)
-    extra_body = getattr(service, '_router_extra_body', None)
-    parameters = service.provider_request_parameters(extra_body=extra_body)
+    parameters = _provider_parameters(service, service.model)
     return model.bind(**parameters) if parameters else model
+
+
+def _provider_parameters(service, target):
+    extra_body = getattr(service, '_router_extra_body', None)
+    resolver = getattr(service, 'provider_request_parameters', None)
+    if resolver is not None:
+        return resolver(target, extra_body=extra_body)
+    return {'extra_body': extra_body} if extra_body is not None else {}
 
 
 def _routed_response_identity(response, requested_model, *, stage):
@@ -160,14 +167,31 @@ def build_grounded_prompt(evidence, *, addendum=''):
     return prompt + '\n\n' + addendum if addendum else prompt
 
 
+def enforce_request_budget(messages, tools=None):
+    """Guard complete serialized messages and tool schemas before a provider call."""
+    import json
+    from app.services.llm import GenerationInputBudgetExceeded
+    rows = [m if isinstance(m, dict) else m.model_dump() for m in messages]
+    request_chars = len(json.dumps({'messages': rows, 'tools': tools or []}, ensure_ascii=False, default=str))
+    request_limit = get_settings().GROUNDED_REQUEST_MAX_CHARS
+    if request_chars > request_limit:
+        event('context.budget_exceeded', request_chars=request_chars, limit_chars=request_limit,
+              degradation_reason='FINAL_REQUEST_OVER_CHAR_BUDGET')
+        raise GenerationInputBudgetExceeded(request_chars, request_limit)
+    return request_chars
+
+
 @benchmark_timed('grounded_generation')
 async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS", preference_policy=''):
     """Return content, finish reason and usage; the caller checks completion."""
+    from app.services.conversation_context import register_request_sources
+    register_request_sources(citations)
     evidence = '\n\n'.join(
-        f"[{i}] 来源：{c.get('fileName', '未知')} {c.get('location', '')}\n{c['content']}"
+        f"[{c.get('source_alias') or i}] 来源：{c.get('fileName', '未知')} {c.get('location', '')}\n{c['content']}"
         for i, c in enumerate(citations, 1)
     )
     prompt = build_grounded_prompt(evidence, addendum=getattr(llm, '_grounded_prompt_addendum', ''))
+    prompt += '\n历史问答仅帮助理解对话与用户要求，不是独立的原文证据。事实与引用以本次提供的来源正文为依据；历史来源编号不能直接沿用。'
     if spreadsheet_context is not None:
         proof = spreadsheet_context.proof
         footnotes = '\n'.join(item['text'] for item in proof['footnotes'].values())
@@ -182,13 +206,13 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
         llm, model_id, request_messages, citations, retrieval_status=retrieval_status, return_decision=True)
     if preference_policy:
         request_messages[0] = {'role': 'system', 'content': prompt + '\n\n' + preference_policy}
+    enforce_request_budget(request_messages)
     observe_model_history(request_messages)
     identity_status = 'UNKNOWN'
     async def _generate_once(current_llm, target):
         nonlocal identity_status
         event('memory.delivery', stage='grounded_answer', preference_policy_applied=bool(preference_policy))
-        extra_body = getattr(current_llm, '_router_extra_body', None)
-        provider_parameters = current_llm.provider_request_parameters(target, extra_body=extra_body)
+        provider_parameters = _provider_parameters(current_llm, target)
         event('grounded.request', model=target, prompt=snapshot(request_messages), evidence_count=len(citations))
         delivered_ids = [r['evidence_id'] for r in delivered_evidence_records(citations)]
         event('context.delivery', delivery_target='provider_request', is_final_model_delivery=True,
@@ -200,6 +224,8 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
             if observation is not None:
                 observation.update(delivered_evidence_ids=delivered_ids,
                     context_group_ids=list(dict.fromkeys(c['context_group_id'] for c in citations if c.get('context_group_id'))))
+            from app.services.conversation_context import record_provider_request
+            record_provider_request(request_messages, 'grounded_answer', citations)
             response = await current_llm._get_client().chat.completions.create(
                 model=target, messages=request_messages, max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS,
                 temperature=0.7, stream=False, **provider_parameters,
