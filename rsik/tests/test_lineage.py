@@ -51,7 +51,7 @@ def test_unknown_round_and_reused_holdout_are_not_retried(tmp_path):
 
 
 def test_verified_pool_and_receipt_hash_are_required(tmp_path):
-    policy=LineagePolicy(tmp_path/'policy');pool=ParentPool(tmp_path/'pool')
+    policy=LineagePolicy(tmp_path/'policy');pool=ParentPool(tmp_path/'pool',evidence_mode='SYNTHETIC_CONTROL')
     receipt=tmp_path/'verified.json';receipt.write_text(json.dumps({'verdict':'VERIFIED'}))
     pool.admit('candidate','lineage',receipt,kind='VERIFIED',chars=100,replay_seconds=1)
     assert pool.select(policy)['candidate_id']=='candidate'
@@ -60,7 +60,7 @@ def test_verified_pool_and_receipt_hash_are_required(tmp_path):
 
 
 def test_exploration_never_enters_default_parent_selection(tmp_path):
-    policy=LineagePolicy(tmp_path/'policy');pool=ParentPool(tmp_path/'pool')
+    policy=LineagePolicy(tmp_path/'policy');pool=ParentPool(tmp_path/'pool',evidence_mode='SYNTHETIC_CONTROL')
     receipt=tmp_path/'exploration.json';receipt.write_text(json.dumps({'verdict':'VALIDATED'}))
     pool.admit('candidate','lineage',receipt,kind='EXPLORATION',chars=100,replay_seconds=1)
     assert pool.select(policy) is None

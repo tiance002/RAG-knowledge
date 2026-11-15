@@ -20,6 +20,7 @@ from run_rsi_loop import apply_proposal, selector
 
 from .adjudicate import evaluate_candidate, adjudicate_round
 from .capsule import Capsule
+from .execution_evidence import resolve_policy, check_receipt
 from .errors import StageFailure
 from .events import EventLog
 from .foundation import check_split, verify_boundary
@@ -370,7 +371,10 @@ class Experiment:
                     {'entry_id':entry_id,'round_id':self.round_id,'parent_id':self.parent_id})
             try:
                 result = execute_round(public, roles, self.review, self.replay, enabled_slots=enabled_slots, deadline=self.deadline)
-                result.update(production_changed=False, source_boundary=verify_boundary())
+                result.update(production_changed=False, source_boundary=verify_boundary(),
+                    evidence_mode=self.capsule.evidence_policy.mode,
+                    real_eligible=self.capsule.evidence_policy.real_eligible,
+                    execution_policy=self.capsule.evidence_policy.to_dict())
                 atomic_write(self.directory / 'round.json', canonical(result), exclusive=True)
                 self.lineage_policy.finish_round(ancestor, self.round_id, result,
                     result_hash=bytes_hash((self.directory / 'round.json').read_bytes()))
@@ -400,22 +404,29 @@ class Experiment:
                     seconds=sum(r.get('elapsed_seconds',0) for r in receipts)
                     if seconds>0:
                         ParentPool(self.registry/'policy').admit(result['adopted_candidate_id'],ancestor,self.directory/'round.json',
-                            kind='EXPLORATION',chars=sum(r['chars_B'] for r in chosen['per_question']),replay_seconds=seconds)
+                            kind='EXPLORATION',chars=sum(r['chars_B'] for r in chosen['per_question']),replay_seconds=seconds, registry=self.registry, fixture=self.fixture,
+                            evidence=self.capsule.evidence_policy)
                 return result
             finally:
                 self.capsule.close()
 
 
-def read_decision(run_dir, fixture, candidate_id, proposal, worker_hash, config_hash):
+def read_decision(run_dir, fixture, candidate_id, proposal, worker_hash, config_hash, *, evidence=None):
     """Recompute protected assessments from hash-bound captures, then add provenance."""
     run_dir, fixture = Path(run_dir), Path(fixture)
     results, manifest = load(run_dir / 'results.json'), load(run_dir / 'manifest.json')
     cases, rubric = load(fixture / 'cases.json'), load(fixture / 'evaluation.json')
-    if manifest['arms']['B']['candidate_id'] != candidate_id or manifest['arms']['B']['worker_sha256'] != worker_hash:
+    if (manifest['arms']['B']['candidate_id'] != candidate_id
+            or manifest['arms']['B']['worker_sha256'] != worker_hash
+            or manifest['arms']['B']['sha256'] != config_hash):
         raise StageFailure('EVALUATION_ERROR', 'INVALID_PAIR', global_stop=True)
     if manifest['cases']['sha256'] != bytes_hash(canonical(cases)) or manifest['evaluation']['sha256'] != bytes_hash(canonical(rubric)):
         raise StageFailure('EVALUATION_ERROR', 'FIXTURE_TAMPERED', global_stop=True)
     proof = audit_run(run_dir, fixture)
+    if evidence is None and any(not (run_dir/f'case-{i:03}'/'execution-receipt.json').is_file()
+                                for i in range(1, len(cases)+1)):
+        raise StageFailure('EVALUATION_ERROR', 'EXECUTION_EVIDENCE_MISSING', global_stop=True)
+    policy = resolve_policy(evidence)
     runtime_identity = None
     by_qid = {r['qid']: r for r in results['rows']}
     if len(by_qid) != len(results['rows']):
@@ -427,6 +438,16 @@ def read_decision(run_dir, fixture, candidate_id, proposal, worker_hash, config_
             'parent_facts': {}, 'candidate_facts': {}, 'parent_faults': [], 'candidate_faults': [],
             'pair_status': raw.get('status', 'MISSING'), 'pair_identity': False,
             'execution': 'COMPLETED' if raw.get('status') == 'PAIRED' else 'FAILED', 'fault_origin': 'INFRA'}
+        if policy.real_eligible:
+            if set(raw.get('arms', {})) != {'A', 'B'}:
+                raise StageFailure('EVALUATION_ERROR', 'EXECUTION_EVIDENCE_MISSING', global_stop=True)
+            directory = run_dir / f'case-{index:03}'
+            runtime_identity = check_receipt(policy, directory/'execution-receipt.json',
+                stage='prepare', worker_hash=bytes_hash((ROOT/'scripts/rsi_delivery_worker.py').read_bytes()),
+                input_path=directory/'input.json', capture_path=directory/'snapshot.json',
+                runtime_identity=runtime_identity)
+            if executor.execution_view(load(directory/'snapshot.json')) != load(directory/'arm-input.json'):
+                raise StageFailure('EVALUATION_ERROR', 'PREPARE_OUTPUT_MISMATCH', global_stop=True)
         for arm, prefix in [('A', 'parent'), ('B', 'candidate')]:
             row['provenance_'+arm] = position['arms'][arm]['status']
             row[prefix+'_facts'] = {f['fact_id']: f['status'] for f in position['arms'][arm]['facts']}
@@ -436,22 +457,13 @@ def read_decision(run_dir, fixture, candidate_id, proposal, worker_hash, config_
                 if not path.resolve().is_relative_to(run_dir.resolve()) or bytes_hash(path.read_bytes()) != score['receipt_sha256']:
                     raise StageFailure('EVALUATION_ERROR', 'INVALID_PAIR', global_stop=True)
                 capture = load(path)
-                receipt_path = path.parent / 'execution-receipt.json'
-                if receipt_path.exists():
-                    receipt = load(receipt_path)
-                    config_path = run_dir/'implementation'/(arm+'.json')
-                    if not config_path.is_file():config_path=run_dir/(arm+'.json')
-                    runtime = {'runtime': receipt.get('worker_runtime'), 'image': receipt.get('image'),
-                               'code_archive_sha256': receipt.get('code_archive_sha256')}
-                    if (not runtime['runtime'] or not receipt.get('container_removed')
-                            or receipt.get('worker_sha256') != manifest['arms'][arm]['worker_sha256']
-                            or receipt.get('config_sha256') != bytes_hash(config_path.read_bytes())
-                            or bytes_hash(canonical(load(config_path))) != manifest['arms'][arm]['sha256']
-                            or receipt.get('input_sha256') != bytes_hash((run_dir/f'case-{index:03}'/'arm-input.json').read_bytes())):
-                        raise StageFailure('EVALUATION_ERROR', 'EXECUTION_IDENTITY_UNKNOWN', global_stop=True)
-                    if runtime_identity is not None and runtime != runtime_identity:
-                        raise StageFailure('EVALUATION_ERROR', 'EXECUTION_ENVIRONMENT_CHANGED', global_stop=True)
-                    runtime_identity = runtime
+                config_path = run_dir/'implementation'/(arm+'.json')
+                if not config_path.is_file(): config_path=run_dir/(arm+'.json')
+                runtime_identity = check_receipt(policy, path.parent/'execution-receipt.json',
+                    stage='deliver', worker_hash=manifest['arms'][arm]['worker_sha256'],
+                    input_path=run_dir/f'case-{index:03}'/'arm-input.json', capture_path=path,
+                    config_path=config_path, canonical_config_hash=manifest['arms'][arm]['sha256'],
+                    runtime_identity=runtime_identity)
                 recomputed = executor.assess(item['case'], capture, rubric[qid], arm)
                 if any(recomputed[k] != score[k] for k in recomputed):
                     raise StageFailure('EVALUATION_ERROR', 'ASSESSMENT_MISMATCH', global_stop=True)
@@ -472,8 +484,15 @@ def read_decision(run_dir, fixture, candidate_id, proposal, worker_hash, config_
                     'candidate_id': candidate_id, 'worker_hash': worker_hash, 'config_hash': config_hash},
                     rows+[row], [i['qid'] for i in cases], total_questions=len(cases))
                 decision.update(verdict='REJECTED', reason_codes=['ANGLE_VIOLATION'], gates_passed=False)
+                decision.update(evidence_mode=policy.mode, real_eligible=policy.real_eligible, execution_policy=policy.projection(),
+                    execution_evidence_hash=digest({p.relative_to(run_dir).as_posix():bytes_hash(p.read_bytes())
+                        for p in run_dir.rglob('execution-receipt.json')}))
                 return decision
         rows.append(row)
-    return evaluate_candidate({'angle': proposal['angle'], 'proposal_id': proposal['proposal_id'],
+    decision = evaluate_candidate({'angle': proposal['angle'], 'proposal_id': proposal['proposal_id'],
         'candidate_id': candidate_id, 'worker_hash': worker_hash, 'config_hash': config_hash},
         rows, [i['qid'] for i in cases], total_questions=len(cases))
+    decision.update(evidence_mode=policy.mode, real_eligible=policy.real_eligible, execution_policy=policy.projection(),
+                    execution_evidence_hash=digest({p.relative_to(run_dir).as_posix():bytes_hash(p.read_bytes())
+                        for p in run_dir.rglob('execution-receipt.json')}))
+    return decision

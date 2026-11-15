@@ -40,7 +40,7 @@ def test_unknown_stress_is_not_a_confirmed_algorithm_failure():
 
 
 def test_known_source_regression_excludes_parent_without_freezing_siblings(tmp_path):
-    policy=LineagePolicy(tmp_path/'policy');pool=ParentPool(tmp_path/'pool')
+    policy=LineagePolicy(tmp_path/'policy');pool=ParentPool(tmp_path/'pool',evidence_mode='SYNTHETIC_CONTROL')
     receipt=tmp_path/'receipt.json';receipt.write_text('{"verdict":"VALIDATED"}')
     pool.admit('bad','lineage',receipt,kind='EXPLORATION',chars=100,replay_seconds=1)
     assert pool.select(policy,exploration=True)['candidate_id']=='bad'

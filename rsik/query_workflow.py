@@ -6,27 +6,39 @@ Every eligible proposal gets independent ordinary replay, even duplicate bytes.
 from copy import deepcopy
 from pathlib import Path
 import time
+import ast
 
 from .adjudicate import SLOTS, adjudicate_round
 from .errors import StageFailure
+from .contracts import validate_proposal
 from .events import EventLog
 from .experiment import bytes_hash, load, read_decision
 from .foundation import check_split
+from .family_decision import make_family, validate_family, selected_receipt
 from .holdout import replay_artifacts
 from .locking import atomic_write, restrict_directory
 from .postround import run_advisory
 from .query_aware import PROFILE, apply_patch, invariant_probe_source
 from .redact import validate_handbook_summaries
+from .role_profiles import LEGACY,profile_manifest,preserves_selection_order,roles_for
 from .state import canonical, digest, StageJournal
 from .workflow import execute_round
 from run_rsi_loop import selector
 
 
 def implementation_hashes():
-    root = Path(__file__).resolve().parent
-    return {name: bytes_hash((root / name).read_bytes()) for name in
-            ('query_workflow.py', 'query_aware.py', 'workflow.py', 'adjudicate.py',
-             'holdout.py', 'experiment.py', 'provenance.py', 'openai_roles.py')}
+    """Declared v2.3 compatibility surface: runtime rsik and RSI entry modules.
+
+    This excludes tests, docs, external dependencies, and arbitrary system code;
+    external runtime/source identities are separately bound by execution evidence.
+    """
+    package = Path(__file__).resolve().parent
+    root = package.parent
+    paths = [p for p in package.rglob('*.py') if 'tests' not in p.relative_to(package).parts]
+    scripts = root / 'scripts'
+    paths += [p for p in scripts.glob('*.py') if p.name.startswith(('rsi_', 'run_rsi_'))
+              or p.name == 'replay_source_preparation.py']
+    return {p.relative_to(root).as_posix(): bytes_hash(p.read_bytes()) for p in sorted(paths)}
 
 
 def bind_budget_path(query_registry, budget_ledger):
@@ -51,7 +63,7 @@ def read_only_quarantine_check(registry, cid):
         raise ValueError('QUERY_PARENT_QUARANTINED')
 
 
-def resume_query_round(*, directory, registry, fixtures):
+def resume_query_round(*, directory, registry, fixtures, evidence=None):
     """Read-only completed recovery; incomplete external actions need reconciliation."""
     directory = Path(directory)
     completion = load(directory / 'completion.json')
@@ -74,6 +86,24 @@ def resume_query_round(*, directory, registry, fixtures):
     public = load(directory / 'public-context.json')
     if bytes_hash(canonical(public)) != record['public_context_sha256']:
         raise ValueError('QUERY_COMPLETED_PUBLIC_CHANGED')
+    profile = record['role_profile']['version']
+    if record['role_profile'] != profile_manifest(profile) or record.get('proposal_roles') != roles_for(profile):
+        raise ValueError('QUERY_COMPLETED_ROLE_PROFILE_CHANGED')
+    raw = record.get('raw_role_proposals', {})
+    if set(raw) != set(record.get('proposal_instances', {})):
+        raise ValueError('QUERY_COMPLETED_ROLE_PROPOSALS_CHANGED')
+    for slot, proposal in raw.items():
+        actual = roles_for(profile)[slot]
+        validate_proposal(proposal, public, actual)
+        normalized = deepcopy(proposal)
+        normalized['angle'] = slot
+        if normalized != record['proposal_instances'][slot]:
+            raise ValueError('QUERY_COMPLETED_ROLE_PROPOSALS_CHANGED')
+    expected_binding = strategy_input_binding(public, freezes, profile,
+        record.get('compatibility_fingerprint'), record.get('experience_frontier'),
+        proposal_protocol_profile=record['seam_profile'],models=record['role_models'])
+    if record.get('strategy_input_binding') != expected_binding:
+        raise ValueError('QUERY_COMPLETED_STRATEGY_INPUT_CHANGED')
     decisions = []
     for old in record.get('candidate_decisions', []):
         slot = old['angle']
@@ -104,19 +134,13 @@ def resume_query_round(*, directory, registry, fixtures):
                     raise ValueError('QUERY_COMPLETED_LINEAGE_CHANGED')
             decision = read_decision(run, fixture, child['candidate_id'],
                 {'angle': 'P2_BUDGET', 'proposal_id': 'rsi-query-aware-engineering/v1'},
-                bytes_hash(worker), bytes_hash(parent['config']))
+                bytes_hash(worker), bytes_hash(parent['config']), evidence=evidence)
             if decision != load(output / f'decision-{index}.json'):
                 raise ValueError('QUERY_COMPLETED_EVALUATION_CHANGED')
-            if slot == 'P3_ORDER':
+            if slot == 'P3_ORDER' and preserves_selection_order(record.get('role_profile', {}).get('version', LEGACY)):
                 assert_order_angle(run)
             suite.append(decision)
-        current = deepcopy(suite[0])
-        current.update(angle=slot, proposal_id=proposal['proposal_id'])
-        failed = [d for d in suite if not all(d['gates']['G' + str(i)] is True for i in range(1, 5))]
-        if failed:
-            current.update(verdict='REJECTED' if any(d['verdict'] == 'REJECTED' for d in failed) else 'INCONCLUSIVE',
-                           gates_passed=False, round_stop=any(d.get('round_stop') for d in suite))
-            current['reason_codes'] = list(dict.fromkeys(current['reason_codes'] + ['SOURCE_SUITE_HARD_GATE_FAILED']))
+        current = summarize_suites(suite, slot, proposal['proposal_id'])
         if current != load(output / 'decision.json'):
             raise ValueError('QUERY_COMPLETED_DECISION_CHANGED')
         decisions.append(current)
@@ -125,7 +149,50 @@ def resume_query_round(*, directory, registry, fixtures):
         for key in ('verdict', 'adopted_candidate_id', 'adopted_proposal_id', 'candidate_decisions', 'family_size'):
             if outcome.get(key) != record.get(key):
                 raise ValueError('QUERY_COMPLETED_JUDGMENT_CHANGED')
+        family = make_family(decisions, enabled_slots=record['enabled_slots'],
+            all_qualified_terminal=set(record['qualified']) == set(record['attempted_replays']),
+            role_profile=profile,strategy_binding=expected_binding)
+        if family != load(directory / 'family-decision.json') or record.get('family_id') != family['family_id']:
+            raise ValueError('QUERY_COMPLETED_FAMILY_CHANGED')
+        if record.get('adopted_candidate_id'):
+            slot = next(d['angle'] for d in outcome['candidate_decisions']
+                        if d.get('candidate_id') == record['adopted_candidate_id'])
+            archived = load(directory / slot / 'round.json')
+            expected = selected_receipt(family, candidate_id=record['adopted_candidate_id'], selected_slot=slot)
+            if (load(directory / slot / 'family-decision.json') != family
+                    or any(archived.get(k) != v for k, v in expected.items())):
+                raise ValueError('QUERY_COMPLETED_SELECTED_FAMILY_CHANGED')
     return record
+
+
+def strategy_input_binding(public, freezes, role_profile, compatibility_fingerprint, frontier, *, proposal_protocol_profile, models):
+    return {'schema': 'rsi-query-strategy-input/v1',
+            'fixture_freezes_sha256': digest(freezes),
+            'evaluator_hashes': next(iter(freezes.values()), {}).get('protected', {}),
+            'seam_profile': PROFILE, 'role_profile': profile_manifest(role_profile),
+            'proposal_protocol_profile': proposal_protocol_profile, 'models': deepcopy(models),
+            'compatibility_fingerprint': compatibility_fingerprint,
+            'public_semantics_sha256': digest(public_semantics(public)),
+            'experience_frontier': deepcopy(frontier)}
+
+
+def summarize_suites(suite, slot, proposal_id):
+    """Preserve primary statistics and safe cross-suite feedback separately."""
+    current = deepcopy(suite[0])
+    current.update(angle=slot, proposal_id=proposal_id)
+    failed = [d for d in suite if not all(d['gates']['G' + str(i)] is True for i in range(1, 5))]
+    current['feedback_counts'] = {
+        'failed_suites': len(failed),
+        'primary_questions': suite[0].get('eligible_count', len(suite[0].get('per_question', []))),
+        'auxiliary_cases': sum(d.get('eligible_count', len(d.get('per_question', []))) for d in suite[1:]),
+        'fact_loss_cases': sum(any(v == 'ABSENT' for v in row.get('candidate_facts', {}).values())
+                               for d in suite for row in d.get('per_question', []))}
+    if failed:
+        current.update(verdict='REJECTED' if any(d['verdict'] == 'REJECTED' for d in failed) else 'INCONCLUSIVE',
+                       gates_passed=False, round_stop=any(d.get('round_stop') for d in suite))
+        current['reason_codes'] = list(dict.fromkeys(current['reason_codes'] +
+            [code for d in failed for code in d.get('reason_codes', [])] + ['SOURCE_SUITE_HARD_GATE_FAILED']))
+    return current
 
 
 def public_semantics(public):
@@ -157,13 +224,23 @@ def assert_order_angle(run):
 def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry,
                     directory, capsule_factory, scanner, handbook=None,
                     compatibility_fingerprint=None, features=None, format='OTHER',
-                    enabled_slots=SLOTS, deadline=None, guard=lambda: None):
+                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None):
     """Run Diagnosis/P1/P2/P3, ordinary four-suite replay, then Curator/Meta.
 
     advisory_roles must use the legacy read-only profile, sharing the same Budget.
     The selected_training_directory uses the existing query verification format.
     It is training adoption only; fresh sealed verification remains mandatory.
     """
+    original_guard = guard
+    def guard():
+        original_guard()
+        if experience_session is not None:
+            if handbook is None or experience_session.handbook is not handbook:
+                raise ValueError('EXPERIENCE_SESSION_HANDBOOK_MISMATCH')
+            experience_session.verify()
+    guard()
+    if getattr(roles, 'role_profile', role_profile) != role_profile:
+        raise ValueError('ROLE_PROFILE_CONFIGURATION_MISMATCH')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     restrict_directory(directory)
@@ -190,6 +267,11 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         public['handbook_entry_ids'] = [e['entry_id'] for e in entries]
         validate_handbook_summaries(entries, public['handbook_entry_ids'])
     scanner.check(public)
+    frontier = experience_session.verify() if experience_session is not None else None
+    models = {r: getattr(roles, 'models', {}).get(r, 'gpt-6-luna')
+              for r in ('diagnose',) + tuple(roles_for(role_profile).values())}
+    binding = strategy_input_binding(public, freezes, role_profile, compatibility_fingerprint, frontier,
+        proposal_protocol_profile=getattr(roles, 'seam_profile', 'SYNTHETIC'),models=models)
     atomic_write(directory / 'public-context.json', canonical(public), exclusive=True)
     atomic_write(directory / 'fixture-freezes.restricted.json', canonical(freezes), exclusive=True)
     artifacts = {}
@@ -279,12 +361,12 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
                         return {'status': 'UNKNOWN'}
                     audited = read_decision(run, fixture, cid,
                         {'angle': 'P2_BUDGET', 'proposal_id': 'rsi-query-aware-engineering/v1'},
-                        bytes_hash(worker), bytes_hash(parent['config']))
+                        bytes_hash(worker), bytes_hash(parent['config']), evidence=capsule.evidence_policy)
                     return {'status': 'MATCHED', 'output': audited}
                 decision, _ = journal.execute(proposal['angle'] + '-suite-' + str(index),
                     {'fixture': freezes[str(fixture.resolve())], 'parent_id': parent['candidate_id'],
                      'candidate_id': cid}, ordinary, reconciled)
-                if proposal['angle'] == 'P3_ORDER':
+                if proposal['angle'] == 'P3_ORDER' and preserves_selection_order(role_profile):
                     assert_order_angle(run)
                 decisions.append(decision)
                 atomic_write(output / f'decision-{index}.json', canonical(decision), exclusive=True)
@@ -297,13 +379,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
                     if key in observed_outputs and observed_outputs[key] != value:
                         raise StageFailure('JUDGE_ERROR', 'DUPLICATE_PATCH_NONDETERMINISM')
                     observed_outputs[key] = value
-            primary = deepcopy(decisions[0])
-            primary.update(angle=proposal['angle'], proposal_id=proposal['proposal_id'])
-            if any(not all(d['gates']['G' + str(i)] is True for i in range(1, 5)) for d in decisions):
-                failed = [d for d in decisions if not all(d['gates']['G' + str(i)] is True for i in range(1, 5))]
-                primary.update(verdict='REJECTED' if any(d['verdict'] == 'REJECTED' for d in failed) else 'INCONCLUSIVE',
-                               gates_passed=False, round_stop=any(d.get('round_stop') for d in decisions))
-                primary['reason_codes'] = list(dict.fromkeys(primary['reason_codes'] + ['SOURCE_SUITE_HARD_GATE_FAILED']))
+            primary = summarize_suites(decisions, proposal['angle'], proposal['proposal_id'])
             artifact.update(child=child, suite_decisions=decisions)
             atomic_write(output / 'decision.json', canonical(primary), exclusive=True)
             return primary
@@ -317,29 +393,76 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         finally:
             capsule.close()
 
-    result = execute_round(public, roles, review, replay, enabled_slots=enabled_slots, deadline=deadline)
-    result.update(schema='rsi-query-multi-role/v1', parent_id=parent['candidate_id'],
+    class GuardedRoles:
+        def __getattr__(self, name):
+            return getattr(roles, name)
+        def diagnose(self, context):
+            guard()
+            result = roles.diagnose(context)
+            guard()
+            return result
+        def propose(self, slot, context, diagnosis):
+            guard()
+            result = roles.propose(slot, context, diagnosis)
+            guard()
+            return result
+    result = execute_round(public, GuardedRoles(), review, replay, enabled_slots=enabled_slots, deadline=deadline, role_profile=role_profile)
+    evidence_modes = sorted({d.get('evidence_mode', 'UNKNOWN') for a in artifacts.values() for d in a.get('suite_decisions', [])})
+    result['evidence_mode'] = evidence_modes[0] if len(evidence_modes) == 1 else 'UNKNOWN' if evidence_modes else 'NOT_EXECUTED'
+    result['real_eligible'] = result['evidence_mode'] == 'REAL_REPLAY' and all(d.get('real_eligible') is True for a in artifacts.values() for d in a.get('suite_decisions', []))
+    if 'candidate_decisions' in result:
+        result['candidate_decisions'].sort(key=lambda d: SLOTS.index(d['angle']))
+    result.update(schema='rsi-query-multi-role/v2.3', parent_id=parent['candidate_id'],
+                  role_profile=profile_manifest(role_profile),
+                  compatibility_fingerprint=compatibility_fingerprint,
+                  experience_frontier=frontier, strategy_input_binding=binding,
+                  static_proposal_instances=len(artifacts),
+                  ast_unique_strategy_count=len({digest(ast.dump(ast.parse(a['worker']), include_attributes=False)) for a in artifacts.values()}),
                   independent_holdout=False, production_changed=False,
                   enabled_slots=list(enabled_slots), fixture_freezes=freezes,
                   parent_worker_sha256=bytes_hash(parent['worker']),
                   parent_config_sha256=bytes_hash(parent['config']),
                   public_context_sha256=bytes_hash(canonical(public)),
                   public_semantics_sha256=bytes_hash(canonical(public_semantics(public))),
-                  role_models={r: getattr(roles, 'models', {}).get(r, 'gpt-6-luna')
-                               for r in ('diagnose',) + tuple(SLOTS)},
+                  role_models=models,
                   seam_profile=getattr(roles, 'seam_profile', 'SYNTHETIC'))
+    if 'candidate_decisions' in result and set(d['angle'] for d in result['candidate_decisions']) == set(SLOTS):
+        # Family input is the pre-Holm decisions archived by each replay. Reusing
+        # adjusted items as inputs would erase their evidence provenance.
+        inputs = [load(artifacts[d['angle']]['output'] / 'decision.json')
+                  if d['angle'] in artifacts and (artifacts[d['angle']]['output'] / 'decision.json').exists()
+                  else deepcopy(d) for d in result['candidate_decisions']]
+        family = make_family(inputs, enabled_slots=enabled_slots,
+            all_qualified_terminal=set(result['qualified']) == set(result['attempted_replays']),role_profile=role_profile,strategy_binding=binding)
+        # The pure coordinator and archival family must agree before any adoption.
+        for key in ('verdict', 'adopted_candidate_id', 'adopted_proposal_id', 'candidate_decisions', 'family_size'):
+            if family['outcome'].get(key) != result.get(key):
+                raise StageFailure('JUDGE_ERROR', 'FAMILY_COORDINATOR_MISMATCH')
+        atomic_write(directory / 'family-decision.json', canonical(family), exclusive=True)
+        result['family_id'] = family['family_id']
     if result.get('adopted_candidate_id'):
         slot = next(s for s, a in artifacts.items() if a.get('child', {}).get('candidate_id') == result['adopted_candidate_id'])
         selected = artifacts[slot]
-        receipt = adjudicate_round([selected['suite_decisions'][0]])
+        receipt = selected_receipt(family, candidate_id=selected['child']['candidate_id'], selected_slot=slot)
         receipt.update(candidate_id=selected['child']['candidate_id'], parent_id=parent['candidate_id'],
             suite_decisions=selected['suite_decisions'], suite_expected=4,
             coordinator_round_id=public['round_id'], coordinator_selected_slot=slot,
+            coordinator_directory=str(directory.resolve()),
             independent_holdout=False, production_changed=False)
+        atomic_write(selected['output'] / 'family-decision.json', canonical(family), exclusive=True)
         atomic_write(selected['output'] / 'round.json', canonical(receipt), exclusive=True)
         result['selected_training_directory'] = str(selected['output'].resolve())
     guard()
     atomic_write(directory / 'round.json', canonical(result), exclusive=True)
+    if handbook is not None:
+        from .query_learning import record_query_round_learning
+        def record_learning():
+            return record_query_round_learning(handbook=handbook, record=result, public=public,
+                                              compatibility_fingerprint=compatibility_fingerprint)
+        if experience_session is not None:
+            experience_session.learn(digest(result), record_learning)
+        else:
+            record_learning()
     # Separate role profile: completed_projection is intentionally legacy-shaped.
     advisory_failures = []
     class IndependentAdvisory:

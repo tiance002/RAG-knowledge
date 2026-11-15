@@ -15,8 +15,15 @@ from .projection import project
 
 
 class Handbook:
-    def __init__(self, directory, *, scanner=None):
+    def __init__(self, directory, *, scanner=None, evidence_mode="REAL_REPLAY"):
+        if evidence_mode not in {'REAL_REPLAY','SYNTHETIC_CONTROL'}:raise ValueError('UNKNOWN_EVIDENCE_MODE')
+        self.evidence_mode=evidence_mode
         self.directory = Path(directory)
+        scope_path=self.directory/'evidence-mode.json'
+        expected=canonical({'evidence_mode':evidence_mode})
+        if scope_path.exists():
+            if scope_path.read_bytes()!=expected:raise ValueError('HANDBOOK_EVIDENCE_MODE_MISMATCH')
+        else:atomic_write(scope_path,expected,exclusive=True)
         self.log = EventLog(self.directory / 'events.sqlite')
         self.scanner = scanner or LeakScanner()
 
@@ -29,7 +36,7 @@ class Handbook:
         return {'entry_id': entry_id, **json.loads(data)}
 
     def view(self):
-        return project(self.log.read())
+        return project(self.log.read(), evidence_mode=self.evidence_mode)
 
     def bind_evidence(self,entry_id,context):
         """Archive private alias bindings immutably; retrieval never exports them."""
@@ -59,6 +66,7 @@ class Handbook:
         refs maps opaque visible aliases to private evidence metadata;
         verified_candidates is derived from completed deterministic holdout.
         """
+        if context.get('evidence_mode',self.evidence_mode)!=self.evidence_mode:raise ContractError('HANDBOOK_EVIDENCE_MODE_MISMATCH')
         self.scanner.check(delta)
         object_fields(delta, ('schema_version', 'op', 'target_entry_id', 'proposed_entry', 'evidence_refs', 'reason'))
         if delta['schema_version'] != 'rsi-v2.2' or delta['op'] not in {'ADD', 'REVISE', 'DEPRECATE'}:
@@ -77,7 +85,10 @@ class Handbook:
             if previous['payload']['delta_hash'] != delta_hash:
                 raise RuntimeError('IDEMPOTENCY_CONFLICT')
             entry_id=previous['payload']['entry_id']
-            if delta['op']!='DEPRECATE':self.bind_evidence(entry_id,context)
+            if delta['op']!='DEPRECATE':
+                self.bind_evidence(entry_id,context)
+                self.quarantine_conflicts(entry_id)
+                self.activate_if_qualified(entry_id,context)
             return entry_id
         target = delta['target_entry_id']
         if delta['op'] == 'DEPRECATE':
@@ -102,7 +113,7 @@ class Handbook:
             self.get(target)
             if entry['supersedes'] != [target]:
                 raise ContractError()
-        body = {**entry, 'created_at': datetime.now(timezone.utc).isoformat()}
+        body = {**entry, 'evidence_mode':self.evidence_mode, 'created_at': datetime.now(timezone.utc).isoformat()}
         data = canonical(body);entry_id = hashlib.sha256(data).hexdigest()
         atomic_write(self.directory / 'entries' / entry_id, data, exclusive=True)
         self.log.append('delta:' + idempotency_key, 'ENTRY_CREATED' if delta['op'] == 'ADD' else 'ENTRY_REVISED',
@@ -151,6 +162,7 @@ class Handbook:
             if state != 'ACTIVE':
                 continue
             entry = self.get(entry_id)
+            if entry.get('evidence_mode','REAL_REPLAY')!=self.evidence_mode:continue
             if (entry['section'] == section and format in entry['applicable_format']
                     and entry['compatibility_fingerprint'] == compatibility_fingerprint
                     and conditions_match(entry, {**features, 'format': format})):

@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 
 from .events import EventLog
-from .state import digest
+from .state import digest, canonical
+from .locking import atomic_write
 
 
 class LineagePolicy:
@@ -85,13 +86,83 @@ class LineagePolicy:
 
 class ParentPool:
     """Trusted receipt-bound admission, deterministic Pareto front and tie seed."""
-    def __init__(self, directory):
-        self.log = EventLog(Path(directory) / 'parents.sqlite')
+    def __init__(self, directory, *, evidence_mode='REAL_REPLAY'):
+        if evidence_mode not in {'REAL_REPLAY','SYNTHETIC_CONTROL'}:
+            raise ValueError('INVALID_POOL_EVIDENCE_MODE')
+        self.directory, self.evidence_mode = Path(directory), evidence_mode
+        self.scope_path = self.directory/'parent-pool-scope.json'
+        if self.scope_path.exists() and json.loads(self.scope_path.read_bytes())['evidence_mode'] != evidence_mode:
+            raise ValueError('PARENT_POOL_SCOPE_MISMATCH')
+        self.log = EventLog(self.directory / 'parents.sqlite')
+        if evidence_mode=='SYNTHETIC_CONTROL' and not self.scope_path.exists() and any(
+                event.get('payload',{}).get('evidence_mode')!='SYNTHETIC_CONTROL' for event in self.log.read()):
+            raise ValueError('PARENT_POOL_SCOPE_MISMATCH')
 
-    def admit(self, candidate_id, lineage_id, receipt_path, *, kind, chars, replay_seconds):
+    def _real_admission(self, candidate_id, receipt_path, receipt, kind, *, registry, fixture, evidence):
+        from .execution_evidence import resolve_policy
+        from .experiment import read_decision
+        from .adjudicate import adjudicate_holdout
+        from .holdout import verify_training_adoption
+        policy=resolve_policy(evidence)
+        if (not policy.real_eligible or receipt.get('evidence_mode')!='REAL_REPLAY'
+                or receipt.get('real_eligible') is not True or receipt.get('execution_policy')!=policy.to_dict()):
+            raise ValueError('REAL_PARENT_EVIDENCE_REQUIRED')
+        if kind=='BASELINE_ANCHOR':
+            raise ValueError('BASELINE_EVIDENCE_MIGRATION_REQUIRED')
+        if registry is None or fixture is None:
+            raise ValueError('PARENT_REPLAY_RECOMPUTATION_REQUIRED')
+        if kind=='EXPLORATION':
+            return verify_training_adoption(Path(receipt_path).parent, fixture, registry, candidate_id)
+        if receipt.get('candidate_id')!=candidate_id:
+            raise ValueError('PARENT_CANDIDATE_MISMATCH')
+        from .experiment import registry_api
+        candidate=registry_api.candidate(Path(registry),candidate_id)
+        if receipt.get('parent_id')!=candidate.get('parent'):
+            raise ValueError('PARENT_CANDIDATE_MISMATCH')
+        if receipt.get('shared_physical_comparison') and receipt.get('trusted_id')!=receipt.get('parent_id'):
+            raise ValueError('PARENT_COMPARISON_IDENTITY_MISMATCH')
+        decisions=[]
+        for name in ('vs-parent','vs-trusted'):
+            run=Path(receipt_path).parent/name
+            if name=='vs-trusted' and receipt.get('shared_physical_comparison'):
+                decisions.append(decisions[0]);continue
+            manifest=json.loads((run/'manifest.json').read_bytes());spec=manifest['arms']['B']
+            anchor_id=receipt['parent_id'] if name=='vs-parent' else receipt['trusted_id']
+            anchor=registry_api.candidate(Path(registry),anchor_id)
+            arm_a=manifest['arms']['A']
+            if (spec['candidate_id']!=candidate_id or spec['worker_sha256']!=candidate['worker']
+                    or spec['sha256']!=candidate['config'] or arm_a['candidate_id']!=anchor_id
+                    or arm_a['worker_sha256']!=anchor['worker'] or arm_a['sha256']!=anchor['config']):
+                raise ValueError('PARENT_CANDIDATE_MISMATCH')
+            decisions.append(read_decision(run,fixture,candidate_id,
+                {'angle':'P2_BUDGET','proposal_id':manifest['schema']},spec['worker_sha256'],spec['sha256'],evidence=policy))
+        if adjudicate_holdout(*decisions)['verdict']!='VERIFIED':
+            raise ValueError('PARENT_VERIFICATION_NOT_REPRODUCIBLE')
+        return digest([d['execution_evidence_hash'] for d in decisions])
+
+    def _check_candidate(self, record):
+        data=Path(record['receipt_path']).read_bytes()
+        if hashlib.sha256(data).hexdigest()!=record['receipt_hash']:
+            raise RuntimeError('PARENT_RECEIPT_CHANGED')
+        if self.evidence_mode=='REAL_REPLAY':
+            proof=self._real_admission(record['candidate_id'],record['receipt_path'],json.loads(data),
+                record['kind'],registry=record.get('registry_path'),fixture=record.get('fixture_path'),evidence=None)
+            if proof!=record.get('recomputed_evidence_hash'):
+                raise ValueError('PARENT_EXECUTION_EVIDENCE_CHANGED')
+        return json.loads(data)
+
+    def admit(self, candidate_id, lineage_id, receipt_path, *, kind, chars, replay_seconds,
+              registry=None, fixture=None, evidence=None):
         if kind not in {'VERIFIED', 'EXPLORATION', 'BASELINE_ANCHOR'}:
             raise ValueError('INVALID_POOL')
         data = Path(receipt_path).read_bytes();receipt = json.loads(data)
+        proof=None
+        if self.evidence_mode=='REAL_REPLAY':
+            proof=self._real_admission(candidate_id,receipt_path,receipt,kind,
+                registry=registry,fixture=fixture,evidence=evidence)
+        if not self.scope_path.exists():
+            atomic_write(self.scope_path,canonical({'schema':'rsi-parent-pool-scope/v2.3',
+                'evidence_mode':self.evidence_mode}),exclusive=True)
         if kind=='VERIFIED' and receipt.get('verdict')!='VERIFIED': raise ValueError('UNVERIFIED_PARENT')
         if kind=='EXPLORATION' and receipt.get('verdict') not in {'VALIDATED','ADOPT_CANDIDATE'}: raise ValueError('UNVALIDATED_PARENT')
         if kind=='BASELINE_ANCHOR' and not (receipt.get('status')=='PASS' and receipt.get('paired')==20 and receipt.get('failed')==0):
@@ -99,7 +170,10 @@ class ParentPool:
         if type(chars) is not int or chars<=0 or type(replay_seconds) not in (float,int) or replay_seconds<=0:
             raise ValueError('INVALID_PARENT_METRICS')
         self.log.append('parent:'+candidate_id+':'+kind, 'PARENT_ADMITTED', {'candidate_id':candidate_id,
-            'lineage_id':lineage_id, 'kind':kind, 'receipt_path':str(Path(receipt_path).resolve()),
+            'lineage_id':lineage_id, 'kind':kind, 'evidence_mode':self.evidence_mode,
+            'admission_version':'rsi-parent-admission/v2.3', 'recomputed_evidence_hash':proof,
+            'registry_path':str(Path(registry).resolve()) if registry else None,
+            'fixture_path':str(Path(fixture).resolve()) if fixture else None, 'receipt_path':str(Path(receipt_path).resolve()),
             'receipt_hash':hashlib.sha256(data).hexdigest(), 'chars':chars, 'replay_seconds':replay_seconds})
 
     def select(self, policy, *, exploration=False, seed=0, allow_bootstrap=False):
@@ -108,10 +182,11 @@ class ParentPool:
         for event in self.log.read():
             if event['event_type'] != 'PARENT_ADMITTED': continue
             p=event['payload']
+            if p.get('evidence_mode')!=self.evidence_mode or p.get('admission_version')!='rsi-parent-admission/v2.3':
+                continue  # Preserve legacy bytes; unknown historical proof is not renewed qualification.
             allowed = p['kind']=='VERIFIED' or exploration and p['kind']=='EXPLORATION' or allow_bootstrap and p['kind']=='BASELINE_ANCHOR'
             if not allowed or p['candidate_id'] in quarantined or policy.state(p['lineage_id'])['stop_reason']: continue
-            data=Path(p['receipt_path']).read_bytes()
-            if hashlib.sha256(data).hexdigest()!=p['receipt_hash']: raise RuntimeError('PARENT_RECEIPT_CHANGED')
+            self._check_candidate(p)
             candidates[p['candidate_id']]=p
         values=list(candidates.values())
         front=[p for p in values if not any(q['chars']<=p['chars'] and q['replay_seconds']<=p['replay_seconds']
@@ -123,10 +198,12 @@ class ParentPool:
         if any(e['event_type']=='PARENT_QUARANTINED' and e['payload']['candidate_id']==candidate_id for e in self.log.read()):
             raise ValueError('PARENT_QUARANTINED')
         records=[e['payload'] for e in self.log.read() if e['event_type']=='PARENT_ADMITTED'
-                 and e['payload']['candidate_id']==candidate_id and e['payload']['kind']=='VERIFIED']
+                 and e['payload']['candidate_id']==candidate_id and e['payload']['kind']=='VERIFIED'
+                 and e['payload'].get('evidence_mode')==self.evidence_mode
+                 and e['payload'].get('admission_version')=='rsi-parent-admission/v2.3']
         if len(records)!=1:raise ValueError('PARENT_NOT_IN_VERIFIED_POOL')
-        p=records[0];data=Path(p['receipt_path']).read_bytes();receipt=json.loads(data)
-        if (hashlib.sha256(data).hexdigest()!=p['receipt_hash'] or receipt.get('verdict')!='VERIFIED'
+        p=records[0];receipt=self._check_candidate(p)
+        if (receipt.get('verdict')!='VERIFIED'
                 or receipt.get('candidate_id')!=candidate_id or policy.state(p['lineage_id'])['frozen']):
             raise ValueError('PARENT_VERIFICATION_INVALID')
         return p

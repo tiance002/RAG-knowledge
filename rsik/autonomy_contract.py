@@ -1,20 +1,31 @@
 """Bounded model-generated search history; no source/question/Gold forwarding."""
 from .contracts import ContractError,object_fields,text,string_list
-import re
+import re,math
 
 
 def validate_history(history):
     if not isinstance(history,list) or len(history)>3:raise ContractError('INVALID_AUTONOMY_HISTORY')
     for item in history:
-        object_fields(item,('hypothesis','change','outcome','reason_codes','counts'))
+        object_fields(item,('hypothesis','change','outcome','reason_codes','counts'),
+            ('feedback_schema','quality_verdict','execution_status','failure_origin'))
+        fields={'feedback_schema','quality_verdict','execution_status','failure_origin'}
+        if fields & set(item):
+            if not fields <= set(item) or item['feedback_schema']!='rsi-search-feedback/v2':raise ContractError('INVALID_AUTONOMY_HISTORY')
+            if item['quality_verdict'] not in {'NOT_EVALUATED','OBSERVED','INCONCLUSIVE','REJECTED','VALIDATED'}:raise ContractError('INVALID_AUTONOMY_HISTORY')
+            if item['execution_status'] not in {'NOT_STARTED','COMPLETED','FAILED','PARTIAL','STOPPED','UNKNOWN'}:raise ContractError('INVALID_AUTONOMY_HISTORY')
+            if item['failure_origin'] not in {'NONE','CANDIDATE','INFRASTRUCTURE','PARENT','CONTRACT','GLOBAL_STOP','UNKNOWN'}:raise ContractError('INVALID_AUTONOMY_HISTORY')
         text(item['hypothesis'],maximum=512);text(item['change'],maximum=512)
-        if item['outcome'] not in {'ABSTAIN','PATCH_INVALID','UNIT_FAILED','REJECTED','OBSERVED','VALIDATED','NO_GAIN'}:
+        if item['outcome'] not in {'ABSTAIN','PATCH_INVALID','UNIT_FAILED','REJECTED','OBSERVED','VALIDATED','NO_GAIN','INCONCLUSIVE','NOT_EVALUATED','STOPPED'}:
             raise ContractError('INVALID_AUTONOMY_HISTORY')
         string_list(item['reason_codes'],limit=8)
         if any(not re.fullmatch('[A-Z0-9_]{1,64}',code) for code in item['reason_codes']):raise ContractError('INVALID_AUTONOMY_HISTORY')
-        if (not isinstance(item['counts'],dict) or set(item['counts'])-{'favorable','unfavorable','ties','fact_loss_cases','failed_suites','primary_questions','auxiliary_cases'}
-                or any(type(v)is not int or v<0 for v in item['counts'].values())):
+        counts=item['counts']
+        unsigned={'favorable','unfavorable','ties','fact_loss_cases','failed_suites','primary_questions','auxiliary_cases'}
+        if not isinstance(counts,dict) or set(counts)-unsigned-{'delta_total','reduction_rate'}:
             raise ContractError('INVALID_AUTONOMY_HISTORY')
+        if any(type(v)is not int or v<0 for k,v in counts.items() if k in unsigned):raise ContractError('INVALID_AUTONOMY_HISTORY')
+        if 'delta_total' in counts and type(counts['delta_total']) is not int:raise ContractError('INVALID_AUTONOMY_HISTORY')
+        if 'reduction_rate' in counts and (type(counts['reduction_rate']) not in (int,float) or not math.isfinite(counts['reduction_rate'])):raise ContractError('INVALID_AUTONOMY_HISTORY')
     return history
 
 

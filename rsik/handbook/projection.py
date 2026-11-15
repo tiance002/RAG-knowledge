@@ -5,10 +5,11 @@ from collections import defaultdict
 CLASSES = ('pending', 'helpful', 'miss', 'harmful', 'excluded')
 
 
-def project(events):
+def project(events, *, evidence_mode='REAL_REPLAY'):
     states, episodes, outcomes = {}, {}, defaultdict(dict)
     for event in events:
         kind, payload = event['event_type'], event['payload']
+        if payload.get('evidence_mode',evidence_mode)!=evidence_mode:continue
         if payload.get('mode')=='SIMULATION_ONLY':
             continue  # sandbox switches never create real helpful/harmful credit
         entry = payload.get('entry_id')

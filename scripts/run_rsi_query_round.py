@@ -16,6 +16,8 @@ from rsik.query_preview import frames
 from rsik.query_verification import verify_training
 from rsik.query_workflow import run_query_round, resume_query_round, bind_budget_path
 from rsik.adjudicate import SLOTS
+from rsik.role_profiles import LEGACY, DEPENDENCY, profile_manifest
+from rsik.query_learning import ExperienceSession
 from rsik.redact import LeakScanner, make_visible, project_summary
 from run_rsi_loop import selector
 
@@ -27,6 +29,8 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--parent-id', required=True)
     parser.add_argument('--host', required=True)
+    parser.add_argument('--role-profile',choices=(LEGACY,DEPENDENCY),default=DEPENDENCY)
+    parser.add_argument('--learning-session',type=Path)
     parser.add_argument('--profile', choices=('single', 'parallel'), default='parallel')
     parser.add_argument('--single-angle', choices=SLOTS, default='P2_BUDGET')
     parser.add_argument('--resume-completed', action='store_true')
@@ -61,18 +65,24 @@ def main():
                       parent_selection=json.loads(parent['config'])['selection'])
         budget = Budget(args.budget_ledger)
         roles = OpenAIRoles(budget, args.directory.parent / (args.directory.name + '-roles'), args.key_file,
-                            scanner, seam_profile='query-autonomous-v1')
+                            scanner, seam_profile='query-autonomous-v1',role_profile=args.role_profile)
         advisory = OpenAIRoles(budget, args.directory.parent / (args.directory.name + '-advisory-roles'), args.key_file, scanner)
         handbook = None
         if args.handbook:
             from rsik.handbook.store import Handbook
             handbook = Handbook(args.handbook, scanner=scanner)
+        session=ExperienceSession(args.learning_session or args.directory.parent/'learning-session',handbook) if handbook else None
+        if session:
+            roles.before_request=session.verify
+            roles.strategy_context=session.verify
+            advisory.before_request=session.verify
+            advisory.strategy_context=session.verify
         result = run_query_round(public=public, roles=roles, advisory_roles=advisory, parent=parent,
             fixtures=fixtures, registry=registry, directory=args.directory, scanner=scanner,
             capsule_factory=lambda output: Capsule(args.host, args.identity, args.business_root, output),
             enabled_slots=SLOTS if args.profile == 'parallel' else (args.single_angle,),
             handbook=handbook, compatibility_fingerprint=args.handbook_fingerprint,
-            format=args.handbook_format, features=args.handbook_features)
+            format=args.handbook_format, features=args.handbook_features,role_profile=args.role_profile,experience_session=session)
         print(json.dumps({'verdict': result['verdict'], 'adopted_candidate_id': result.get('adopted_candidate_id'),
                           'budget': budget.snapshot(), 'production_changed': False}))
     verify_boundary()

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from rsik.experiment import read_decision, unit_worker
 from rsik.errors import StageFailure
+from rsik.execution_evidence import ExecutionEvidence
 from portable_fixtures import ROOT, write
 
 
@@ -45,11 +46,11 @@ def test_synthetic_receipts_bind_raw_config_bytes_and_canonical_config_separatel
                 'input_sha256':hashlib.sha256((directory/'arm-input.json').read_bytes()).hexdigest()})
     spec=manifest['arms']['B']
     result=read_decision(run,synthetic_replay['fixture'],spec['candidate_id'],
-        {'angle':'P2_BUDGET','proposal_id':'SYNTHETIC'},spec['worker_sha256'],spec['sha256'])
+        {'angle':'P2_BUDGET','proposal_id':'SYNTHETIC'},spec['worker_sha256'],spec['sha256'],evidence=ExecutionEvidence.synthetic_control())
     assert len(result['per_question'])==20 and all(r['pair_identity'] for r in result['per_question'])
     assert result['gates']['G1'] and result['gates']['G3']
     receipt=run/'case-001/A/execution-receipt.json'
     value=json.loads(receipt.read_bytes());value['config_sha256']=manifest['arms']['A']['sha256'];write(receipt,value)
     with pytest.raises(StageFailure,match='EXECUTION_IDENTITY_UNKNOWN'):
         read_decision(run,synthetic_replay['fixture'],spec['candidate_id'],
-            {'angle':'P2_BUDGET','proposal_id':'SYNTHETIC'},spec['worker_sha256'],spec['sha256'])
+            {'angle':'P2_BUDGET','proposal_id':'SYNTHETIC'},spec['worker_sha256'],spec['sha256'],evidence=ExecutionEvidence.synthetic_control())

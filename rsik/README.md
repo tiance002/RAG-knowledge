@@ -61,3 +61,10 @@ python scripts/run_rsi_autonomous.py --help
 系统工程与自主测试分开记录：工程师可以开发系统；进入冻结测试后，优化补丁仅来自 RSI 模型，监测者不代写策略。人工停止与工程失效分别记录，后者不能冒充用户要求停止。部分运行或副作用不确定时保留现场并拒绝盲重启，完成轮次可只读重算。
 
 每个隔离 capsule 自行回收本任务容器/远端目录。原始来源、冻结 Gold、逐题捕获、失败和 UNKNOWN 记录保留；不要清理其他任务资源。当前阶段不执行真实生产切换；下一阶段是否开放 RSI 自身系统代码优化，由审查后的新方案定义。
+
+
+## v2.3 S0–S2
+
+详见 [阶段报告](../docs/rsi-v23-s0-s2-review.md) 与 [S3/S4 准备](../docs/rsi-v23-evaluation-preparation.md)。默认真实读取强制逐题 prepare/A/B execution receipt；合成控制显式隔离。完整三槽 FamilyDecision 贯穿归档、恢复与核查；新 query-k3-dependency/v1 显式映射 P3_DEPENDENCY，旧 P3_ORDER 不变。核查 CLI 可通过 handbook/session/原账本参数接通可信经验闭环。
+
+旧 v2.2 归档和基线不会自动获得 v2.3 资格，需完整证据迁移。prepare_rsi_v23.py 只生成准备清单，不启动真实实验。当前 S3 覆盖与新资格未就绪，不运行 S4。

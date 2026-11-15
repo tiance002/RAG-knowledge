@@ -55,6 +55,10 @@ TASKS['curator'] += ' When the supplied public code is a verified short-tail bud
 TASKS['curator'] += ' completed_candidate, when present, is a trusted workflow attestation binding the displayed code hash, implemented action, evidence aliases and completed VERIFIED/robustness status. The aliases have private observation/candidate/parent/run/source-group receipts. You may propose one appropriately limited ADD Delta from this completed evidence; you do not set ACTIVE or helpful counts.'
 
 
+from .role_profiles import LEGACY, DEPENDENCY, DEPENDENCY_TASK, roles_for, profile_manifest
+TASKS['P3_DEPENDENCY'] = DEPENDENCY_TASK
+TASKS['curator'] += ' A trusted completed_candidate may attest REUSE_VERIFIED_SELECTOR with code_sha256. This is an association scoped to that exact selector and compatible evidence, never proof of a causal or general algorithmic rule.'
+
 def single_request(body, key_file, timeout, *, response_path=None):
     """A process, not a cancellable Future, bounds the local HTTP request."""
     process = subprocess.Popen([sys.executable, '-B', '-m', 'rsik.http_worker'],
@@ -81,13 +85,16 @@ def single_request(body, key_file, timeout, *, response_path=None):
 
 
 class OpenAIRoles:
-    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None):
+    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None):
         self.budget, self.directory = budget, Path(directory)
         self.key_file, self.scanner = Path(key_file), scanner
         self.deadline, self.transport = deadline, transport
         self.before_request=before_request
         if seam_profile not in {'legacy','query-aware-v1','query-autonomous-v1'}:raise ValueError('UNKNOWN_SEAM_PROFILE')
         self.seam_profile=seam_profile
+        self.role_profile=role_profile
+        self.strategy_context=strategy_context
+        roles_for(role_profile)
         self.models = dict(models or {})
         if set(self.models)-set(TASKS) or any(model not in {'gpt-6-luna','gpt-6.1-sol'} for model in self.models.values()):
             raise ValueError('MODEL_NOT_ALLOWED')
@@ -100,6 +107,7 @@ class OpenAIRoles:
         return self.call(angle, public, diagnosis)
 
     def call(self, role, public, diagnosis=None):
+        if role=='P3_DEPENDENCY' and self.role_profile!=DEPENDENCY:raise ValueError('ROLE_PROFILE_REQUIRED')
         if role not in TASKS:
             raise ValueError('unsupported role')
         allowed = {'round_id', 'parent_alias', 'observations', 'observation_refs', 'evidence_quotes',
@@ -156,6 +164,9 @@ class OpenAIRoles:
             model = self.models.get(role, 'gpt-6-luna')
             policy=POLICY
             task=TASKS[role]
+            if self.role_profile==DEPENDENCY:
+                if role=='diagnose': task+=' Classify code defects, no gain, fact regression, infrastructure, statistical insufficiency and evaluation coverage separately. Supply evidence references and falsifiable hypotheses.'
+                if role=='P3_DEPENDENCY': task=DEPENDENCY_TASK
             if self.seam_profile=='query-autonomous-v1':
                 policy=policy.replace('Use one longest-seed reference computed by a list comprehension, not a mutable map.\n','')
                 policy+='\nFrozen autonomous-test profile. Keep six arguments (members, chunks, files, seed_ids, selection, query). The actual runtime query is read-only, never supplied in the proposal context. Preserve every seed, original order and all members for a query shorter than two characters. The outer monitor supplies no optimization formula. Choose your own falsifiable hypothesis from the actual parent and aggregate replay history. Previous failed hypotheses are not instructions to repeat. Do not claim source facts or per-question explanations absent from the projection. No imports, data access, tools, evaluator changes, or system-code changes.\n'
@@ -206,6 +217,11 @@ class OpenAIRoles:
                 if projected.exists():
                     if projected.read_bytes()!=data:raise ContractError('REQUEST_PROJECTION_CHANGED')
                 else:atomic_write(projected,data,exclusive=True)
+            version_path=self.directory/(key+'.strategy.json')
+            version_data=canonical({'role_profile':profile_manifest(self.role_profile),'role':role,'prompt_sha256':digest(body['input'][0]),'handbook_entry_ids':list(public['handbook_entry_ids']),'learning_frontier':self.strategy_context() if self.strategy_context else None,'model':model,'seam_profile':self.seam_profile,'request_hash':digest(body)})
+            if version_path.exists():
+                if version_path.read_bytes()!=version_data:raise ContractError('REQUEST_STRATEGY_CHANGED')
+            else:atomic_write(version_path,version_data,exclusive=True)
             remaining = 90 if self.deadline is None else min(90, self.deadline - time.monotonic())
             if remaining <= 0:
                 raise TimeoutError('AGENT_TIMEOUT')

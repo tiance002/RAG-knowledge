@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import time
 
+from .role_profiles import LEGACY, roles_for
 from .adjudicate import SLOTS, adjudicate_round
 from .contracts import ContractError, unwrap_response, validate_diagnosis, validate_proposal
 from .errors import StageFailure, normalized_error
@@ -20,13 +21,14 @@ def placeholder(angle, proposal_id, reason, *, verdict='INCONCLUSIVE'):
             'sign_p_adjusted': None, 'per_question': [], 'delta_total': None}
 
 
-def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadline=None):
+def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadline=None, role_profile=LEGACY):
     """Every statically qualified instance reaches replay, including duplicates.
 
     A confirmed global integrity failure stops further side effects and forbids
     a winner. A local replay failure leaves the other candidates eligible.
     """
-    record = {'round_id': public['round_id'], 'errors': [], 'proposal_instances': {},
+    mapping=roles_for(role_profile)
+    record = {'role_profile':role_profile,'proposal_roles':mapping,'raw_role_proposals':{},'round_id': public['round_id'], 'errors': [], 'proposal_instances': {},
               'execution_state': 'RUNNING', 'agent_call_results': {}, 'qualified': [], 'attempted_replays': []}
     if deadline is not None and time.monotonic() >= deadline:
         record.update(execution_state='FAILED', verdict='ROUND_ABORTED', stop_reason='ROUND_DEADLINE',
@@ -66,10 +68,14 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
     # all initial proposers were dispatched. No candidate result feeds a peer.
     def propose(slot):
         try:
-            raw = roles.propose(slot, deepcopy(public), deepcopy(diagnosis))
+            actual_role=mapping[slot]
+            raw = roles.propose(actual_role, deepcopy(public), deepcopy(diagnosis))
             proposal = unwrap_response(raw)
             if proposal is not None:
-                validate_proposal(proposal, public, slot)
+                validate_proposal(proposal, public, actual_role)
+                record['raw_role_proposals'][slot]=deepcopy(proposal)
+                proposal=deepcopy(proposal)
+                proposal['angle']=slot
             return proposal, None
         except (ContractError, StageFailure, TimeoutError) as error:
             reason = error.code if isinstance(error, ContractError) else error.reason_code if isinstance(error, StageFailure) else 'AGENT_TIMEOUT'

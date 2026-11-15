@@ -15,13 +15,13 @@ from .provenance import assess_provenance
 from .adjudicate import evaluate_candidate,adjudicate_round
 
 
-def frames(ordinary_round,fixtures,arm='A'):
+def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
     ordinary_round=Path(ordinary_round);entries=[];baseline={};parent_id=None;worker=None;config=None
     for suite,fixture in enumerate(fixtures,1):
         fixture=Path(fixture);check_split(fixture,expected_count=20)
         run=ordinary_round/('suite-'+str(suite));manifest=load(run/'manifest.json')
         spec=manifest['arms']['B']
-        audited=read_decision(run,fixture,spec['candidate_id'],{'angle':'P2_BUDGET','proposal_id':manifest['schema']},spec['worker_sha256'],spec['sha256'])
+        audited=read_decision(run,fixture,spec['candidate_id'],{'angle':'P2_BUDGET','proposal_id':manifest['schema']},spec['worker_sha256'],spec['sha256'],evidence=evidence)
         current=manifest['arms'][arm];raw_worker=(run/(arm+'_worker.py')).read_bytes();raw_config=(run/(arm+'.json')).read_bytes()
         if bytes_hash(raw_worker)!=current['worker_sha256'] or bytes_hash(raw_config)!=current['sha256']:raise ValueError('PREVIEW_PARENT_ARTIFACT_CHANGED')
         if parent_id is not None and (parent_id!=current['candidate_id'] or worker!=raw_worker or config!=raw_config):raise ValueError('MIXED_PREVIEW_PARENT')

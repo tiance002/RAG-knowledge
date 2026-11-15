@@ -51,7 +51,7 @@ def test_query_probe_cannot_change_selector_inputs_even_with_rehashed_cases(monk
 
 
 def test_historical_verified_receipt_does_not_override_later_confirmed_regression(tmp_path):
-    pool=ParentPool(tmp_path/'pool');policy=LineagePolicy(tmp_path/'policy')
+    pool=ParentPool(tmp_path/'pool',evidence_mode='SYNTHETIC_CONTROL');policy=LineagePolicy(tmp_path/'policy')
     receipt=tmp_path/'verified.json';receipt.write_text('{"verdict":"VERIFIED","candidate_id":"parent"}')
     pool.admit('parent','lineage',receipt,kind='VERIFIED',chars=100,replay_seconds=1)
     assert pool.require_verified('parent',policy)['kind']=='VERIFIED'

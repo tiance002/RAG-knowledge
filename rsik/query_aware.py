@@ -108,6 +108,15 @@ class QueryRegistry:
         EventLog(self.directory/'policy.sqlite').append('quarantine:'+cid,'QUERY_CANDIDATE_QUARANTINED',
             {'candidate_id':cid,'receipt_path':str(Path(receipt_path).resolve()),
              'receipt_sha256':bytes_hash(Path(receipt_path).read_bytes()),'reason':reason})
+        links=self.directory/'learning-links.sqlite'
+        if links.exists():
+            from .handbook.store import Handbook
+            from .query_learning import quarantine_candidate_learning
+            for event in EventLog(links).read():
+                item=event['payload']
+                if item.get('candidate_id')==cid:
+                    quarantine_candidate_learning(Handbook(item['handbook'],evidence_mode=item['evidence_mode']),cid,
+                        evidence_hash=bytes_hash(Path(receipt_path).read_bytes()),reason=reason)
 
     def require_not_quarantined(self,cid):
         if any(e['event_type']=='QUERY_CANDIDATE_QUARANTINED' and e['payload']['candidate_id']==cid

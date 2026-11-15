@@ -27,11 +27,53 @@ def proposer_model(history):
     return 'gpt-6.1-sol' if len(history)>=2 and all(h['outcome'] in {'PATCH_INVALID','UNIT_FAILED'} for h in history[-2:]) else 'gpt-6-luna'
 
 
-def history_item(proposal,outcome,reasons=(),counts=None):
-    item={'hypothesis':(proposal or {}).get('hypothesis','No candidate hypothesis was returned.')[:512],
+def history_item(proposal,outcome,reasons=(),counts=None,*,quality_verdict=None,execution_status=None,failure_origin=None):
+    # Outcome is a search label; it must never erase the deterministic verdict.
+    quality=quality_verdict or (outcome if outcome in {'OBSERVED','INCONCLUSIVE','REJECTED','VALIDATED'} else 'NOT_EVALUATED')
+    item={'feedback_schema':'rsi-search-feedback/v2',
+        'hypothesis':(proposal or {}).get('hypothesis','No candidate hypothesis was returned.')[:512],
         'change':(proposal or {}).get('change','No candidate change was returned.')[:512],
-        'outcome':outcome,'reason_codes':list(dict.fromkeys(reasons))[:8],'counts':counts or {}}
+        'outcome':outcome,'quality_verdict':quality,
+        'execution_status':execution_status or ('COMPLETED' if quality in {'OBSERVED','REJECTED','VALIDATED'} else 'NOT_STARTED'),
+        'failure_origin':failure_origin or ('CANDIDATE' if outcome in {'PATCH_INVALID','UNIT_FAILED'} else 'UNKNOWN' if quality=='INCONCLUSIVE' else 'NONE'),
+        'reason_codes':list(dict.fromkeys(reasons))[:8],'counts':counts or {}}
     validate_history([item]);return item
+
+
+def search_feedback(decision,*,qualified,round_result):
+    """Only whitelisted aggregates and independently identified failure origins."""
+    reasons=decision.get('reason_codes',[]) or [round_result.get('stop_reason') or 'ROUND_RESULT_UNKNOWN']
+    quality=decision.get('verdict','NOT_EVALUATED')
+    if quality not in {'OBSERVED','INCONCLUSIVE','REJECTED','VALIDATED'}:quality='NOT_EVALUATED'
+    counts={}
+    allowed={'favorable','unfavorable','ties','fact_loss_cases','failed_suites','primary_questions','auxiliary_cases'}
+    for source in (decision.get('group_counts') or decision.get('question_counts') or {},decision.get('feedback_counts',{})):
+        counts.update({k:v for k,v in source.items() if k in allowed and type(v)is int and v>=0})
+    for key in ('delta_total','reduction_rate'):
+        if decision.get(key) is not None:counts[key]=decision[key]
+    rows=decision.get('per_question',[])
+    if rows:
+        counts.setdefault('fact_loss_cases',sum(any(v=='ABSENT' for v in row.get('candidate_facts',{}).values()) for row in rows))
+        counts.setdefault('primary_questions',len(rows))
+    global_stop=round_result.get('execution_state')=='FAILED' and not decision
+    if global_stop:
+        return 'STOPPED',quality,'STOPPED','GLOBAL_STOP',reasons,counts
+    if not qualified:
+        # A slot that never reached static review is not proven candidate failure.
+        static=quality=='REJECTED' or any(code.startswith(('STATIC_','AST_')) for code in reasons)
+        return ('PATCH_INVALID' if static else 'NOT_EVALUATED'),quality,'NOT_STARTED',('CONTRACT' if static else 'UNKNOWN'),reasons,counts
+    if 'QUERY_UNIT_FAILED' in reasons:
+        return 'UNIT_FAILED',quality,'FAILED','CANDIDATE',reasons,counts
+    if quality=='INCONCLUSIVE':
+        origin='PARENT' if 'PARENT_FAULT' in reasons else 'INFRASTRUCTURE' if any(code in {'INFRA_FAILURE','PARTIAL_REPLAY','QUERY_REPLAY_FAILURE','EXECUTION_EVIDENCE_MISSING','EXECUTION_EVIDENCE_INVALID'} for code in reasons) else 'UNKNOWN'
+        status='PARTIAL' if 'PARTIAL_REPLAY' in reasons else 'FAILED' if origin=='INFRASTRUCTURE' else 'UNKNOWN'
+        return 'INCONCLUSIVE',quality,status,origin,reasons,counts
+    if quality=='OBSERVED':return 'OBSERVED',quality,'COMPLETED','NONE',reasons,counts
+    if quality=='VALIDATED':return 'VALIDATED',quality,'COMPLETED','NONE',reasons,counts
+    if quality=='REJECTED':
+        no_gain=bool(set(reasons)&{'NO_GAIN','NO_NET_GAIN'}) and not counts.get('fact_loss_cases') and not set(reasons)&{'FACT_LOSS','EXEC_FAULT','LOCAL_REGRESSION'}
+        return ('NO_GAIN' if no_gain else 'REJECTED'),quality,'COMPLETED',('NONE' if no_gain else 'CANDIDATE'),reasons,counts
+    return 'NOT_EVALUATED',quality,'NOT_STARTED','UNKNOWN',reasons,counts
 
 
 def stop_guard(directory,freeze,freeze_sha256):
@@ -86,18 +128,17 @@ def remember_round(memory,history,result,worker,round_number):
     decisions={d['angle']:d for d in result.get('candidate_decisions',[])}
     for slot,proposal in result.get('proposal_instances',{}).items():
         decision=decisions.get(slot,{})
-        reasons=decision.get('reason_codes',[]) or ['ROUND_RESULT_UNKNOWN']
-        if slot not in result.get('qualified',[]):outcome='PATCH_INVALID'
-        elif 'QUERY_UNIT_FAILED' in reasons:outcome='UNIT_FAILED'
-        elif decision.get('verdict')=='VALIDATED':outcome='VALIDATED'
-        elif decision.get('delta_total')==0:outcome='NO_GAIN'
-        else:outcome='REJECTED'
-        item=history_item(proposal,outcome,reasons)
+        outcome,quality,execution,origin,reasons,counts=search_feedback(decision,
+            qualified=slot in result.get('qualified',[]),round_result=result)
+        item=history_item(proposal,outcome,reasons,counts,quality_verdict=quality,
+            execution_status=execution,failure_origin=origin)
         key=patch_identity(worker,proposal['worker_patch'])
         entry=remember(memory,key,round_number,item)
         history.append(item);items.append({'slot':slot,**entry})
     if not items:
-        item=history_item(None,'ABSTAIN',[result.get('stop_reason') or 'NO_PROPOSAL_RETURNED'])
+        stopped=result.get('execution_state')=='FAILED' or result.get('stop_reason') in {'OWNER_REQUESTED_STOP','TEST_INVALIDATED_BY_ENGINEER','FROZEN_SYSTEM_CHANGED'}
+        item=history_item(None,'STOPPED' if stopped else 'ABSTAIN',[result.get('stop_reason') or 'NO_PROPOSAL_RETURNED'],
+            execution_status='STOPPED' if stopped else 'NOT_STARTED',failure_origin='GLOBAL_STOP' if stopped else 'NONE')
         entry=remember(memory,digest({'abstain_round':round_number}),round_number,item)
         history.append(item);items.append({'slot':'NONE',**entry})
     return items
@@ -108,13 +149,24 @@ def run(config):
     budget=Budget(config['budget_ledger']);log=EventLog(directory/'events.sqlite')
     baseline_round=Path(config['baseline_round']);arm='B';history=[];round_number=0
     memory={'schema':'rsi-autonomy-memory/v1','rounds':0,'evicted_entries':0,'entries':[]}
-    profile=config.get('profile','single')
+    profile=config.get('profile','parallel')
+    role_profile=config.get('role_profile','query-k3-dependency/v1')
+    if config.get('strategy_config'):
+        path=Path(config['strategy_config'])
+        if bytes_hash(path.read_bytes())!=config['strategy_config_sha256']:raise ValueError('STRATEGY_CONFIGURATION_CHANGED')
+        strategy=load(path)
+        if (strategy['profile']!=profile or strategy['role_profile']!=role_profile
+                or strategy['handbook_format']!=config.get('handbook_format','OTHER')
+                or strategy['handbook_features']!=config.get('handbook_features',{})):
+            raise ValueError('STRATEGY_CONFIGURATION_CHANGED')
     if profile not in {'single','parallel'}:raise ValueError('INVALID_AUTONOMY_PROFILE')
     from .adjudicate import SLOTS
     enabled_slots=('P2_BUDGET',) if profile=='single' else SLOTS
     from .query_workflow import run_query_round
     from .handbook.store import Handbook
     handbook=Handbook(config['handbook']) if config.get('handbook') else None
+    from .query_learning import ExperienceSession
+    experience_session=ExperienceSession(directory/'learning-session',handbook) if handbook else None
     state={'schema':'rsi-autonomous-test/v1','phase':'AUTONOMOUS_TEST','execution_state':'RUNNING',
         'freeze_sha256':config['freeze_sha256'],'initial_parent_id':config['baseline_id'],'current_parent_id':config['baseline_id'],
         'current_parent_round':str(baseline_round),'rounds':0,'candidate_author':'RSI_OPENAI_MODEL',
@@ -123,6 +175,7 @@ def run(config):
         state['budget']=budget.snapshot();atomic_write(directory/'state.json',canonical(state))
     def guard():
         stop_guard(directory,config['freeze'],config['freeze_sha256'])
+        if experience_session:experience_session.verify()
     def finish(reason,execution='COMPLETED'):
         state.update(execution_state=execution,stop_reason=reason);save()
         log.append('finished','AUTONOMY_TEST_ENDED',state)
@@ -173,10 +226,10 @@ def run(config):
                 atomic_write(trial/'baseline.json',canonical({'parent_id':frame['parent_id'],'parent_worker_sha256':bytes_hash(frame['worker']),
                     'parent_config_sha256':bytes_hash(frame['config']),'ordinary_round':str(baseline_round.resolve()),
                     'ordinary_round_sha256':bytes_hash((baseline_round/'round.json').read_bytes()),'arm':arm}),exclusive=True)
-                roles=OpenAIRoles(budget,trial/'roles',config['key_file'],scanner,seam_profile='query-autonomous-v1',
+                roles=OpenAIRoles(budget,trial/'roles',config['key_file'],scanner,seam_profile='query-autonomous-v1',role_profile=role_profile,strategy_context=experience_session.verify if experience_session else None,
                     models={'P2_BUDGET':proposer_model(history)},before_request=guard)
                 advisory_roles=OpenAIRoles(budget,trial/'advisory-roles',config['key_file'],scanner,
-                    seam_profile='legacy',before_request=guard)
+                    seam_profile='legacy',before_request=guard,strategy_context=experience_session.verify if experience_session else None)
                 parent=QueryRegistry(registry).get(state['current_parent_id'])
                 def capsule_factory(output):
                     return Capsule(config['host'],Path(config['identity']),Path(config['business_root']),output)
@@ -184,7 +237,7 @@ def run(config):
                 result=run_query_round(public=public,roles=roles,advisory_roles=advisory_roles,
                     parent=parent,fixtures=fixtures,registry=QueryRegistry(registry),directory=trial/'integrated',
                     capsule_factory=capsule_factory,scanner=scanner,enabled_slots=enabled_slots,guard=guard,
-                    handbook=handbook,compatibility_fingerprint=config.get('handbook_compatibility_fingerprint'),
+                    role_profile=role_profile,experience_session=experience_session,handbook=handbook,compatibility_fingerprint=config.get('handbook_compatibility_fingerprint'),
                     features=config.get('handbook_features'),format=config.get('handbook_format','OTHER'))
                 guard()
                 items=remember_round(memory,history,result,frame['worker'],round_number)

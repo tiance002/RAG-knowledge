@@ -70,6 +70,8 @@ def stress_split(source, output, *, query=False, direction='NEXT_ELSE_PREVIOUS',
 
 class SyntheticCapsule:
     """Deterministic capture double; does not execute a worker or backend."""
+    from rsik.execution_evidence import ExecutionEvidence
+    evidence_policy=ExecutionEvidence.synthetic_control()
     business_root=Path('SYNTHETIC_NO_BACKEND')
     deadline=None
     def child(self, stage, paths, cwd, **kwargs):

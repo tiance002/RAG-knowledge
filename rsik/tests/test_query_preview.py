@@ -4,6 +4,7 @@ import json
 import shutil
 import pytest
 from rsik.query_preview import frames,replay
+from rsik.execution_evidence import ExecutionEvidence
 from rsik.query_aware import adapt_legacy
 from rsik.experiment import load
 from portable_fixtures import ROOT,write
@@ -12,7 +13,7 @@ from portable_fixtures import ROOT,write
 def prepared(tmp_path,synthetic_replay):
     ordinary=tmp_path/'ordinary';ordinary.mkdir()
     for index in range(1,5):shutil.copytree(synthetic_replay['run'],ordinary/f'suite-{index}')
-    return frames(ordinary,[synthetic_replay['fixture']]*4),synthetic_replay['decision']
+    return frames(ordinary,[synthetic_replay['fixture']]*4,evidence=ExecutionEvidence.synthetic_control()),synthetic_replay['decision']
 
 
 class SyntheticRecordedCapsule:

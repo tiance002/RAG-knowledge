@@ -115,12 +115,16 @@ def replay_artifacts(capsule, fixture, artifacts, output, *, deadline, schema, s
         'scope':scope,'external_model_calls':0,'answer_quality':'NOT_RUN'}}),exclusive=True)
     candidate=artifacts['B']
     return read_decision(output,fixture,candidate['candidate_id'],{'angle':'P2_BUDGET','proposal_id':schema},
-                         bytes_hash(candidate['worker']),bytes_hash(candidate['config']))
+                         bytes_hash(candidate['worker']),bytes_hash(candidate['config']), evidence=getattr(capsule,'evidence_policy',None))
 
 
 def verify_sealed(*, registry, training, train_fixture, sealed_fixture, candidate_id,
                   trusted_id, lineage_id, policy, capsule, output):
     registry,output,fixture=Path(registry),Path(output),Path(sealed_fixture)
+    from .execution_evidence import resolve_policy
+    execution_policy=resolve_policy(getattr(capsule,'evidence_policy',None))
+    if not execution_policy.real_eligible:
+        raise ValueError('SYNTHETIC_CONTROL_NOT_REAL_QUALIFICATION')
     with WorkspaceLock(registry/'writer.lock','sealed-holdout'):
         training_hash=verify_training_adoption(training,train_fixture,registry,candidate_id)
         candidate=registry_api.candidate(registry,candidate_id)
@@ -146,7 +150,9 @@ def verify_sealed(*, registry, training, train_fixture, sealed_fixture, candidat
                 trusted_comparison=external_pair(capsule,registry,fixture,trusted_id,candidate_id,output/'vs-trusted',deadline=deadline)
                 shared=False
             result=adjudicate_holdout(parent_comparison,trusted_comparison)
-            result.update(schema_version='rsi-external-holdout/v2.2',candidate_id=candidate_id,parent_id=parent_id,
+            result.update(evidence_mode=execution_policy.mode, real_eligible=execution_policy.real_eligible,
+                execution_policy=execution_policy.to_dict(),
+                schema_version='rsi-external-holdout/v2.2',candidate_id=candidate_id,parent_id=parent_id,
                 trusted_id=trusted_id,shared_physical_comparison=shared,training_result_sha256=training_hash,
                 training_cases_sha256=bytes_hash(canonical(load(Path(train_fixture)/'cases.json'))),
                 holdout_freeze_sha256=bytes_hash((fixture/'freeze.json').read_bytes()),production_changed=False)
@@ -166,7 +172,8 @@ def verify_sealed(*, registry, training, train_fixture, sealed_fixture, candidat
                 primary_run=Path(training)/primary['angle']/'run'
                 seconds=sum(load(p).get('elapsed_seconds',0) for p in primary_run.rglob('execution-receipt.json'))
                 ParentPool(registry/'policy').admit(candidate_id,lineage_id,output/'receipt.restricted.json',
-                    kind='VERIFIED',chars=sum(r['chars_B'] for r in primary['per_question']),replay_seconds=seconds)
+                    kind='VERIFIED',chars=sum(r['chars_B'] for r in primary['per_question']),replay_seconds=seconds,
+                    registry=registry,fixture=fixture,evidence=execution_policy)
             return {'verdict':result['verdict'],'family_size':2,'production_changed':False}
         finally:
             capsule.close()

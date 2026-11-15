@@ -1,0 +1,86 @@
+{
+  "evidence_mode": "SYNTHETIC_CONTROL",
+  "real_business_or_production_claim": false,
+  "F1": {
+    "baseline": "589ddc8",
+    "execution_receipts": 0,
+    "new_control_real_eligible": false,
+    "new_real_stop": {
+      "category": "EVALUATION_ERROR",
+      "global_stop": true,
+      "reason": "EXECUTION_EVIDENCE_MISSING"
+    },
+    "old_adjudication": "ADOPT_CANDIDATE",
+    "old_delta_total": -9820,
+    "old_environment_hash_present": false,
+    "old_gates": {
+      "G1": true,
+      "G2": true,
+      "G3": true,
+      "G4": true,
+      "G5": true,
+      "G6": true
+    },
+    "scope": "SYNTHETIC_CONTROL; worker never executed",
+    "sources": 20
+  },
+  "F2": {
+    "source_groups": 20,
+    "alpha": 0.1,
+    "before_isolated_verdict": "NO_ADOPTION",
+    "before_isolated_p": {
+      "numerator": 15,
+      "denominator": 128,
+      "value": 0.1171875
+    },
+    "after_full_family_verdict": "ADOPT_CANDIDATE",
+    "selected_slot": "P2_BUDGET",
+    "selected_adjusted_p": {
+      "numerator": 5,
+      "denominator": 64,
+      "value": 0.078125
+    },
+    "selected_delta": -15,
+    "flow_verified": [
+      "coordinator",
+      "candidate_archive",
+      "completed_recovery",
+      "verify_training"
+    ]
+  },
+  "F3_F5_before": {
+    "baseline_sha": "589ddc8c27b09ca5aa84c49ccc309d80bcd39b56",
+    "evidence_mode": "SYNTHETIC_CONTROL",
+    "old_observed_feedback": {
+      "hypothesis": "SYNTHETIC",
+      "change": "SYNTHETIC",
+      "outcome": "REJECTED",
+      "reason_codes": [
+        "STATISTICAL_EVIDENCE_INSUFFICIENT"
+      ],
+      "counts": {}
+    },
+    "old_infra_feedback": {
+      "hypothesis": "SYNTHETIC",
+      "change": "SYNTHETIC",
+      "outcome": "REJECTED",
+      "reason_codes": [
+        "INFRA_FAILURE"
+      ],
+      "counts": {}
+    },
+    "old_post_rollback_recovery": {
+      "status": "INTENT_NOT_APPLIED",
+      "mode": "SIMULATION_ONLY",
+      "production_changed": false
+    },
+    "old_reused_approval_status": "PROMOTED",
+    "old_reused_approval_current_version": "B",
+    "old_promoted_events": 1,
+    "real_business_or_production_claim": false
+  },
+  "F3_after": "separate quality_verdict/execution_status/failure_origin/reasons/counts reach next request",
+  "F5_after": "revision and operation id; APPLIED_SUPERSEDED does not switch pointer",
+  "F4": "full synthetic archive/verification/curation/event/statistics/next-request loop; no real eligibility",
+  "historical_autonomy_credit": 0
+}

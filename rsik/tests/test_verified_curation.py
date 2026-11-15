@@ -58,7 +58,7 @@ def test_handbook_ratio_contract_rejects_unbounded_or_invalid_actions(ratio):
     with pytest.raises(ContractError,match='INVALID_HANDBOOK_ACTION'):validate_entry(entry)
 
 
-def test_synthetic_quarantined_parent_cannot_retrieve_old_active_rule(tmp_path,synthetic_split):
+def test_synthetic_quarantined_parent_cannot_retrieve_old_active_rule(tmp_path,synthetic_split,monkeypatch):
     from rsik.experiment import Experiment,registry_api
     from rsik.lineage import ParentPool,LineagePolicy
     from rsik.handbook.store import Handbook
@@ -68,12 +68,14 @@ def test_synthetic_quarantined_parent_cannot_retrieve_old_active_rule(tmp_path,s
         'cases':(synthetic_split/'cases.json').read_bytes(),
         'evaluation':(synthetic_split/'evaluation.json').read_bytes()}.items()}
     parent=registry_api.record(root,{'type':'rsi-candidate-v1',**objects,'parent':None,'origin':'SYNTHETIC_TEST'})
-    pool=ParentPool(root/'policy');pool.admit(parent,'lineage',receipt,kind='VERIFIED',chars=100,replay_seconds=1)
+    pool=ParentPool(root/'policy',evidence_mode='SYNTHETIC_CONTROL');pool.admit(parent,'lineage',receipt,kind='VERIFIED',chars=100,replay_seconds=1)
     book=Handbook(root/'handbook');key=book.commit_delta(delta(entry()),evidence_context(True),idempotency_key='SYNTHETIC')
     assert book.view()['states'][key]=='ACTIVE'
     # Quarantine events must revoke both parent eligibility and active handbook retrieval.
     pool.quarantine(parent,receipt,'SYNTHETIC_FACT_LOSS')
     book.log.append('synthetic-entry-invalidated','ENTRY_QUARANTINED',{'entry_id':key,'reason':'SYNTHETIC_FACT_LOSS'})
+    # This one test explicitly wires the synthetic pool; real startup rejects its scope.
+    monkeypatch.setattr('rsik.experiment.ParentPool',lambda directory:ParentPool(directory,evidence_mode='SYNTHETIC_CONTROL'))
     experiment=Experiment(registry=root,fixture=synthetic_split,parent_id=parent,
         source_run=tmp_path/'NEVER_OPENED',observation_id='SYNTHETIC',directory=tmp_path/'projection',
         business_root=tmp_path/'UNUSED',host='SYNTHETIC.invalid',identity=tmp_path/'unused',round_id='round-'+'a'*32)

@@ -125,7 +125,8 @@ def test_isolated_approval_switch_and_explicit_rollback_preserve_artifacts(tmp_p
     assert result['mode'] == 'SIMULATION_ONLY' and result['production_changed'] is False
     rollback = sandbox.approval('old', old['artifact_hash'], 'candidate', operation='ROLLBACK')
     result = sandbox.rollback(rollback)
-    assert result['current'] == old and result['status'] == 'ROLLED_BACK'
+    assert result['current']['version_id']==old['version_id'] and result['current']['artifact_hash']==old['artifact_hash']
+    assert result['current']['deployment_revision']==2 and result['status']=='ROLLED_BACK'
     assert (sandbox.directory / 'artifacts' / new_hash).read_bytes() == new
 
 

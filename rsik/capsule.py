@@ -134,6 +134,22 @@ else:raise ValueError('unsupported capsule operation')
 '''
 
 
+def source_archive(business_root):
+    archive = subprocess.check_output(['git', '-C', str(business_root), 'archive', BASE_COMMIT, 'backend/app'])
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode='w') as target:
+        with tarfile.open(fileobj=io.BytesIO(archive)) as original:
+            for member in original.getmembers():
+                target.addfile(member, original.extractfile(member) if member.isfile() else None)
+        for name in ('rsi_delivery_worker.py', 'replay_source_preparation.py'):
+            data = (ROOT / 'scripts' / name).read_bytes()
+            info = tarfile.TarInfo('scripts/' + name)
+            info.size, info.mode = len(data), 0o444
+            target.addfile(info, io.BytesIO(data))
+    data = stream.getvalue()
+    return data
+
+
 class Capsule:
     def __init__(self, host, identity, business_root, evidence_root, *, image=IMAGE):
         if not re.fullmatch(r'[A-Za-z0-9_.@:-]+', host):
@@ -202,24 +218,20 @@ for line in sys.stdin:
     def setup(self):
         subprocess.run(['git', '-C', str(self.business_root), 'diff', '--quiet', BASE_COMMIT,
                         '--', 'backend/app'], check=True)
-        archive = subprocess.check_output(['git', '-C', str(self.business_root), 'archive', BASE_COMMIT, 'backend/app'])
-        stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode='w') as target:
-            with tarfile.open(fileobj=io.BytesIO(archive)) as original:
-                for member in original.getmembers():
-                    target.addfile(member, original.extractfile(member) if member.isfile() else None)
-            for name in ('rsi_delivery_worker.py', 'replay_source_preparation.py'):
-                data = (ROOT / 'scripts' / name).read_bytes()
-                info = tarfile.TarInfo('scripts/' + name)
-                info.size, info.mode = len(data), 0o444
-                target.addfile(info, io.BytesIO(data))
-        data = stream.getvalue()
+        data = source_archive(self.business_root)
         receipt = self.rpc({'op': 'setup', 'tar': base64.b64encode(data).decode(),
                             'tar_sha256': hashlib.sha256(data).hexdigest()})
         self.ready = receipt.get('status') == 'READY'
+        if receipt.get('code_archive_sha256') != hashlib.sha256(data).hexdigest():
+            raise ValueError('EXECUTION_ARCHIVE_MISMATCH')
         self.code_archive_sha256 = receipt['code_archive_sha256']
         self.receipts.append({'operation': 'setup', 'job': self.job, 'code_bytes': len(data), **receipt})
         return receipt
+
+    @property
+    def evidence_policy(self):
+        from .execution_evidence import ExecutionEvidence
+        return ExecutionEvidence.real(self.business_root)
 
     def child(self, stage, paths, cwd, *, worker=None, helper_dir=None, business_root=None):
         if not self.ready or stage not in ('prepare', 'deliver'):
@@ -246,8 +258,12 @@ for line in sys.stdin:
         with (Path(cwd) / 'worker.log').open('xb') as log:
             log.write(b'\n'.join(line for line in lines if not line.startswith((b'RSI_CAPTURE_BASE64=', b'RSI_RUNTIME_BASE64='))))
         self.receipts.append({'operation': stage, 'sequence': self.sequence, **response})
+        data = base64.b64decode(captures[0], validate=True) if len(captures) == 1 else None
         with (Path(cwd) / 'execution-receipt.json').open('x', encoding='utf-8') as stream:
-            json.dump({'stage': stage, 'worker_sha256': hashlib.sha256(files['worker.py']).hexdigest(),
+            json.dump({'schema': 'rsi-execution-evidence/v2.3', 'stage': stage,
+                       'execution_adapter_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                       'source_base_commit': BASE_COMMIT,
+                       'capture_sha256': hashlib.sha256(data).hexdigest() if data is not None else None, 'worker_sha256': hashlib.sha256(files['worker.py']).hexdigest(),
                        'input_sha256': hashlib.sha256(files['input.json']).hexdigest(),
                        'config_sha256': hashlib.sha256(files['config.json']).hexdigest() if 'config.json' in files else None,
                        'code_archive_sha256': self.code_archive_sha256, 'image': self.image,

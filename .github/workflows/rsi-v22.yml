@@ -1,4 +1,4 @@
-name: RSI v2.2 portable checks
+name: RSI v2.3 portable checks
 
 on:
   pull_request:

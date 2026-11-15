@@ -8,7 +8,7 @@ import unicodedata
 
 
 VERSION = 'rsi-v2.2'
-ANGLES = ('P1_DEDUP', 'P2_BUDGET', 'P3_ORDER')
+ANGLES = ('P1_DEDUP', 'P2_BUDGET', 'P3_ORDER', 'P3_DEPENDENCY')
 
 
 class ContractError(ValueError):
@@ -123,13 +123,14 @@ def role_schema(role):
             'op': {'type':'string','enum':['eq']}, 'value': {'anyOf':[{'type':'string'},{'type':'boolean'}]}},
             'required':['field','op','value'], 'additionalProperties':False}
         action = {'type':'object', 'properties': {'name':{'type':'string','enum':[
-            'PRESERVE_BOTH','DROP_DUPLICATE','PRIORITIZE_FIRST','PRIORITIZE_LAST','LIMIT_LONG_MEMBERS','PREFER_INDEPENDENT_HITS','FILTER_SHORT_NONSEED_TAILS']},
+            'PRESERVE_BOTH','DROP_DUPLICATE','PRIORITIZE_FIRST','PRIORITIZE_LAST','LIMIT_LONG_MEMBERS','PREFER_INDEPENDENT_HITS','FILTER_SHORT_NONSEED_TAILS','REUSE_VERIFIED_SELECTOR']},
             'target':{'type':'string','enum':['MEMBER_PAIR','NONSEED_MEMBERS','SELECTED_MEMBERS']},
             'params':{'anyOf':[{'type':'object','properties':{},'required':[],'additionalProperties':False},
                 {'type':'object','properties':{'max_chars':{'type':'integer'}},'required':['max_chars'],'additionalProperties':False},
                 {'type':'object','properties':{'reference':{'type':'string','enum':['LONGEST_SEED_CONTENT_LENGTH']},
                     'numerator':{'type':'integer'},'denominator':{'type':'integer'}},
-                 'required':['reference','numerator','denominator'],'additionalProperties':False}]}},
+                 'required':['reference','numerator','denominator'],'additionalProperties':False},
+                {'type':'object','properties':{'code_sha256':{'type':'string'}},'required':['code_sha256'],'additionalProperties':False}]}},
             'required':['name','target','params'],'additionalProperties':False}
         entry_properties = {'section':{'type':'string','enum':['dedup','budget','order','format']},
             'applicable_format':strings, 'conditions':{'type':'array','items':clause}, 'action':action,
@@ -199,12 +200,20 @@ def validate_completed_candidate(value,visible,role):
     """A workflow-attested binding, available only to post-experiment roles."""
     if role not in {'curator','meta'}:raise ContractError('UNAUTHORIZED_PROJECTION_FIELD')
     object_fields(value,('candidate_alias','code_sha256','quality_status','evidence_refs','implemented_action',
-                         'chars_before','chars_after','robustness_passed','scope'))
+                         'chars_before','chars_after','robustness_passed','scope'),('evidence_mode','real_eligible'))
     if (not isinstance(value['candidate_alias'],str) or not re.fullmatch(r'candidate-[0-9a-f]{32}',value['candidate_alias'])
             or value['code_sha256']!=hashlib.sha256(visible['parent_code'].encode()).hexdigest()
-            or value['quality_status']!='VERIFIED' or value['robustness_passed'] is not True
-            or value['scope']!='FROZEN_SOURCE_CLAUSE_PRESERVATION_ONLY'
+            or value['quality_status'] not in {'VERIFIED','CONTROL_VERIFIED'} or value['robustness_passed'] is not True
+            or value['scope'] not in {'FROZEN_SOURCE_CLAUSE_PRESERVATION_ONLY','SYNTHETIC_CONTROL_SOURCE_CLAUSE_TEST_ONLY'}
             or any(type(value[k]) is not int or value[k]<0 for k in ('chars_before','chars_after'))):
+        raise ContractError('UNBOUND_COMPLETED_CANDIDATE')
+    if 'evidence_mode' in value or 'real_eligible' in value:
+        mode=value.get('evidence_mode')
+        if (mode not in {'REAL_REPLAY','SYNTHETIC_CONTROL'} or value.get('real_eligible') is not (mode=='REAL_REPLAY')
+                or value['quality_status']!=('VERIFIED' if mode=='REAL_REPLAY' else 'CONTROL_VERIFIED')
+                or value['scope']!=('FROZEN_SOURCE_CLAUSE_PRESERVATION_ONLY' if mode=='REAL_REPLAY' else 'SYNTHETIC_CONTROL_SOURCE_CLAUSE_TEST_ONLY')):
+            raise ContractError('UNBOUND_COMPLETED_CANDIDATE')
+    elif value['quality_status']!='VERIFIED' or value['scope']!='FROZEN_SOURCE_CLAUSE_PRESERVATION_ONLY':
         raise ContractError('UNBOUND_COMPLETED_CANDIDATE')
     string_list(value['evidence_refs'])
     if not value['evidence_refs'] or set(value['evidence_refs'])-set(visible['evidence_quotes']):

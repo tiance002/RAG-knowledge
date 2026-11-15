@@ -8,7 +8,7 @@ DOMAINS = {'format': {'PDF', 'DOCX', 'XLSX', 'OTHER'}, 'budget_class': {'SMALL',
 ACTION_TARGETS = {'PRESERVE_BOTH': 'MEMBER_PAIR', 'DROP_DUPLICATE': 'MEMBER_PAIR',
                   'PRIORITIZE_FIRST': 'MEMBER_PAIR', 'PRIORITIZE_LAST': 'MEMBER_PAIR',
                   'LIMIT_LONG_MEMBERS': 'NONSEED_MEMBERS', 'PREFER_INDEPENDENT_HITS': 'SELECTED_MEMBERS',
-                  'FILTER_SHORT_NONSEED_TAILS':'NONSEED_MEMBERS'}
+                  'FILTER_SHORT_NONSEED_TAILS':'NONSEED_MEMBERS', 'REUSE_VERIFIED_SELECTOR':'SELECTED_MEMBERS'}
 OPPOSITES = {frozenset(('PRESERVE_BOTH', 'DROP_DUPLICATE')),
              frozenset(('PRIORITIZE_FIRST', 'PRIORITIZE_LAST'))}
 
@@ -64,6 +64,10 @@ def validate_entry(entry):
         if (p['reference']!='LONGEST_SEED_CONTENT_LENGTH' or type(p['numerator']) is not int
                 or type(p['denominator']) is not int or not 0<p['numerator']<=p['denominator']<=8):
             raise ContractError('INVALID_HANDBOOK_ACTION')
+    elif action['name']=='REUSE_VERIFIED_SELECTOR':
+        import re
+        object_fields(action['params'],('code_sha256',))
+        if not isinstance(action['params']['code_sha256'],str) or not re.fullmatch('[0-9a-f]{64}',action['params']['code_sha256']):raise ContractError('INVALID_HANDBOOK_ACTION')
     elif action['params'] != {}:
         raise ContractError('INVALID_HANDBOOK_ACTION')
     for field in ('explanation', 'falsification', 'compatibility_fingerprint'):
