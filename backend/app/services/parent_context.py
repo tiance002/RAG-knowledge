@@ -11,7 +11,9 @@ def expand_parent_context(top_chunks, session, *, window_size=None, max_parent_l
     settings = get_settings()
     window = settings.CONTEXT_WINDOW_SIZE if window_size is None else max(0, window_size)
     parent_limit = settings.MAX_PARENT_LENGTH if max_parent_length is None else max_parent_length
-    remaining = settings.CONTEXT_MAX_CHARS if max_context_chars is None else max_context_chars
+    # Older deployed Settings omit this newer aggregate budget. Keep the same
+    # bounded default as current Settings, while honoring explicit zero budgets.
+    remaining = getattr(settings, 'CONTEXT_MAX_CHARS', 24000) if max_context_chars is None else max_context_chars
     seed_ids = list(dict.fromkeys(r.get('id') for r in top_chunks if r.get('id')))
     seeds = {c.id: c for c in session.exec(select(DocumentChunk).where(DocumentChunk.id.in_(seed_ids))).all()}
     file_ids = {c.file_id for c in seeds.values()}
@@ -55,10 +57,19 @@ def expand_parent_context(top_chunks, session, *, window_size=None, max_parent_l
     output, delivered = [], set()
     all_seed_ids = {c.id for g in groups.values() for c in g['seeds']}
     future_seed_cost = sum(len(c.content)+2 for g in groups.values() for c in g['seeds'])
+    configured_allowance = remaining
+    mandatory_overrun = future_seed_cost > configured_allowance
+    # The allowance constrains optional expansion, never independent seed bodies.
+    remaining = max(remaining, future_seed_cost)
     for group in groups.values():
         row, doc, parent, hits = group['row'], group['file'], group['parent'], group['seeds']
         hit_ids = [c.id for c in hits]
-        primary = next(c for c in hits if c.id == row['id'])
+        score_child_id = row['id']
+        # As in WeKnora's document-order merge, identity is independent of score.
+        primary = min(hits, key=lambda c: (c.original_index or 0, c.id))
+        group_id = 'group:' + str(parent.id if parent else primary.id)
+        hit_children = [source_member(c, {**row, 'kb_id': doc.kb_id}, 'seed', doc.local_path)
+                        for c in sorted(hits, key=lambda c: (c.original_index or 0, c.id))]
         future_seed_cost -= sum(len(c.content)+2 for c in hits)
         reason = group['reason']
         # Whole parent or whole seeds: preserve exact citation bytes, never attribute a
@@ -108,14 +119,27 @@ def expand_parent_context(top_chunks, session, *, window_size=None, max_parent_l
               neighbor_ids=neighbor_ids, original_chars=original_length, delivered_chars=len(content),
               omitted_ids=omitted, truncation_status=status, degradation_reason=reason,
               boundary_status='KNOWN' if parent or hits[0].heading_text else 'UNKNOWN')
-        result = {**row, 'content': content, 'original_content': '' if primary.id in omitted else primary.content,
+        primary_source = next(m for m in hit_children if m['id'] == primary.id)
+        representative_fields = {k: primary_source.get(k) for k in (
+            'file_id', 'file_name', 'kb_id', 'kb_name', 'page_number',
+            'indexed_page_number', 'source_metadata', 'content_type', 'image_path',
+            'heading_text', 'heading_level', 'original_index', 'parent_id', 'chunk_type')}
+        result = {**row, **representative_fields, 'id': primary.id,
+                  'context_group_id': group_id, 'representative_child_id': primary.id,
+                  'score_child_id': score_child_id, 'hit_children': hit_children,
+                  'citation_sources': members,
+                  'content': content, 'original_content': '' if primary.id in omitted else primary.content,
+                  'delivery_budget': {'context_max_chars': configured_allowance,
+                                      'mandatory_overrun': mandatory_overrun},
                   'seed_child_ids': hit_ids, 'matched_child_ids': hit_ids,
                   'parent_chunk_id': parent.id if parent else None,
                   'score_origin': 'best_seed_rerank' if row.get('rerank_score') is not None else 'best_seed_retrieval',
                   'source_mapping_status': 'UNKNOWN' if reason in ('INVALID_PARENT_LINK', 'SEED_NOT_IN_PARENT') else 'VERIFIED',
                   'expansion_delivery_status': 'OMITTED' if omitted else 'SEED_ONLY' if reason else 'DELIVERED',
                   'metadata': {**row.get('metadata', {}), 'is_expanded': True},
-                  'context_group': {'context_group_id': 'group:'+str(row['id']),
+                  'context_group': {'context_group_id': group_id,
+                      'representative_child_id': primary.id, 'score_child_id': score_child_id,
+                      'hit_children': hit_children,
                       'seed_evidence_ids': hit_ids, 'seed_child_ids': hit_ids,
                       'parent_chunk_id': parent.id if parent else None,
                       'source_members': members, 'expanded_evidence_ids': [m['id'] for m in members if m['id'] not in hit_ids],

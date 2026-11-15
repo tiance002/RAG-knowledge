@@ -1,6 +1,5 @@
 from app.services.observability import observe, event
 from app.services.llm import invoke_provider_http, invoke_provider_http_async
-from app.services.provider_http import provider_request
 """
 Embedding 服务
 """
@@ -8,38 +7,20 @@ Embedding 服务
 import httpx
 from typing import List
 import base64
-from functools import lru_cache
 import os
 
-from app.core.config import get_settings
+from app.core.config import get_settings, provider_tls_context
 
 settings = get_settings()
-
-
-@lru_cache(maxsize=8)
-def _embedding_tls_context(ca_bundle, version):
-    # Keep a stable TLS identity per CA configuration for connection reuse.
-    import ssl
-    return ssl.create_default_context(cafile=ca_bundle) if ca_bundle else True
-
-
-def _current_embedding_tls_context():
-    ca_bundle = get_settings().PROVIDER_CA_BUNDLE
-    if ca_bundle:
-        stat = os.stat(ca_bundle)
-        version = (stat.st_mtime_ns, stat.st_size)
-    else:
-        version = None
-    return _embedding_tls_context(ca_bundle, version)
 
 
 class EmbeddingService:
     """Embedding 服务"""
 
     def __init__(self, base_url: str = None, api_key: str = None, model: str = None):
-        self.base_url = settings.EMBEDDING_BASE_URL if base_url is None else base_url
-        self.api_key = settings.EMBEDDING_API_KEY if api_key is None else api_key
-        self.model = settings.EMBEDDING_MODEL if model is None else model
+        self.base_url = base_url or settings.EMBEDDING_BASE_URL
+        self.api_key = api_key or settings.EMBEDDING_API_KEY
+        self.model = model or settings.EMBEDDING_MODEL
 
     async def embed_query(self, text: str, model_id: str = None) -> List[float]:
         """获取文本的向量表示"""
@@ -84,7 +65,7 @@ class EmbeddingService:
                 for i, text in enumerate(texts):
                     # 复用单个处理逻辑 (递归调用自己，但 ensure list)
                     # 注意：为了避免无限递归，这里我们直接构造单次请求
-                    async with provider_request(base_url=self.base_url, api_key=self.api_key, stage="embedding", timeout=60.0, verify=_current_embedding_tls_context(), trust_env=False) as client:
+                    async with httpx.AsyncClient(timeout=60.0, verify=provider_tls_context(), trust_env=False) as client:
                         response = await invoke_provider_http_async(lambda: client.post(
                             url,
                             headers={
@@ -109,7 +90,7 @@ class EmbeddingService:
                             raise ValueError("Legacy Ollama response missing embedding")
                 return embeddings
 
-            async with provider_request(base_url=self.base_url, api_key=self.api_key, stage="embedding", timeout=60.0, verify=_current_embedding_tls_context(), trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=60.0, verify=provider_tls_context(), trust_env=False) as client:
                 # 构造请求体
                 req_json = {
                     "model": target_model,

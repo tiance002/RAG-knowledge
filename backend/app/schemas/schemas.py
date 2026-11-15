@@ -39,8 +39,8 @@ class KnowledgeBaseCreate(BaseModel):
     """创建知识库请求"""
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
-    embedding_model: Optional[str] = None
-    vlm_model: Optional[str] = None
+    embedding_model: str
+    vlm_model: str
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -79,23 +79,11 @@ class FileUploadResponse(BaseModel):
     """文件上传响应"""
     file_id: str
     status: str
-    outcome: str = "created"
-    duplicate: bool = False
-    name_conflict: bool = False
-    original_name: Optional[str] = None
-    display_name: Optional[str] = None
-    sha256: Optional[str] = None
-    supersedes_file_id: Optional[str] = None
-    available_actions: List[str] = []
 
 
 class FileStatusResponse(BaseModel):
     """文件状态响应"""
     id: str
-    original_name: Optional[str] = None
-    display_name: Optional[str] = None
-    sha256: Optional[str] = None
-    supersedes_file_id: Optional[str] = None
     name: str
     size: int
     status: str
@@ -158,7 +146,7 @@ class RecallRequest(BaseModel):
     vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
     bm25_weight: float = Field(default=0.3, ge=0.0, le=1.0)
     rerank_top_k: int = Field(default=20, ge=5, le=50)
-    context_window: int = Field(default=1, ge=0, le=5, description="上下文窗口大小 (0=不扩展)")
+    context_window: int = Field(default=1, ge=0, le=5, description="邻块窗口大小（0=不补邻块；命中子块仍解析父上下文）")
 
 
 class RecallResult(BaseModel):
@@ -166,6 +154,11 @@ class RecallResult(BaseModel):
     chunkId: Optional[str] = None
     seed_child_ids: List[str] = Field(default_factory=list)
     parent_chunk_id: Optional[str] = None
+    context_group_id: Optional[str] = None
+    representative_child_id: Optional[str] = None
+    score_child_id: Optional[str] = None
+    hit_children: List[dict] = Field(default_factory=list)
+    citation_sources: List[dict] = Field(default_factory=list)
     context_group: Optional[dict] = None
     score_origin: Optional[str] = None
     source_mapping_status: Optional[str] = None
@@ -189,12 +182,15 @@ class RecallResult(BaseModel):
     title: Optional[str] = None
 
 
+
 class RecallTestResponse(BaseModel):
     """召回测试响应"""
     results: List[RecallResult]
     query_time: float
     retrieval_status: Optional[str] = None
     expansion_delivery_status: Optional[str] = None
+    evaluation: Optional[dict] = None
+
 
 
 # ==================== 对话 ====================
@@ -216,15 +212,11 @@ class RewriteRequest(BaseModel):
     """问题改写请求"""
     query: str = Field(..., min_length=1)
     history: List[Message] = Field(default_factory=list)
-    model_id: Optional[str] = None
-    images: List[str] = Field(default_factory=list, description="Image data URLs for query understanding")
 
 
 class RewriteResponse(BaseModel):
     """问题改写响应"""
     rewritten_query: str
-    intent: Optional[str] = None
-    image_description: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
@@ -233,7 +225,6 @@ class ChatRequest(BaseModel):
     kb_ids: List[str]
     stream: bool = True
     use_rewrite: bool = False
-    query_images: List[str] = Field(default_factory=list, description="Image data URLs for query understanding")
     mode: Optional[str] = "chat"
     top_k: Optional[int] = 50
     score_threshold: Optional[float] = 0.0

@@ -12,7 +12,6 @@ import re
 import json
 import math
 import logging
-import time
 from collections import Counter
 from typing import List, Dict, Any
 from datetime import datetime
@@ -22,7 +21,6 @@ from sqlalchemy import literal_column, func, or_
 
 from app.models import BM25Posting, ChunkIndex, IndexStats, DocumentChunk, FileDocument, FileStatus, generate_uuid
 from app.core.config import get_settings
-from app.services.performance_timing import timed_stage
 
 settings = get_settings()
 
@@ -51,6 +49,20 @@ STOP_WORDS_EN = {
 STOP_WORDS = STOP_WORDS_CN | STOP_WORDS_EN
 
 
+class BM25TokenizerDependencyError(RuntimeError):
+    """The fixed lexical analyzer cannot be loaded; never change it silently."""
+
+def require_jieba():
+    try:
+        import jieba
+    except ImportError as exc:
+        raise BM25TokenizerDependencyError(
+            'BM25_JIEBA_REQUIRED: 无法加载 jieba；请在后端运行环境安装 '
+            'jieba==0.42.1。BM25 入库和查询固定使用 jieba，禁止自动降级。'
+        ) from exc
+    return jieba
+
+
 def tokenize(text: str) -> List[str]:
     """
     中英文混合分词
@@ -58,18 +70,14 @@ def tokenize(text: str) -> List[str]:
     策略：
     1. 英文按空格和标点分词，转小写
     2. 中文使用 jieba 分词
-    3. 过滤停用词和单字符
+    3. 过滤停用词和单字符；jieba 不可用时明确报错
     """
+    jieba = require_jieba()
+    # Disabled alternatives, retained as comments to prevent accidental use:
+    # chinese_tokens = list(chinese_text)  # per-character fallback
+    # return tokenize_bigram_compatible(text, STOP_WORDS)  # bigram fallback
     if not text:
         return []
-
-    # 尝试导入 jieba，如果没有则使用简单分词
-    try:
-        import jieba
-        use_jieba = True
-    except ImportError:
-        use_jieba = False
-        logging.getLogger(__name__).warning("jieba 未安装，使用简单分词")
 
     # 1. 提取英文单词（包括数字和下划线）
     english_pattern = r'[a-zA-Z0-9_]+'
@@ -79,12 +87,7 @@ def tokenize(text: str) -> List[str]:
     # 移除英文部分，保留中文和标点
     chinese_text = re.sub(english_pattern, ' ', text)
 
-    if use_jieba:
-        # 使用 jieba 分词
-        chinese_tokens = list(jieba.cut(chinese_text))
-    else:
-        # 简单按字切分中文（降级方案）
-        chinese_tokens = list(chinese_text)
+    chinese_tokens = list(jieba.cut(chinese_text))
 
     # 3. 清理和过滤
     all_tokens = []
@@ -95,7 +98,7 @@ def tokenize(text: str) -> List[str]:
         # - 长度 > 1（过滤单字符，但保留中文双字词）
         # - 不是纯标点
         # - 不是停用词
-        if t and (len(t) > 1 or (not use_jieba and re.fullmatch(r'[\u4e00-\u9fff]', t))) and not re.match(r'^[\s\W]+$', t) and t.lower() not in STOP_WORDS:
+        if t and len(t) > 1 and not re.match(r'^[\s\W]+$', t) and t.lower() not in STOP_WORDS:
             all_tokens.append(t.lower())
 
     return all_tokens
@@ -112,7 +115,7 @@ class BM25Index:
     - 索引删除
     """
 
-    def __init__(self, k1: float = None, b: float = None):
+    def __init__(self, k1: float = None, b: float = None, *, bigram_index_path=None):
         """
         初始化 BM25 索引
 
@@ -122,6 +125,10 @@ class BM25Index:
         """
         self.k1 = k1 or settings.BM25_K1
         self.b = b or settings.BM25_B
+        if bigram_index_path:
+            raise ValueError('BM25_ANALYZER_OVERRIDE_DISABLED: 正式 BM25 只允许 jieba；bigram 仅保留为离线对照')
+        self.bigram_index_path = ''
+        require_jieba()
 
     def index_chunk(
         self,
@@ -195,7 +202,6 @@ class BM25Index:
         self._increment_stats(session, kb_id, term_freq, doc_length)
 
     @staticmethod
-    @timed_stage('ingest.bm25.prepare')
     def prepare_file_index(rows):
         """Tokenize a replacement before taking the publication write lock."""
         prepared = []
@@ -206,11 +212,10 @@ class BM25Index:
             if frequencies:
                 prepared.append({'id': generate_uuid(), 'chunk_id': row['id'],
                     'doc_length': sum(frequencies.values()),
-                    'terms': json.dumps(frequencies, ensure_ascii=False, separators=(',', ':')), 'frequencies': frequencies})
+                    'terms': json.dumps(frequencies, ensure_ascii=False), 'frequencies': frequencies})
         return prepared
 
     @staticmethod
-    @timed_stage('ingest.bm25.remove')
     def begin_file_replacement(session, file_id, kb_id):
         """Remove prior physical postings and return their aggregate delta; no commit."""
         old = session.exec(select(ChunkIndex.id, ChunkIndex.doc_length, ChunkIndex.terms)
@@ -227,25 +232,18 @@ class BM25Index:
         return len(old), sum(length for _, length, _ in old), old_df
 
     @staticmethod
-    @timed_stage('ingest.bm25.replace')
     def finish_file_replacement(session, kb_id, removed, prepared):
         """Batch insert replacement and update KB-wide stats once in caller transaction."""
         removed_count, removed_length, removed_df = removed
         stats = session.get(IndexStats, kb_id, populate_existing=True)
         total = stats.total_docs if stats else 0
         total_length = (stats.avg_doc_length * total) if stats else 0
-        started = time.perf_counter()
-        prior_json = stats.term_doc_freq if stats else '{}'
-        frequencies = Counter(json.loads(prior_json))
-        decode_ms = (time.perf_counter() - started) * 1000
+        frequencies = Counter(json.loads(stats.term_doc_freq)) if stats else Counter()
         if removed_count > total or any(frequencies[t] < count for t, count in removed_df.items()):
             raise ValueError('BM25_STATS_INCONSISTENT')
-        delta = Counter()
+        frequencies.subtract(removed_df)
         for row in prepared:
-            delta.update(row['frequencies'].keys())
-        delta.subtract(removed_df)
-        changed_terms = sum(value != 0 for value in delta.values())
-        frequencies.update(delta)
+            frequencies.update(row['frequencies'].keys())
         frequencies = {term: count for term, count in frequencies.items() if count > 0}
         new_total = total - removed_count + len(prepared)
         new_length = total_length - removed_length + sum(row['doc_length'] for row in prepared)
@@ -255,10 +253,7 @@ class BM25Index:
             stats = IndexStats(kb_id=kb_id)
         stats.total_docs = new_total
         stats.avg_doc_length = max(0.0, new_length / new_total) if new_total else 0.0
-        started = time.perf_counter()
-        stats.term_doc_freq = (json.dumps(frequencies, ensure_ascii=False, separators=(',', ':'))
-                               if changed_terms else prior_json)
-        encode_ms = (time.perf_counter() - started) * 1000
+        stats.term_doc_freq = json.dumps(frequencies, ensure_ascii=False)
         stats.updated_at = datetime.utcnow()
         session.add(stats)
         if prepared:
@@ -269,12 +264,6 @@ class BM25Index:
                 for row in prepared for term, tf in row['frequencies'].items()]
             if postings:
                 session.execute(BM25Posting.__table__.insert(), postings)
-        logging.getLogger(__name__).info(
-            'BM25_FILE_REPLACEMENT stats_decode_ms=%.3f stats_encode_ms=%.3f '
-            'stats_before_bytes=%d stats_after_bytes=%d changed_terms=%d chunks=%d postings=%d',
-            decode_ms, encode_ms, len(prior_json.encode('utf-8')),
-            len(stats.term_doc_freq.encode('utf-8')), changed_terms, len(prepared),
-            sum(len(row['frequencies']) for row in prepared))
 
     @staticmethod
     def _remove_postings(session: Session, chunk_id: str, kb_id: str) -> None:

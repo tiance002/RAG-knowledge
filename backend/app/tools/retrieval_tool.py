@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.core.database import engine
 from app.models import KnowledgeBase, CustomModel
 from app.services.retrieval import get_retrieval_service
-from app.services.rerank import RerankService, expand_context, async_batch_rerank
+from app.services.rerank import RerankService, expand_context, batch_rerank
 from app.services.llm import is_unknown_provider_error
 
 import json
@@ -124,7 +124,7 @@ async def search_knowledge_base(
                 service = RerankService(session)
                 model = session.get(CustomModel, rerank_model_id) if rerank_model_id else None
                 before_ids = [r.get('id') for r in results]
-                results = await async_batch_rerank(query=query, candidates=results, rerank_service=service,
+                results = batch_rerank(query=query, candidates=results, rerank_service=service,
                                        model=model, top_k=rerank_top_k,
                                        score_threshold=rerank_score_threshold)
                 # 单行缺分只降低该行的可信度，不再否决整批证据。

@@ -3,6 +3,7 @@
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from functools import lru_cache
 from typing import List
 import os
@@ -44,10 +45,6 @@ class Settings(BaseSettings):
     # Relevance grading only: bound one request, without retrying an unknown result.
     AGENT_GRADING_TIMEOUT_SECONDS: float = 60.0
 
-    FALLBACK_STRATEGY: str = "model"
-    FALLBACK_PROMPT: str = "请根据通用知识回答用户问题；无法确定时说明不确定。"
-    FALLBACK_RESPONSE: str = "未在所选知识库中找到可用于回答的相关资料。"
-
     # Optional Tavily web lookup; only explicit per-request opt-in invokes it.
     TAVILY_API_KEY: str = ""
     TAVILY_API_KEY_FILE: str = ""
@@ -67,10 +64,10 @@ class Settings(BaseSettings):
     VLM_BASE_URL: str = "http://localhost:11434/v1"
     VLM_API_KEY: str = "ollama"
     VLM_MODEL: str = ""
+    VLM_MAX_TOKENS: int = Field(default=1000, ge=128, le=32768)
 
-    # Bootstrap-only inputs for the first system_settings migration. Runtime
-    # UI defaults come from services.runtime_settings after initialization.
-    # Provider connection identities above remain deployment configuration.
+    # UI selections reference custom model IDs, while *_MODEL above retain the
+    # provider model names configured by an existing deployment environment.
     DEFAULT_LLM_MODEL_ID: str = ""
     DEFAULT_EMBEDDING_MODEL_ID: str = ""
     DEFAULT_VLM_MODEL_ID: str = ""
@@ -123,8 +120,6 @@ class Settings(BaseSettings):
     # ==================== 上下文扩展配置 ====================
     CONTEXT_WINDOW_SIZE: int = 1            # 前后上下文 chunk 数
     MAX_PARENT_LENGTH: int = 4000           # 父文档最大拼接长度（字符）
-    CONTEXT_MAX_CHARS: int = 24000         # All expanded evidence, including neighbors
-    GROUNDED_REQUEST_MAX_CHARS: int = 32000 # Serialized messages + references + prompt; character guard
 
     # ==================== 对话配置 ====================
     MAX_CHAT_HISTORY_ROUNDS: int = 20       # 最大保留历史对话轮数

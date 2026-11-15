@@ -25,7 +25,7 @@ def run_async(coro):
         loop.close()
 
 
-@celery_app.task(bind=True, max_retries=0)
+@celery_app.task(bind=True, max_retries=3)
 @track_background_task("vectorize")
 def vectorize_file_task(self, file_id: str, expected_revision: str = None):
     """
@@ -36,8 +36,8 @@ def vectorize_file_task(self, file_id: str, expected_revision: str = None):
     3. 存入 ChromaDB
     4. 更新知识库统计
     """
-    # Historical queued messages must not bypass the new receipt/build fence.
-    # Direct synchronous callers remain available for compatibility and tests.
+    # Bound task request state is authoritative even when Celery has not set
+    # its global current_task (for example during direct delivery simulation).
     import os
     if not self.request.called_directly or os.getenv('FILE_TASK_WORKER_ROLE') in ('parse', 'index'):
         return {"error": "LEGACY_TASK_DISABLED_USE_FILE_TASK_RECEIPT"}
@@ -90,7 +90,7 @@ def vectorize_file_task(self, file_id: str, expected_revision: str = None):
             # 获取所有 Chunks
             chunks = session.exec(
                 select(DocumentChunk)
-                .where(DocumentChunk.file_id == file_id, DocumentChunk.chunk_type != "parent")
+                .where(DocumentChunk.file_id == file_id)
                 .order_by(DocumentChunk.original_index)
             ).all()
 
@@ -105,13 +105,21 @@ def vectorize_file_task(self, file_id: str, expected_revision: str = None):
             kb = session.get(KnowledgeBase, file_doc.kb_id)
             embedding_model_id = kb.embedding_model if kb else None
 
-            from app.services.model_bindings import resolve_model
-            if kb is None:
-                raise ValueError("KNOWLEDGE_BASE_NOT_FOUND")
-            binding = resolve_model(session, "embedding", embedding_model_id, use_default=False)
-            embedding_service = EmbeddingService(base_url=binding.base_url,
-                api_key=binding.api_key, model=binding.model_name)
-            target_model_id = binding.model_name
+            # 初始化服务
+            # 检查是否使用了自定义模型
+            custom_model = session.get(CustomModel, embedding_model_id) if embedding_model_id else None
+            
+            if custom_model:
+                embedding_service = EmbeddingService(
+                    base_url=custom_model.base_url,
+                    api_key=custom_model.api_key,
+                    model=custom_model.model_name
+                )
+                # 使用实际的模型名称而不是 ID
+                target_model_id = custom_model.model_name
+            else:
+                embedding_service = EmbeddingService()
+                target_model_id = embedding_model_id
 
             vector_service = VectorStoreService()
 
@@ -178,8 +186,18 @@ def vectorize_file_task(self, file_id: str, expected_revision: str = None):
             }
 
         except Exception as e:
-            if update_if_owned(status=FileStatus.FAILED, error_message=type(e).__name__, updated_at=datetime.utcnow()):
-                session.commit()
-            else:
+            # Keep the task claimable while Celery still has retries remaining.
+            # Update the state only if this generation still owns the claim.
+            exhausted = self.request.retries >= self.max_retries
+            values = {"status": FileStatus.FAILED if exhausted else FileStatus.EMBEDDING,
+                      "error_message": str(e)}
+            if exhausted:
+                values["updated_at"] = datetime.utcnow()
+            if not update_if_owned(**values):
                 session.rollback()
-            raise
+                return {"error": "任务已过期"}
+            session.commit()
+
+            if exhausted:
+                raise
+            raise self.retry(exc=e, countdown=60, kwargs={"file_id": file_id, "expected_revision": expected_revision})

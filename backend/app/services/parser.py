@@ -21,14 +21,12 @@ import asyncio
 
 try:
     from langchain_experimental.text_splitter import SemanticChunker
-except ImportError:
-    SemanticChunker = None
-
-try:
+    from langchain_community.embeddings import OllamaEmbeddings
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     HAS_LANGCHAIN = True
 except ImportError:
     HAS_LANGCHAIN = False
+    SemanticChunker = None
 
 settings = get_settings()
 
@@ -93,20 +91,14 @@ class TextSplitter:
 
     def __init__(
         self,
-        chunk_size: int = None,
-        chunk_overlap: int = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
         separator: str = "\n\n",
         max_overflow_ratio: float = 0.2,  # 允许超出的最大比例
     ):
-        if chunk_size is None or chunk_overlap is None:
-            from app.services.runtime_settings import get_runtime_settings
-            defaults = get_runtime_settings()
-            chunk_size = defaults.chunk_size if chunk_size is None else chunk_size
-            chunk_overlap = defaults.chunk_overlap if chunk_overlap is None else chunk_overlap
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        if self.chunk_size <= 0 or not 0 <= self.chunk_overlap < self.chunk_size:
-            raise ValueError("CHUNK_CONFIGURATION_INVALID")
+        self.chunk_size = chunk_size or settings.CHUNK_SIZE
+        # An explicit zero is a valid frozen request value.
+        self.chunk_overlap = settings.CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap
         self.separator = separator.replace("\\n", "\n") if separator else "\n\n"
         self.max_overflow_ratio = max_overflow_ratio
         self.max_chunk_size = int(self.chunk_size * (1 + max_overflow_ratio))
@@ -345,22 +337,20 @@ class StructuredSplitter:
         self.text_splitter = TextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         
         self.semantic_splitter = None
-        if self.use_semantic and SemanticChunker is not None:
+        if self.use_semantic and HAS_LANGCHAIN:
             self._init_semantic_splitter()
-        elif self.use_semantic:
-            event('ingest.semantic_split', status='UNAVAILABLE', reason='dependency_not_available')
 
     def _init_semantic_splitter(self):
         """初始化语义切分器"""
         # 优先使用传入的 base_url，否则使用全局配置
-        raw_base_url = settings.EMBEDDING_BASE_URL if self.embedding_base_url is None else self.embedding_base_url
+        raw_base_url = self.embedding_base_url or settings.EMBEDDING_BASE_URL
         
         # 清洗 base_url (EmbeddingService 内部也会处理，但为了 log 清晰)
         base_url = raw_base_url.rstrip("/")
         
         # 优先使用传入的模型，否则使用全局默认配置
-        model_name = settings.EMBEDDING_MODEL if self.embedding_model is None else self.embedding_model
-        api_key = settings.EMBEDDING_API_KEY if self.embedding_api_key is None else self.embedding_api_key
+        model_name = self.embedding_model or settings.EMBEDDING_MODEL
+        api_key = self.embedding_api_key or settings.EMBEDDING_API_KEY
         
         print(f"🔧 [StructuredSplitter] Initializing EmbeddingServiceAdapter with base_url: {base_url}, model: {model_name}, has_key: {bool(api_key)}")
         
@@ -840,8 +830,8 @@ class FileParser:
         self,
         file_path: str,
         chunk_mode: str = "auto",  # auto, no_chunk, custom, structure
-        chunk_size: int = None,
-        chunk_overlap: int = None,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
         separator: str = "\n\n",
         heading_level: int = 2,  # structure 模式专用
         use_semantic: bool = False,  # 是否使用语义切分
@@ -868,12 +858,21 @@ class FileParser:
             embedding_max_tokens: 向量模型最大上下文长度
             semantic_max_tokens: 语义模型最大上下文长度
         """
-        # Missing values use the shared runtime defaults; explicit zero is valid.
-        if chunk_size is None or chunk_overlap is None:
-            from app.services.runtime_settings import get_runtime_settings
-            defaults = get_runtime_settings()
-            chunk_size = defaults.chunk_size if chunk_size is None else chunk_size
-            chunk_overlap = defaults.chunk_overlap if chunk_overlap is None else chunk_overlap
+        # 强制重叠逻辑：
+        # 1. 如果不是自定义模式 (custom)，强制使用 10% 的重叠，忽略前端传入的 chunk_overlap
+        # 2. 即使是自定义模式，如果 chunk_overlap 未设置或不合理，也建议有默认值（这里完全尊重用户输入）
+        if chunk_mode != 'custom' and not self.audit_flat:
+            if chunk_size is not None:
+                chunk_overlap = int(chunk_size * 0.1)
+                print(f"🔧 [Parser] Force set chunk_overlap to {chunk_overlap} (10% of {chunk_size}) for mode '{chunk_mode}'")
+            else:
+                chunk_overlap = 0 # 安全回退
+                print(f"🔧 [Parser] Chunk size is None, set chunk_overlap to 0 for mode '{chunk_mode}'")
+
+        # 确保 chunk_size 有默认值，避免 TextSplitter 初始化失败
+        if chunk_size is None:
+            chunk_size = 500 # 默认值
+
 
         self.splitter = TextSplitter(chunk_size, chunk_overlap, separator)
         

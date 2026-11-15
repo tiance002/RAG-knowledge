@@ -48,6 +48,8 @@ def _workers():
 
 def _event(name, **values):
     try:
+        if name == "chroma.executor_wait":
+            print(f"CHROMA_TIMING stage=admission wait_ms={values['duration_ms']:.3f} max_workers={values['max_workers']}", flush=True)
         from app.services.observability import event
         event(name, **values)
     except Exception:

@@ -29,4 +29,5 @@ def inactive_file_ids(session, allowed_kb_ids=None):
         rows.sort(key=lambda r: (r.created_at, r.id), reverse=True)
         inactive.add(target_id)
         inactive.update(r.id for r in rows[1:])
-    return inactive
+    from app.services.image_caption_derivatives import inactive_caption_derivative_ids
+    return inactive | inactive_caption_derivative_ids(session, allowed_kb_ids)

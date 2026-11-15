@@ -3,7 +3,7 @@
 """
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import event
+from sqlalchemy import event, Index
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -83,6 +83,9 @@ class FileDocument(SQLModel, table=True):
 class DocumentChunk(SQLModel, table=True):
     """文档切分块模型"""
     __tablename__ = "document_chunks"
+    __table_args__ = (
+        Index("ix_document_chunks_bm25_scope", "id", "file_id", "chunk_type"),
+    )
 
     id: str = Field(default_factory=generate_uuid, primary_key=True)
     file_id: str = Field(foreign_key="file_documents.id", index=True)
@@ -152,6 +155,9 @@ class CustomModel(SQLModel, table=True):
 class ChunkIndex(SQLModel, table=True):
     """每块的词频与长度；也是倒排表的迁移来源。"""
     __tablename__ = "chunk_index"
+    __table_args__ = (
+        Index("ix_chunk_index_bm25_live", "kb_id", "chunk_id", "doc_length", "id"),
+    )
 
     id: str = Field(default_factory=generate_uuid, primary_key=True)
     chunk_id: str = Field(foreign_key="document_chunks.id", index=True)

@@ -131,10 +131,8 @@ async def upload_file(
     kb_id: str,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
-    action: str = Query(default="auto"),
-    target_file_id: Optional[str] = Query(default=None),
 ):
-    """上传文件；同名操作显式选择，替换保留历史版本。"""
+    """上传文件"""
     # 检查知识库是否存在
     kb = session.get(KnowledgeBase, kb_id)
     if not kb:
@@ -151,38 +149,45 @@ async def upload_file(
             detail={"code": 40001, "message": f"不支持的文件格式: {ext}"},
         )
 
-    # Stream the exact saved bytes; UUID storage keys never contain user paths.
-    import hashlib
-    from pathlib import Path
-    from app.services.file_uploads import register_upload
+    # 读取文件内容检查大小
+    content = await file.read()
+    if len(content) > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": 40002, "message": "文件过大，最大支持 100MB"},
+        )
+
+    # 生成文件 ID 和存储路径
     file_id = generate_uuid()
-    directory = Path(settings.UPLOAD_DIR) / kb_id
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{file_id}_source{ext}"
-    digest = hashlib.sha256()
-    size = 0
-    retained = False
-    try:
-        async with aiofiles.open(path, "xb") as handle:
-            while part := await file.read(1024 * 1024):
-                size += len(part)
-                if size > settings.MAX_FILE_SIZE:
-                    raise HTTPException(400, detail={"code": 40002, "message": "文件过大，最大支持 100MB"})
-                digest.update(part)
-                await handle.write(part)
-        result = register_upload(session, kb_id=kb_id, file_id=file_id,
-                                 name=file.filename, path=path, size=size,
-                                 sha256=digest.hexdigest(), action=action,
-                                 target_file_id=target_file_id)
-        retained = not result["duplicate"]
-        event("ingest.uploaded" if retained else "ingest.upload_duplicate",
-              file_id=result["file_id"], kb_id=kb_id, status=result["status"],
-              outcome=result["outcome"])
-        return ApiResponse(data=FileUploadResponse(**result))
-    finally:
-        if not retained:
-            session.rollback()
-            path.unlink(missing_ok=True)
+    kb_upload_dir = os.path.join(settings.UPLOAD_DIR, kb_id)
+    os.makedirs(kb_upload_dir, exist_ok=True)
+
+    safe_filename = f"{file_id}_{file.filename}"
+    file_path = os.path.join(kb_upload_dir, safe_filename)
+
+    # 保存文件
+    async with aiofiles.open(file_path, "wb") as f:
+        await f.write(content)
+
+    # 创建文件记录
+    file_doc = FileDocument(
+        id=file_id,
+        kb_id=kb_id,
+        name=file.filename,
+        local_path=file_path,
+        size=len(content),
+        status=FileStatus.PENDING,
+    )
+    session.add(file_doc)
+    session.commit()
+    session.refresh(file_doc)
+    event("ingest.uploaded", file_id=file_doc.id, kb_id=kb_id, status="PENDING")
+
+    # 上传后等待用户明确提交解析任务。
+
+    return ApiResponse(
+        data=FileUploadResponse(file_id=file_id, status=file_doc.status.value)
+    )
 
 
 
@@ -224,10 +229,6 @@ async def list_files(
         FileStatusResponse(
             id=f.id,
             name=f.name,
-            original_name=f.original_name or f.name,
-            display_name=f.display_name or f.name,
-            sha256=f.sha256,
-            supersedes_file_id=f.supersedes_file_id,
             size=f.size,
             status=f.status.value,
             progress=f.progress,
@@ -263,10 +264,6 @@ async def get_file_detail(
         data=FileStatusResponse(
             id=file_doc.id,
             name=file_doc.name,
-            original_name=file_doc.original_name or file_doc.name,
-            display_name=file_doc.display_name or file_doc.name,
-            sha256=file_doc.sha256,
-            supersedes_file_id=file_doc.supersedes_file_id,
             size=file_doc.size,
             status=file_doc.status.value,
             progress=file_doc.progress,

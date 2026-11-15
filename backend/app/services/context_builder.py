@@ -1,4 +1,5 @@
 """Source-linked ordinary-chat context selection; never a retriever or judge."""
+from app.services.request_stage_timing import benchmark_timed
 import hashlib
 from pathlib import PurePath
 
@@ -31,16 +32,41 @@ def source_member(chunk, seed, relation, source_path=None):
         'content_type': chunk.content_type, 'image_path': chunk.image_path,
         'heading_text': getattr(chunk, 'heading_text', None),
         'heading_level': getattr(chunk, 'heading_level', None),
+        'chunk_type': getattr(chunk, 'chunk_type', None),
         'parent_id': getattr(chunk, 'parent_id', None), 'relation': 'seed' if is_seed else relation,
         'original_index': getattr(chunk, 'original_index', None),
     }
 
 
+
 def _verified_members(row):
     group = row.get('context_group') or {}
     members = group.get('source_members') or []
-    if not members or group.get('context_group_id') != 'group:' + str(row.get('id')):
+    expected_group_id = row.get('context_group_id') or 'group:' + str(row.get('id'))
+    if not members or group.get('context_group_id') != expected_group_id:
         return None
+    if row.get('context_group_id'):
+        # A group ID denotes its parent (or standalone seed), not a scored hit.
+        identity = group.get('parent_chunk_id') or row.get('representative_child_id')
+        if expected_group_id != 'group:' + str(identity):
+            return None
+        hit_children = row.get('hit_children')
+        seed_ids = row.get('seed_child_ids')
+        if not isinstance(hit_children, list) or not isinstance(seed_ids, list) or not seed_ids:
+            return None
+        for hit in hit_children:
+            if (not isinstance(hit, dict) or not hit.get('id')
+                    or hit.get('file_id') != row.get('file_id')
+                    or hit.get('kb_id') != row.get('kb_id')
+                    or hit.get('content_hash') != content_hash(hit.get('content'))):
+                return None
+        hit_ids = {hit['id'] for hit in hit_children}
+        if (set(seed_ids) != hit_ids
+                or set(group.get('seed_child_ids') or []) != hit_ids
+                or set(group.get('seed_evidence_ids') or []) != hit_ids
+                or row.get('representative_child_id') not in hit_ids
+                or row.get('score_child_id') not in hit_ids):
+            return None
     if group.get('original_expanded_hash') != content_hash(row.get('content', '')):
         return None
     for member in members:
@@ -61,6 +87,9 @@ def _verified_members(row):
     return members
 
 
+
+
+@benchmark_timed('context_build')
 def build_chat_context(results, format_citation, strategy='EXPANDED_CONTENT'):
     """Return real member citations and a body-free context diagnostic summary.
 
@@ -71,7 +100,7 @@ def build_chat_context(results, format_citation, strategy='EXPANDED_CONTENT'):
     """
     if strategy not in ('ORIGINAL_CONTENT', 'EXPANDED_CONTENT'):
         raise ValueError('unsupported context strategy')
-    from app.services.agent_workflow import evidence_text
+    from app.services.agent_workflow import evidence_text, generated_image_description_provenance
     citations, groups, changes = [], [], []
     delivered_by_id = {}
     omitted_images = omitted_expanded = mapping_unknown = False
@@ -85,7 +114,7 @@ def build_chat_context(results, format_citation, strategy='EXPANDED_CONTENT'):
             if sid and sid not in seed_ids:
                 seed_ids.append(sid)
         members = _verified_members(row) if expanded else None
-        group_id = 'group:' + str(seed) if expanded else None
+        group_id = (group.get('context_group_id') or 'group:' + str(seed)) if expanded else None
         if expanded:
             for m in members or []:
                 if m['id'] not in actual_seeds and m['id'] not in expanded_ids:
@@ -123,11 +152,16 @@ def build_chat_context(results, format_citation, strategy='EXPANDED_CONTENT'):
                 member_ids.append(mid)
                 continue
             mapped = {**row, **member}
-            if expanded and mid != seed:
+            if expanded and (mid != seed or row.get('score_child_id', seed) != mid):
                 # Group membership is not an independent retrieval/rerank score.
                 mapped.update(score=None, rerank_score=None, vector_score=None, bm25_score=None)
             citation = {**format_citation(mapped, text), 'content': text,
                         'page_number': verified_page}
+            description_provenance = generated_image_description_provenance(member)
+            if description_provenance:
+                citation.update(description_provenance, content_type='text',
+                    source_content_hash=content_hash(member['content']),
+                    evidence_rendering='model_generated_image_description_v1')
             if group_id and strategy == 'EXPANDED_CONTENT' and members is not None:
                 citation.update(context_group_id=group_id, context_group_ids=[group_id],
                                 seed_evidence_ids=actual_seeds, seed_child_ids=actual_seeds,

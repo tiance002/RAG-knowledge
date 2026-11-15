@@ -23,8 +23,6 @@ def write_manifest(root, source_sha256, pages, chunks, *, schema="pdf-parse-v1",
                    {"key": chunk_key(c.content, c.page_number, c.content_type),
                     "metadata": c.metadata or {}} for c in chunks]}
     data = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()
-    # Task-local roots already isolate the source; a flat layout also avoids
-    # exceeding Windows path limits for nested task/attempt/source/hash paths.
     directory = Path(root) if flat else Path(root) / source_sha256
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / (digest_bytes(data) + '.json')
@@ -95,12 +93,6 @@ def source_metadata(path, content, page_number, content_type, *, root=None):
         if locator and locator not in locators:
             locators.append(locator)
     result = {"source_sha256": sha, "source_locators": locators}
-    origins = sorted({m['content_origin'] for m in matches if m.get('content_origin')})
-    if origins:
-        result['content_origins'] = origins
-    descriptions = [m['image_description'] for m in matches if m.get('image_description')]
-    if descriptions:
-        result['image_descriptions'] = descriptions
     if source.suffix.lower() in {'.xlsx', '.csv'} and len(locators) == 1:
         result.update(locators[0])
     return result

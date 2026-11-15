@@ -1,11 +1,12 @@
 """Buffered generation using only the actual selected, source-linked evidence."""
+from app.services.request_stage_timing import benchmark_timed
 import asyncio
 import os
 import re
 from urllib.parse import urlsplit
 from app.core.config import get_settings
 from app.services.observability import event, model_response, snapshot, capture, observe_model_history
-from app.services.llm import provider_generation, _provider_id, _response_usage, _update_generation, _completion_status, is_unknown_provider_error, attach_provider_usage
+from app.services.llm import provider_generation, _provider_id, _response_usage, _update_generation, _completion_status, is_unknown_provider_error
 
 
 def grounded_generation_enabled():
@@ -61,7 +62,8 @@ def _role_service(role, expected_model):
 def _routed_chat_model(service, tools):
     model = service.get_chat_model(streaming=False).bind_tools(tools)
     extra_body = getattr(service, '_router_extra_body', None)
-    return model.bind(extra_body=extra_body) if extra_body is not None else model
+    parameters = service.provider_request_parameters(extra_body=extra_body)
+    return model.bind(**parameters) if parameters else model
 
 
 def _routed_response_identity(response, requested_model, *, stage):
@@ -158,24 +160,9 @@ def build_grounded_prompt(evidence, *, addendum=''):
     return prompt + '\n\n' + addendum if addendum else prompt
 
 
-def enforce_request_budget(messages, tools=None):
-    """Count complete application messages/tool schemas in Unicode characters.
-
-    Provider framing/tokenization is not known here; the provider token limit is
-    an additional constraint. Fail before a paid call rather than lose evidence.
-    """
-    import json
-    rows = [m if isinstance(m, dict) else m.model_dump() for m in messages]
-    request_chars = len(json.dumps({'messages': rows, 'tools': tools or []}, ensure_ascii=False, default=str))
-    request_limit = get_settings().GROUNDED_REQUEST_MAX_CHARS
-    if request_chars > request_limit:
-        event('context.budget_exceeded', request_chars=request_chars, limit_chars=request_limit,
-              degradation_reason='FINAL_REQUEST_OVER_CHAR_BUDGET')
-        raise ValueError('FINAL_REQUEST_OVER_CHAR_BUDGET')
-    return request_chars
-
-
-def _build_grounded_request(llm, messages, citations, spreadsheet_context=None):
+@benchmark_timed('grounded_generation')
+async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS", preference_policy=''):
+    """Return content, finish reason and usage; the caller checks completion."""
     evidence = '\n\n'.join(
         f"[{i}] 来源：{c.get('fileName', '未知')} {c.get('location', '')}\n{c['content']}"
         for i, c in enumerate(citations, 1)
@@ -191,27 +178,17 @@ def _build_grounded_request(llm, messages, citations, spreadsheet_context=None):
                    + '\n来源：' + proof['source'])
     # PDF expansion content, headers and notes are already present in citations.
     request_messages = [{'role': 'system', 'content': prompt}] + list(messages)
-    return prompt, request_messages
-
-
-async def generate_grounded_candidate(llm, messages, citations, *, model_id=None, spreadsheet_context=None, pdf_context=None, quality_check=None, retrieval_status="SUCCESS", preference_policy=''):
-    """Return content, finish reason and usage; the caller checks completion."""
-    prompt, request_messages = _build_grounded_request(llm, messages, citations, spreadsheet_context)
     llm, target, route, router_config = _route_generation(
         llm, model_id, request_messages, citations, retrieval_status=retrieval_status, return_decision=True)
     if preference_policy:
         request_messages[0] = {'role': 'system', 'content': prompt + '\n\n' + preference_policy}
-    # Enforce the final serialized request, including source labels, history,
-    # supplementary proofs and preference prompt. This is a character budget,
-    # not a claim about any provider's tokenizer or output-token allowance.
-    enforce_request_budget(request_messages)
     observe_model_history(request_messages)
     identity_status = 'UNKNOWN'
     async def _generate_once(current_llm, target):
         nonlocal identity_status
         event('memory.delivery', stage='grounded_answer', preference_policy_applied=bool(preference_policy))
         extra_body = getattr(current_llm, '_router_extra_body', None)
-        provider_parameters = {'extra_body': extra_body} if extra_body is not None else {}
+        provider_parameters = current_llm.provider_request_parameters(target, extra_body=extra_body)
         event('grounded.request', model=target, prompt=snapshot(request_messages), evidence_count=len(citations))
         delivered_ids = [r['evidence_id'] for r in delivered_evidence_records(citations)]
         event('context.delivery', delivery_target='provider_request', is_final_model_delivery=True,
@@ -228,7 +205,6 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
                 temperature=0.7, stream=False, **provider_parameters,
             )
             attempt['provider_request_id'] = _provider_id(response)
-            attach_provider_usage(attempt, response)
             if route is not None:
                 identity_status = _routed_response_identity(response, target, stage='grounded_answer')
                 _update_generation(observation, requested_model_id=target, provider_model_id=getattr(response, 'model', None),
@@ -297,86 +273,3 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
     _router_outcome(route, upgraded.model if calls_used > 1 else target,
                     finish=result[1], content=result[0], escalations=calls_used - 1)
     return result
-
-
-def grounded_stream_enabled():
-    return os.getenv('RAG_GROUNDED_STREAM_ENABLED', 'false').strip().lower() == 'true' and routing_is_off()
-
-
-async def stream_grounded_candidate(llm, messages, citations, *, model_id=None,
-                                    spreadsheet_context=None, pdf_context=None, preference_policy=''):
-    """Yield provider deltas and explicit completion; caller owns terminal SSE."""
-    from contextlib import aclosing
-    from app.services.llm import ProviderStreamError
-    prompt, request_messages = _build_grounded_request(llm, messages, citations, spreadsheet_context)
-    if preference_policy:
-        request_messages[0] = {'role': 'system', 'content': prompt + '\n\n' + preference_policy}
-    enforce_request_budget(request_messages)
-    target = model_id or llm.model
-    delivered = delivered_evidence_records(citations)
-    event('memory.delivery', stage='grounded_answer', preference_policy_applied=bool(preference_policy))
-    event('grounded.request', model=target, prompt=snapshot(request_messages), evidence_count=len(citations))
-    event('context.delivery', delivery_target='provider_request', is_final_model_delivery=True,
-          delivery_status='PREPARED_FOR_PROVIDER', delivered_evidence_ids=[r['evidence_id'] for r in delivered],
-          output=capture(delivered, content_role='context_sent'))
-    event('grounded.request.sent', input=capture(request_messages, content_role='provider_request'),
-          model=target, max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS, temperature=0.7)
-    final = {}
-    pieces = []
-    stream = llm.generate_stream(messages=request_messages, model_id=target,
-                                 max_tokens=get_settings().LLM_ANSWER_MAX_TOKENS,
-                                 stage='grounded_answer', on_final=final.update,
-                                 generation_metadata={'delivered_evidence_ids': [r['evidence_id'] for r in delivered],
-                                     'context_group_ids': list(dict.fromkeys(c['context_group_id'] for c in citations if c.get('context_group_id')))})
-    try:
-        async with aclosing(stream):
-            async for chunk in stream:
-                pieces.append(chunk)
-                yield 'chunk', chunk
-    except ProviderStreamError as exc:
-        if exc.provider_status != 'TRUNCATED':
-            raise
-    content = ''.join(pieces)
-    event('grounded.candidate', candidate=snapshot(content))
-    event('grounded.response', output=capture(content, content_role='provider_response'),
-          finish_reason=final.get('finish_reason'), model=target)
-    yield 'complete', final
-
-
-async def generate_no_results_fallback(llm, question):
-    """Return (text, strategy, finish_reason, usage) for confirmed NO_RESULTS.
-
-    The caller must authorize the provider call and must never invoke this for
-    failed/unknown retrieval, omitted images, or existing usable evidence.
-    Provider errors propagate unchanged; no retry is performed.
-    """
-    settings = get_settings()
-    strategy = settings.FALLBACK_STRATEGY.strip().lower()
-    fixed = settings.FALLBACK_RESPONSE.strip() or "未在所选知识库中找到可用于回答的相关资料。"
-    if strategy == 'fixed':
-        return fixed, 'fixed', None, None
-    if strategy != 'model':
-        raise ValueError('FALLBACK_STRATEGY must be fixed or model')
-    messages = [
-        {'role': 'system', 'content': (settings.FALLBACK_PROMPT + '\n知识库未检索到证据。明确区分通用知识与知识库资料，不得声称知识库支持任何结论；如果用户要求仅依据知识库回答，请说明无法证实，不得编造知识库内容。')},
-        {'role': 'user', 'content': question},
-    ]
-    target = llm.model
-    with provider_generation('no_results_fallback', target, messages, max_tokens=settings.LLM_ANSWER_MAX_TOKENS, temperature=0.7) as (attempt, observation):
-        response = await llm._get_client().chat.completions.create(
-            model=target, messages=messages, max_tokens=settings.LLM_ANSWER_MAX_TOKENS,
-            temperature=0.7, stream=False)
-        attempt['provider_request_id'] = _provider_id(response)
-        attach_provider_usage(attempt, response)
-        choice = response.choices[0]
-        content = choice.message.content or ''
-        finish = getattr(choice, 'finish_reason', None)
-        usage = getattr(response, 'usage', None)
-        usage = usage.model_dump() if hasattr(usage, 'model_dump') else usage
-        if observation is not None:
-            _update_generation(observation, usage=_response_usage(response), finish_reason=finish,
-                               execution_status=_completion_status(finish))
-        if finish != 'stop' or not content.strip():
-            return fixed, 'model', 'empty' if finish == 'stop' and not content.strip() else finish, usage
-        return ('未在知识库中找到相关资料；以下为模型基于通用知识的回答：\n\n' + content.strip(),
-                'model', finish, usage)

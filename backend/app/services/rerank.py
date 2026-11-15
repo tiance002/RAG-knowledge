@@ -1,10 +1,11 @@
+from app.services.request_stage_timing import benchmark_timed
 import math
 from app.services.observability import event, candidates as observe_candidates, observe, model_response, enabled, snapshot
 """
 Rerank 服务模块
 """
 
-from openai import OpenAI, AsyncOpenAI
+from openai import OpenAI
 import httpx
 import json
 import re
@@ -13,8 +14,7 @@ from app.models.models import CustomModel, ModelType
 from app.core.database import get_session
 from sqlmodel import select, Session
 from app.core.rerank_model import RerankModelLoader
-from app.services.llm import is_unknown_provider_error, invoke_provider_http, invoke_provider_http_async, provider_error_payload
-from app.services.provider_http import provider_request
+from app.services.llm import is_unknown_provider_error, invoke_provider_http, provider_error_payload
 
 def extract_json_from_text(text: str) -> str:
     """从模型响应中提取 JSON 字符串"""
@@ -116,7 +116,17 @@ class RerankService:
             event('rerank.usage', model=model.model_name, usage=payload.get('usage'), cost=None)
             from app.services.metrics import record_provider_usage
             record_provider_usage("rerank", payload.get("usage"))
-            results = self._api_results(payload, candidates)
+            results = []
+            for row in payload.get("results") or []:
+                idx = row.get("index")
+                if idx is None or not (0 <= int(idx) < len(candidates)):
+                    continue
+                score = row.get("relevance_score", row.get("score", 0.0))
+                results.append({
+                    "index": int(idx),
+                    "score": float(score),
+                    "text": candidates[int(idx)],
+                })
             if results:
                 results.sort(key=lambda x: x["score"], reverse=True)
                 return results
@@ -139,42 +149,6 @@ class RerankService:
             )
         )
 
-        prompt = self._chat_prompt(query, candidates)
-        try:
-            response = invoke_provider_http(lambda: client.chat.completions.create(
-                model=model.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                stream=False,
-            ), stage="rerank_chat", model_name=model.model_name, check_status=False,
-               messages=[{"role": "user", "content": prompt}], model_parameters={"temperature": 0.0})
-            model_response(response, role='rerank_chat', model=model.model_name)
-            return self._chat_results(response)
-        except Exception as e:
-            if is_unknown_provider_error(e):
-                raise
-            print(f"API Rerank failed: {type(e).__name__}")
-            event('rerank.chat_failed', status='FAILED', error_type=type(e).__name__)
-            return []
-
-
-    @staticmethod
-    def _api_results(payload, candidates):
-        results = []
-        for row in payload.get("results") or []:
-            idx = row.get("index")
-            if idx is None or not (0 <= int(idx) < len(candidates)):
-                continue
-            score = row.get("relevance_score", row.get("score", 0.0))
-            results.append({
-                "index": int(idx),
-                "score": float(score),
-                "text": candidates[int(idx)],
-            })
-        return results
-
-    @staticmethod
-    def _chat_prompt(query, candidates):
         prompt = f"""你是一个文本相关性重排序模型，请计算查询与每个候选文本的相关性得分（0-1，越接近1越相关）。
 
 查询："{query}"
@@ -199,103 +173,42 @@ class RerankService:
 
 /no_think
 """
-        return prompt
-
-    @staticmethod
-    def _chat_results(response):
-        result_text = response.choices[0].message.content
-        json_str = extract_json_from_text(result_text)
-        data = json.loads(json_str)
-
-        if "candidates" in data:
-            results = data["candidates"]
-        elif isinstance(data, list):
-            results = data
-        else:
-            return []
-
-        final_results = []
-        for item in results:
-            if "index" in item and "score" in item:
-                final_results.append({
-                    "index": item["index"],
-                    "score": float(item["score"]),
-                    "text": item.get("text", "")
-                })
-        final_results.sort(key=lambda x: x["score"], reverse=True)
-        return final_results
-
-    @observe('rerank.call')
-    async def arerank(self, query: str, candidates: List[str], model: Optional[CustomModel] = None) -> List[Dict[str, Any]]:
-        """Run remote rerank without blocking the request event loop."""
-        if not candidates:
-            return []
-        model = model or self.get_default_rerank_model()
-        if not model:
-            event("rerank.unavailable", status="UNKNOWN", reason="no_active_model")
-            print("No active rerank model found.")
-            return []
         try:
-            if model.base_url.startswith(("http://", "https://")):
-                return await self._arerank_via_api(query, candidates, model)
-            loader = RerankModelLoader()
-            return loader.predict(query=query, passages=candidates,
-                model_path=model.base_url, max_len=model.context_length)
-        except Exception as exc:
-            if is_unknown_provider_error(exc):
-                raise
-            print(f"Rerank execution failed: {type(exc).__name__}")
-            event('rerank.call_failed', status='FAILED', error_type=type(exc).__name__)
-            return []
-
-    async def _arerank_via_api(self, query, candidates, model):
-        if not candidates:
-            return []
-        try:
-            async with provider_request(base_url=model.base_url, api_key=model.api_key, stage="rerank", timeout=120.0) as client:
-                response = await invoke_provider_http_async(lambda: client.post(
-                    model.base_url.rstrip("/") + "/rerank",
-                    headers={"Authorization": f"Bearer {model.api_key}", "Content-Type": "application/json"},
-                    json={"model": model.model_name, "query": query, "documents": candidates,
-                          "top_n": len(candidates), "return_documents": False},
-                    timeout=120.0), stage="rerank", model_name=model.model_name)
-            payload = response.json()
-            event('rerank.usage', model=model.model_name, usage=payload.get('usage'), cost=None)
-            from app.services.metrics import record_provider_usage
-            record_provider_usage("rerank", payload.get("usage"))
-            results = self._api_results(payload, candidates)
-            if results:
-                results.sort(key=lambda row: row["score"], reverse=True)
-                return results
-            print("API Rerank (/rerank) returned empty results, falling back to chat scoring")
-        except Exception as exc:
-            if is_unknown_provider_error(exc):
-                raise
-            print(f"API Rerank (/rerank) failed: {type(exc).__name__}; falling back to chat scoring")
-        event('rerank.chat_fallback', status='FALLBACK', reason='rerank_endpoint_unavailable_or_empty')
-        return await self._arerank_via_chat(query, candidates, model)
-
-    async def _arerank_via_chat(self, query, candidates, model):
-        prompt = self._chat_prompt(query, candidates)
-        messages = [{"role": "user", "content": prompt}]
-        try:
-            async with provider_request(base_url=model.base_url, api_key=model.api_key, stage="rerank_chat", timeout=5.0) as http_client:
-                # The lifecycle owner closes the shared transport, not the SDK wrapper.
-                client = AsyncOpenAI(base_url=model.base_url, api_key=model.api_key,
-                                     max_retries=0, http_client=http_client)
-                response = await invoke_provider_http_async(lambda: client.chat.completions.create(
-                    model=model.model_name, messages=messages, temperature=0.0, stream=False),
-                    stage="rerank_chat", model_name=model.model_name, check_status=False,
-                    messages=messages, model_parameters={"temperature": 0.0})
+            response = invoke_provider_http(lambda: client.chat.completions.create(
+                model=model.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                stream=False,
+            ), stage="rerank_chat", model_name=model.model_name, check_status=False,
+               messages=[{"role": "user", "content": prompt}], model_parameters={"temperature": 0.0})
             model_response(response, role='rerank_chat', model=model.model_name)
-            return self._chat_results(response)
-        except Exception as exc:
-            if is_unknown_provider_error(exc):
+            result_text = response.choices[0].message.content
+            json_str = extract_json_from_text(result_text)
+            data = json.loads(json_str)
+            
+            if "candidates" in data:
+                results = data["candidates"]
+            elif isinstance(data, list):
+                results = data
+            else:
+                return []
+            
+            final_results = []
+            for item in results:
+                if "index" in item and "score" in item:
+                    final_results.append({
+                        "index": item["index"],
+                        "score": float(item["score"]),
+                        "text": item.get("text", "")
+                    })
+            final_results.sort(key=lambda x: x["score"], reverse=True)
+            return final_results
+        except Exception as e:
+            if is_unknown_provider_error(e):
                 raise
-            print(f"API Rerank failed: {type(exc).__name__}")
-            event('rerank.chat_failed', status='FAILED', error_type=type(exc).__name__)
+            print(f"API Rerank failed: {type(e).__name__}")
+            event('rerank.chat_failed', status='FAILED', error_type=type(e).__name__)
             return []
-
 
 def test_rerank_connection(model_in: Any) -> Dict[str, Any]:
     """测试 Rerank 模型连接"""
@@ -371,48 +284,7 @@ def estimate_tokens(text: str) -> int:
 
 
 @observe("rerank.batch")
-def batch_rerank(query, candidates, rerank_service, model, max_context_tokens=None,
-                 top_k=None, score_threshold=0.0):
-    """Drive the common batch algorithm with the synchronous service contract."""
-    steps = _batch_rerank_steps(query, candidates, rerank_service, model,
-                               max_context_tokens, top_k, score_threshold)
-    try:
-        texts = next(steps)
-        while True:
-            try:
-                response = rerank_service.rerank(query, texts, model=model)
-            except Exception as exc:
-                texts = steps.throw(exc)
-            else:
-                texts = steps.send(response)
-    except StopIteration as done:
-        return done.value
-    finally:
-        steps.close()
-
-
-@observe("rerank.batch")
-async def async_batch_rerank(query, candidates, rerank_service, model, max_context_tokens=None,
-                             top_k=None, score_threshold=0.0):
-    """Await batches sequentially; UNKNOWN and cancellation never submit a later batch."""
-    steps = _batch_rerank_steps(query, candidates, rerank_service, model,
-                               max_context_tokens, top_k, score_threshold)
-    try:
-        texts = next(steps)
-        while True:
-            try:
-                response = await rerank_service.arerank(query, texts, model=model)
-            except Exception as exc:
-                texts = steps.throw(exc)
-            else:
-                texts = steps.send(response)
-    except StopIteration as done:
-        return done.value
-    finally:
-        steps.close()
-
-
-def _batch_rerank_steps(
+def batch_rerank(
     query: str,
     candidates: List[Dict[str, Any]],
     rerank_service: RerankService,
@@ -499,7 +371,7 @@ def _batch_rerank_steps(
             event("rag.candidate_transition", operation="batch_rerank", input_ids=ids, output_ids=ids, input_candidate_ids=ids, output_candidate_ids=ids, batch_index=batch_idx, input_snapshots=[snapshot(text) for text in batch_texts], removed=[], rule_version="batch_rerank_input_v1")
 
         try:
-            rerank_results = yield batch_texts
+            rerank_results = rerank_service.rerank(query, batch_texts, model=model)
             mapped = []
             mapped_indices = set()
 
@@ -583,6 +455,7 @@ def _batch_rerank_steps(
 
 
 @observe("retrieval.expand_context")
+@benchmark_timed('parent_expansion')
 def expand_context(top_chunks, session, window_size=None, max_parent_length=None,
                    include_source_members=False, allowed_kb_ids=None, max_context_chars=None):
     """Resolve actual parents once per request; legacy invalid links fall back to seeds."""

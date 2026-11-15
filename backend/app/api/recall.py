@@ -20,6 +20,7 @@ from app.schemas import (
 from app.services.retrieval import get_retrieval_service
 from app.services.llm import is_unknown_provider_error
 from app.services.rerank import RerankService, batch_rerank, expand_context
+from app.services.recall_evaluation import evaluate_recall_identity, recall_identity_fields
 import time
 import re
 from pathlib import PurePath
@@ -38,7 +39,8 @@ def _recall_source(row):
         raise ValueError('unverified_context_members')
     origins = [{'chunk_id': m['id'], 'page_number': m.get('page_number'),
                 'source_metadata': m.get('source_metadata') or {}} for m in members]
-    composite = len(origins) > 1
+    # A parent is a different source ID even when it is the group's sole member.
+    composite = len(origins) > 1 or any(origin['chunk_id'] != row.get('id') for origin in origins)
     if composite:
         return {'source_type': 'context_group', 'members': origins}, True
     return (origins[0]['source_metadata'] if origins else None), False
@@ -136,7 +138,7 @@ async def recall_test(
                     include_source_members=True,
                     allowed_kb_ids=[kb_id]
                 )
-                expansion_delivery_status = ('SEED_ONLY' if any(r.get('expansion_delivery_status') in ('SEED_ONLY', 'OMITTED') for r in results) else 'DELIVERED')
+                expansion_delivery_status = 'DELIVERED'
                 print(f"📊 [Recall] Context Expanded: window_size={data.context_window}")
             except Exception as e:
                 print(f"⚠️ [Recall] Context Expansion Failed: {type(e).__name__}")
@@ -181,6 +183,7 @@ async def recall_test(
                     location = f"记录 {source['record_start']}-{source['record_end']}"
             result_list.append(RecallResult(
                 chunkId=r.get("id"),
+                **recall_identity_fields(r),
                 seed_child_ids=r.get("seed_child_ids", []), parent_chunk_id=r.get("parent_chunk_id"),
                 context_group=r.get("context_group"), score_origin=r.get("score_origin"),
                 source_mapping_status=r.get("source_mapping_status"),
@@ -205,6 +208,7 @@ async def recall_test(
 
         return ApiResponse(data=RecallTestResponse(
             results=result_list,
+            evaluation=evaluate_recall_identity(result_list),
             query_time=query_time,
             retrieval_status=metrics.get('retrieval_status', 'UNKNOWN'),
             expansion_delivery_status=expansion_delivery_status,
@@ -282,7 +286,7 @@ async def recall_test_multi(
                     include_source_members=True,
                     allowed_kb_ids=kb_ids
                 )
-                expansion_delivery_status = ('SEED_ONLY' if any(r.get('expansion_delivery_status') in ('SEED_ONLY', 'OMITTED') for r in results) else 'DELIVERED')
+                expansion_delivery_status = 'DELIVERED'
             except Exception as e:
                 print(f"⚠️ [Recall] Context Expansion Failed: {type(e).__name__}")
                 expansion_delivery_status = 'SEED_ONLY'
@@ -311,6 +315,7 @@ async def recall_test_multi(
                     location = f"记录 {source['record_start']}-{source['record_end']}"
             result_list.append(RecallResult(
                 chunkId=r.get("id"),
+                **recall_identity_fields(r),
                 seed_child_ids=r.get("seed_child_ids", []), parent_chunk_id=r.get("parent_chunk_id"),
                 context_group=r.get("context_group"), score_origin=r.get("score_origin"),
                 source_mapping_status=r.get("source_mapping_status"),
@@ -334,6 +339,7 @@ async def recall_test_multi(
 
         return ApiResponse(data=RecallTestResponse(
             results=result_list,
+            evaluation=evaluate_recall_identity(result_list),
             query_time=query_time,
             retrieval_status=metrics.get('retrieval_status', 'UNKNOWN'),
             expansion_delivery_status=expansion_delivery_status,

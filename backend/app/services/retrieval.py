@@ -1,5 +1,4 @@
 import re
-from app.services.performance_timing import timed_stage
 from app.services.observability import native_operation, event, candidates, observe, enabled
 from app.services.llm import is_unknown_provider_error
 """
@@ -14,10 +13,8 @@ from app.services.llm import is_unknown_provider_error
 """
 
 import time
+import asyncio
 import json
-import math
-import os
-from urllib.parse import urlsplit
 from typing import List, Dict, Any, Optional, Literal, Tuple
 from datetime import datetime
 
@@ -34,53 +31,14 @@ from app.core.config import get_settings
 settings = get_settings()
 
 
-def _query_embedding_reuse_enabled():
-    return os.getenv('RAG_QUERY_EMBEDDING_REUSE_ENABLED', 'false').lower() == 'true'
-
-
-def _query_embedding_reuse_key(service, binding, query):
-    """Private exact identity for the supported single-text OpenAI contract.
-
-    This is deliberately conservative: no URL/text normalization, no inferred
-    vector parameters, no legacy/multimodal adapters or effect-scope bypass.
-    The returned key contains credentials and must never be emitted or stored.
-    """
-    from app.services.task_effect_context import has_active_effect_scope
-    if has_active_effect_scope() or type(query) is not str or '[图片:' in query:
-        return None
-    base, model, credential = service.base_url, binding.model_name, service.api_key
-    if (not all(type(value) is str for value in (base, model, credential))
-            or not base or not model or model != service.model
-            or 'doubao' in model.lower() or 'volces.com' in base.lower()
-            or type(binding.binding_id) is not str or not binding.binding_id
-            or binding.model_type != 'embedding'
-            or binding.source not in ('custom_model', 'deployment')
-            or type(binding.context_length) is not int or binding.context_length <= 0):
-        return None
-    clean = base.rstrip('/')
-    endpoint = clean if clean.endswith('/embeddings') else clean + '/embeddings'
+def _hybrid_stage(stage, started, status):
+    # Content-free telemetry must never replace the original result/exception.
     try:
-        parsed = urlsplit(endpoint)
-        if (parsed.scheme not in ('http', 'https') or not parsed.hostname
-                or parsed.username is not None or parsed.password is not None
-                or parsed.query or parsed.fragment
-                or not parsed.path.endswith('/v1/embeddings')):
-            return None
-    except ValueError:
-        return None
-    # There are currently no dimensions/encoding/normalization request options.
-    # Version the actual supported contract instead of inventing their values.
-    return ('openai-single-text-v1', binding.binding_id, binding.source,
-            binding.model_type, binding.context_length, base, endpoint, model,
-            credential, query)
-
-
-def _reusable_query_vector(vector):
-    try:
-        return (type(vector) is list and bool(vector)
-                and all(type(value) in (int, float) and math.isfinite(value) for value in vector))
-    except (OverflowError, TypeError, ValueError):
-        return False
+        print("HYBRID_STAGE " + json.dumps(dict(stage=stage,
+            wall_ms=(time.perf_counter() - started) * 1000, status=status),
+            sort_keys=True), flush=True)
+    except Exception:
+        pass
 
 
 class _HybridNoCandidates(Exception):
@@ -311,26 +269,29 @@ class RetrievalService:
                              if chroma_executor_enabled() else VectorStoreService())
         self.bm25_index = get_bm25_index()
 
-    async def _embed_query_for_kb(self, session: Session, kb_id: str, query: str,
-                                *, query_vectors=None) -> List[float]:
-        from app.services.model_bindings import resolve_model, ModelBindingError
+    async def _embed_query_for_kb(self, session: Session, kb_id: str, query: str) -> List[float]:
         kb = session.get(KnowledgeBase, kb_id)
-        if kb is None:
-            raise ModelBindingError("KNOWLEDGE_BASE_NOT_FOUND")
-        # A KB binding identifies its existing vector space. Missing/invalid
-        # identities must never be replaced by another system embedding model.
-        binding = resolve_model(session, "embedding", kb.embedding_model, use_default=False)
-        embedding_service = EmbeddingService(base_url=binding.base_url,
-            api_key=binding.api_key, model=binding.model_name)
-        key = (_query_embedding_reuse_key(embedding_service, binding, query)
-               if query_vectors is not None and _query_embedding_reuse_enabled() else None)
-        if key is not None and key in query_vectors:
-            event('embedding.query_reuse', scope='retrieval.search', status='HIT')
-            return list(query_vectors[key])
-        vector = await embedding_service.embed_query(query, model_id=binding.model_name)
-        if key is not None and _reusable_query_vector(vector):
-            query_vectors[key] = tuple(vector)
-        return vector
+        kb_model_id = (kb.embedding_model if kb else None) or ""
+
+        if kb_model_id:
+            custom = session.get(CustomModel, kb_model_id)
+            if custom:
+                embedding_service = EmbeddingService(
+                    base_url=custom.base_url,
+                    api_key=custom.api_key,
+                    model=custom.model_name,
+                )
+                print(f"🔎 [Retrieval] KB={kb_id} 使用自定义Embedding: {custom.name} ({custom.model_name})")
+                return await embedding_service.embed_query(query, model_id=custom.model_name)
+
+            if kb_model_id == "sys_embedding":
+                embedding_service = EmbeddingService()
+                print(f"🔎 [Retrieval] KB={kb_id} 使用系统Embedding: {settings.EMBEDDING_MODEL}")
+                return await embedding_service.embed_query(query)
+
+        embedding_service = EmbeddingService()
+        print(f"⚠️ [Retrieval] KB={kb_id} 未配置embedding_model，回退系统默认: {settings.EMBEDDING_MODEL}")
+        return await embedding_service.embed_query(query)
 
     @observe("retrieval.search")
     async def search(
@@ -458,17 +419,48 @@ class RetrievalService:
         return results, metrics
 
     async def _query_vector_store(self, **kwargs):
-        from app.services.bounded_chroma_executor import chroma_executor_enabled, ChromaExecutorCapabilityError
-        if chroma_executor_enabled():
-            try:
-                return await self.vector_store.query_async(**kwargs)
-            except ChromaExecutorCapabilityError as exc:
-                reason = str(exc)
-                if not reason or len(reason) > 96 or not all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_' for c in reason):
-                    reason = 'CHROMA_CAPABILITY_UNKNOWN'
-                event('chroma.capability', status='BLOCKED', reason_code=reason)
-                raise
-        return self.vector_store.query(**kwargs)
+        started = time.perf_counter()
+        status = "RETURNED"
+        try:
+            from app.services.bounded_chroma_executor import chroma_executor_enabled, ChromaExecutorCapabilityError
+            if chroma_executor_enabled():
+                try:
+                    return await self.vector_store.query_async(**kwargs)
+                except ChromaExecutorCapabilityError as exc:
+                    reason = str(exc)
+                    if not reason or len(reason) > 96 or not all(c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_' for c in reason):
+                        reason = 'CHROMA_CAPABILITY_UNKNOWN'
+                    event('chroma.capability', status='BLOCKED', reason_code=reason)
+                    raise
+            return self.vector_store.query(**kwargs)
+
+        except BaseException:
+            status = "FAILED"
+            raise
+        finally:
+            _hybrid_stage("chroma_await", started, status)
+
+    async def _timed_embedding(self, session, kb_id, query):
+        started = time.perf_counter()
+        status = "RETURNED"
+        try:
+            return await self._embed_query_for_kb(session, kb_id, query)
+        except BaseException:
+            status = "FAILED"
+            raise
+        finally:
+            _hybrid_stage("embedding", started, status)
+
+    def _timed_vector_scope(self, session, kb_id):
+        started = time.perf_counter()
+        status = "RETURNED"
+        try:
+            return self._vector_scope(session, kb_id)
+        except BaseException:
+            status = "FAILED"
+            raise
+        finally:
+            _hybrid_stage("vector_sql_scope", started, status)
 
     @native_operation("retrieval.vector", as_type="retriever")
     async def _vector_search(
@@ -483,10 +475,9 @@ class RetrievalService:
         start_time = time.time()
 
         all_results = []
-        reuse_kwargs = {'query_vectors': {}} if _query_embedding_reuse_enabled() else {}
         for kb_id in kb_ids:
-            query_vector = await self._embed_query_for_kb(session, kb_id, query, **reuse_kwargs)
-            allowed_ids, allowed_build_ids = self._vector_scope(session, kb_id)
+            query_vector = await self._timed_embedding(session, kb_id, query)
+            allowed_ids, allowed_build_ids = self._timed_vector_scope(session, kb_id)
             results = await self._query_vector_store(
                 kb_id=kb_id,
                 query_vector=query_vector,
@@ -523,7 +514,6 @@ class RetrievalService:
 
         return all_results, metrics
 
-    @timed_stage('bm25')
     def _bm25_query_results(
         self, session: Session, queries: List[str], kb_ids: List[str], top_k: int,
         query_offset: int = 0,
@@ -547,7 +537,7 @@ class RetrievalService:
     def _expanded_bm25_results(
         self, session: Session, query: str, original_query: Optional[str],
         kb_ids: List[str], top_k: int, route_top_k: int,
-        other_candidate_ids=None,
+        other_candidate_ids=None, initial_result_lists=None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Supplement an insufficient initial union using at most five local variants.
 
@@ -555,7 +545,8 @@ class RetrievalService:
         This is a candidate-count rule, not a change to quality/rerank thresholds.
         """
         base = distinct_queries([query, original_query])
-        result_lists = self._bm25_query_results(session, base, kb_ids, route_top_k)
+        result_lists = (self._bm25_query_results(session, base, kb_ids, route_top_k)
+                        if initial_result_lists is None else list(initial_result_lists))
         initial = aggregate_bm25_results(result_lists)
         initial_ids = set(other_candidate_ids or ()) | {r["chunk_id"] for r in initial}
         insufficient = len(initial_ids) < top_k
@@ -613,57 +604,181 @@ class RetrievalService:
         }
         return all_results, metrics
 
+    @staticmethod
+    def _lexical_execution_scope(session):
+        """Use independent committed-index readers for file-SQLite Hybrid.
+
+        Parallelism is unconditional for supported API readers. In-memory or
+        shared-connection fixtures retain their same-session compatibility path.
+        Pending caller writes are deliberately not part of published-index reads.
+        """
+        from sqlalchemy.engine import Engine
+        from sqlalchemy.pool import StaticPool, SingletonThreadPool
+        from app.services.bounded_lexical_executor import lexical_executor_available, lexical_reader_engine
+        if not lexical_executor_available():
+            return None, "executor_not_managed"
+        if not isinstance(session, Session):
+            return None, "no_sql_session"
+        bind = session.get_bind()
+        if not isinstance(bind, Engine) or isinstance(bind.pool, (StaticPool, SingletonThreadPool)):
+            return None, "nonindependent_bind"
+        if bind.dialect.name == 'sqlite':
+            if bind.url.database in (None, '', ':memory:') or bind.url.query.get('mode') == 'memory':
+                return None, "in_memory_sqlite"
+        else:
+            return None, "unsupported_reader_engine"
+        return lexical_reader_engine(bind), "managed_independent_reader"
+
+
+    @staticmethod
+    def _parallel_lexical_bind(session):
+        return RetrievalService._lexical_execution_scope(session)[0]
+
+
+    async def _parallel_hybrid_routes(self, session, bind, query, original_query, kb_ids, top_k, score_threshold):
+        from app.services.bounded_lexical_executor import run_lexical_read
+        base = distinct_queries([query, original_query])
+        vector_results = []
+        durations = {}
+
+        def lexical_initial():
+            started = time.perf_counter()
+            status = "RETURNED"
+            try:
+                with Session(bind) as reader:
+                    return self._bm25_query_results(reader, base, kb_ids, settings.BM25_TOP_K)
+            except BaseException:
+                status = "FAILED"
+                raise
+            finally:
+                durations['bm25'] = (time.perf_counter() - started) * 1000
+                _hybrid_stage("lexical_initial", started, status)
+
+        async def vector_initial():
+            started = time.perf_counter()
+            try:
+                for kb_id in dict.fromkeys(kb_ids):
+                    vector = await self._timed_embedding(session, kb_id, query)
+                    ids, builds = self._timed_vector_scope(session, kb_id)
+                    rows = await self._query_vector_store(kb_id=kb_id, query_vector=vector,
+                        top_k=150, score_threshold=score_threshold, allowed_ids=ids, allowed_build_ids=builds)
+                    vector_results.extend({**row, 'kb_id': kb_id} for row in rows)
+            finally:
+                durations['vector'] = (time.perf_counter() - started) * 1000
+
+        # Submit lexical first; it still runs if a legacy Chroma call blocks the loop.
+        lexical_task = asyncio.create_task(run_lexical_read(lexical_initial))
+        vector_task = asyncio.create_task(vector_initial())
+        outcomes = await asyncio.gather(vector_task, lexical_task, return_exceptions=True)
+        for route, outcome in zip(("vector", "bm25"), outcomes):
+            if isinstance(outcome, BaseException) and (not isinstance(outcome, Exception) or is_unknown_provider_error(outcome)):
+                if isinstance(outcome, Exception):
+                    event("retrieval." + route + "_failed", status="UNKNOWN", error_type=type(outcome).__name__)
+                raise outcome
+        failed_routes = 0
+        for route, outcome in zip(('vector', 'bm25'), outcomes):
+            if isinstance(outcome, Exception):
+                failed_routes += 1
+                event('retrieval.' + route + '_failed', status='FALLBACK', error_type=type(outcome).__name__)
+        vector_results.sort(key=lambda row: (-row['score'], row['id']))
+        candidates('retrieval.vector', vector_results)
+        details = {}
+        bm25_results = []
+        if not isinstance(outcomes[1], Exception):
+            initial_lists = outcomes[1]
+            def lexical_supplement():
+                started = time.perf_counter()
+                status = "RETURNED"
+                try:
+                    with Session(bind) as reader:
+                        return self._expanded_bm25_results(reader, query, original_query, kb_ids,
+                            top_k, settings.BM25_TOP_K,
+                            other_candidate_ids=[row['id'] for row in vector_results],
+                            initial_result_lists=initial_lists)
+                except BaseException:
+                    status = "FAILED"
+                    raise
+                finally:
+                    durations['bm25'] += (time.perf_counter() - started) * 1000
+                    _hybrid_stage("lexical_supplement", started, status)
+            try:
+                bm25_results, details = await run_lexical_read(lexical_supplement)
+            except Exception as exc:
+                if is_unknown_provider_error(exc):
+                    event('retrieval.bm25_failed', status='UNKNOWN', error_type=type(exc).__name__)
+                    raise
+                failed_routes += 1
+                event('retrieval.bm25_failed', status='FALLBACK', error_type=type(exc).__name__)
+        candidates('retrieval.bm25', bm25_results)
+        details['hybrid_initial_parallel'] = True
+        return (vector_results, bm25_results, details,
+                bool(failed_routes or details.get('expansion_failed')), failed_routes,
+                durations.get('vector', 0), durations.get('bm25', 0))
+
+
     async def _hybrid_search(
         self, session: Session, query: str, kb_ids: List[str], top_k: int,
         score_threshold: float, vector_weight: float, bm25_weight: float,
         original_query: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], bool]:
         """One vector route plus one aggregated lexical route, Weighted RRF then minmax."""
-        fallback_used = False
-        failed_routes = 0
-        vector_start = time.time()
-        vector_results = []
-        reuse_kwargs = {'query_vectors': {}} if _query_embedding_reuse_enabled() else {}
-        try:
-            for kb_id in dict.fromkeys(kb_ids):
-                # Rewrites and lexical variants must not multiply paid embeddings.
-                query_vector = await self._embed_query_for_kb(session, kb_id, query, **reuse_kwargs)
-                allowed_ids, allowed_build_ids = self._vector_scope(session, kb_id)
-                results = await self._query_vector_store(
-                    kb_id=kb_id, query_vector=query_vector,
-                    top_k=150, score_threshold=score_threshold,
-                    allowed_ids=allowed_ids, allowed_build_ids=allowed_build_ids)
-                vector_results.extend({**r, "kb_id": kb_id} for r in results)
-        except Exception as e:
-            if is_unknown_provider_error(e):
-                event('retrieval.vector_failed', status='UNKNOWN', error_type=type(e).__name__)
-                raise
-            print(f"⚠️ [Retrieval] 向量检索失败: {type(e).__name__}")
-            event('retrieval.vector_failed', status='FALLBACK', error_type=type(e).__name__)
-            fallback_used = True
-            failed_routes += 1
-        vector_results.sort(key=lambda r: (-r["score"], r["id"]))
-        candidates("retrieval.vector", vector_results)
-        vector_latency = (time.time() - vector_start) * 1000
+        hybrid_started = time.perf_counter()
+        bind, lexical_mode = self._lexical_execution_scope(session)
+        event("retrieval.hybrid_execution", parallel=bind is not None, reason=lexical_mode)
+        if bind is not None:
+            vector_results, bm25_results, expansion_metrics, fallback_used, failed_routes, vector_latency, bm25_latency = await self._parallel_hybrid_routes(
+                session, bind, query, original_query, kb_ids, top_k, score_threshold)
+        else:
+            fallback_used = False
+            failed_routes = 0
+            vector_start = time.time()
+            vector_results = []
+            try:
+                for kb_id in dict.fromkeys(kb_ids):
+                    # Rewrites and lexical variants must not multiply paid embeddings.
+                    query_vector = await self._timed_embedding(session, kb_id, query)
+                    allowed_ids, allowed_build_ids = self._timed_vector_scope(session, kb_id)
+                    results = await self._query_vector_store(
+                        kb_id=kb_id, query_vector=query_vector,
+                        top_k=150, score_threshold=score_threshold,
+                        allowed_ids=allowed_ids, allowed_build_ids=allowed_build_ids)
+                    vector_results.extend({**r, "kb_id": kb_id} for r in results)
+            except Exception as e:
+                if is_unknown_provider_error(e):
+                    event('retrieval.vector_failed', status='UNKNOWN', error_type=type(e).__name__)
+                    raise
+                print(f"⚠️ [Retrieval] 向量检索失败: {type(e).__name__}")
+                event('retrieval.vector_failed', status='FALLBACK', error_type=type(e).__name__)
+                fallback_used = True
+                failed_routes += 1
+            vector_results.sort(key=lambda r: (-r["score"], r["id"]))
+            candidates("retrieval.vector", vector_results)
+            vector_latency = (time.time() - vector_start) * 1000
 
-        bm25_start = time.time()
-        bm25_results = []
-        expansion_metrics = {}
-        try:
-            bm25_results, expansion_metrics = self._expanded_bm25_results(
-                session, query, original_query, kb_ids, top_k, settings.BM25_TOP_K,
-                other_candidate_ids=[r["id"] for r in vector_results])
-            fallback_used = fallback_used or expansion_metrics["expansion_failed"]
-        except Exception as e:
-            if is_unknown_provider_error(e):
-                event('retrieval.bm25_failed', status='UNKNOWN', error_type=type(e).__name__)
-                raise
-            print(f"⚠️ [Retrieval] BM25 检索失败: {type(e).__name__}")
-            event('retrieval.bm25_failed', status='FALLBACK', error_type=type(e).__name__)
-            fallback_used = True
-            failed_routes += 1
-        candidates("retrieval.bm25", bm25_results)
-        bm25_latency = (time.time() - bm25_start) * 1000
+            bm25_start = time.time()
+            bm25_results = []
+            expansion_metrics = {}
+            try:
+                bm25_results, expansion_metrics = self._expanded_bm25_results(
+                    session, query, original_query, kb_ids, top_k, settings.BM25_TOP_K,
+                    other_candidate_ids=[r["id"] for r in vector_results])
+                fallback_used = fallback_used or expansion_metrics["expansion_failed"]
+            except Exception as e:
+                if is_unknown_provider_error(e):
+                    event('retrieval.bm25_failed', status='UNKNOWN', error_type=type(e).__name__)
+                    raise
+                print(f"⚠️ [Retrieval] BM25 检索失败: {type(e).__name__}")
+                event('retrieval.bm25_failed', status='FALLBACK', error_type=type(e).__name__)
+                fallback_used = True
+                failed_routes += 1
+            candidates("retrieval.bm25", bm25_results)
+            bm25_latency = (time.time() - bm25_start) * 1000
+        expansion_metrics["hybrid_initial_parallel"] = bind is not None
+        expansion_metrics["hybrid_execution_reason"] = lexical_mode
+        print(f"HYBRID_TIMING mode={'parallel' if bind is not None else 'serial'} reason={lexical_mode} "
+              f"vector_ms={vector_latency:.3f} bm25_ms={bm25_latency:.3f} "
+              f"vector_candidates={len(vector_results)} bm25_candidates={len(bm25_results)}")
+        _hybrid_stage("routes_wall_including_admission", hybrid_started, "FINISHED")
         if not vector_results and not bm25_results:
             raise _HybridNoCandidates(failed_routes=failed_routes)
 
@@ -713,7 +828,6 @@ class RetrievalService:
         }
         return merged_results, metrics, fallback_used
 
-    @timed_stage('retrieval_enrichment')
     def _enrich_results(
         self,
         session: Session,
