@@ -91,7 +91,7 @@ class PromotionSandbox:
             raise ValueError('APPROVAL_SIGNATURE_INVALID')
         if (payload['mode'] != 'SIMULATION_ONLY' or payload['target_environment'] != self.environment
                 or payload['operation'] != operation or (check_current and payload['expiry'] <= self.clock())
-                or payload.get('schema')!='rsi-approval-operation/v2.3'
+                or payload.get('schema') not in {'rsi-approval-operation/v2.3','rsi-qualified-simulation-approval/v1'}
                 or type(payload.get('expected_deployment_revision')) is not int
                 or not isinstance(payload.get('operation_id'),str) or not payload['operation_id']):
             raise ValueError('APPROVAL_EXPIRED_OR_WRONG_SCOPE')
@@ -102,10 +102,56 @@ class PromotionSandbox:
             raise ValueError('EXPECTED_CURRENT_VERSION_CHANGED')
         return payload
 
-    def promote(self, approval, artifact, *, quality, rollback_hash):
+    def qualified_approval(self,candidate_id,artifact_hash,expected_current_version,*,qualification_path,
+                           qualification_validator,rollback_hash,ttl=60):
+        """Bind a host-validated qualification to a local simulation operation.
+
+        The callable is supplied by the host and is not read from the receipt.
+        A control qualification can exercise this sandbox but grants no release
+        authority, regardless of the local HMAC signature.
+        """
+        attestation=self._qualification(qualification_path,qualification_validator,
+            candidate_id=candidate_id,artifact_hash=artifact_hash)
+        if rollback_hash!=self.current()['artifact_hash']:raise ValueError('ROLLBACK_TARGET_UNAVAILABLE')
+        approval=self.approval(candidate_id,artifact_hash,expected_current_version,ttl=ttl)
+        payload=approval['payload'];payload.update(schema='rsi-qualified-simulation-approval/v1',
+            qualification_path=str(Path(qualification_path).resolve()),
+            qualification_sha256=hashlib.sha256(Path(qualification_path).read_bytes()).hexdigest(),
+            qualification=attestation,rollback_artifact_hash=rollback_hash)
+        return {'payload':payload,'signature':hmac.new(self.key,canonical(payload),hashlib.sha256).hexdigest()}
+
+    def _qualification(self,path,validator,*,candidate_id,artifact_hash):
+        if not callable(validator):raise ValueError('TRUSTED_QUALIFICATION_VALIDATOR_REQUIRED')
+        attestation=validator(Path(path),candidate_id=candidate_id,artifact_hash=artifact_hash,target_environment=self.environment)
+        if (not isinstance(attestation,dict) or set(attestation)!={'qualification_id','evidence_mode','artifact_hash',
+                'candidate_id','environment','quality_status','eligible_for_production'}
+                or attestation['artifact_hash']!=artifact_hash or attestation['candidate_id']!=candidate_id
+                or attestation['environment']!=self.environment or not self._digest_valid(attestation['qualification_id'])
+                or attestation['eligible_for_production'] is not False
+                or (attestation['evidence_mode'],attestation['quality_status']) not in {
+                    ('SYNTHETIC_CONTROL','CONTROL_QUALIFIED'),('REAL_REPLAY','VERIFIED'),('REAL_REPLAY','BASELINE_QUALIFIED')}):
+            raise ValueError('QUALIFICATION_IDENTITY_OR_SCOPE_INVALID')
+        return attestation
+
+    def promote_qualified(self,approval,artifact,*,qualification_validator):
+        if approval['payload'].get('schema')!='rsi-qualified-simulation-approval/v1':
+            raise ValueError('QUALIFIED_APPROVAL_REQUIRED')
+        return self.promote(approval,artifact,quality=approval['payload']['qualification']['quality_status'],
+            rollback_hash=approval['payload']['rollback_artifact_hash'],qualification_validator=qualification_validator)
+
+    def promote(self, approval, artifact, *, quality, rollback_hash, qualification_validator=None):
         with WorkspaceLock(self.directory / 'deployment.lock', 'simulation-promote'):
             payload=self._authorize(approval,'PROMOTE',check_current=False)
-            if quality != 'VERIFIED':
+            qualified=payload.get('schema')=='rsi-qualified-simulation-approval/v1'
+            if qualified:
+                path=Path(payload['qualification_path'])
+                if hashlib.sha256(path.read_bytes()).hexdigest()!=payload['qualification_sha256']:
+                    raise ValueError('APPROVED_QUALIFICATION_CHANGED')
+                attestation=self._qualification(path,qualification_validator,candidate_id=payload['candidate_id'],artifact_hash=payload['artifact_hash'])
+                if attestation!=payload['qualification'] or rollback_hash!=payload['rollback_artifact_hash']:
+                    raise ValueError('APPROVED_QUALIFICATION_CHANGED')
+                if quality!=attestation['quality_status']:raise ValueError('CANDIDATE_NOT_VERIFIED')
+            elif quality != 'VERIFIED':
                 raise ValueError('CANDIDATE_NOT_VERIFIED')
             if hashlib.sha256(artifact).hexdigest() != payload['artifact_hash']:
                 raise ValueError('APPROVED_ARTIFACT_CHANGED')
