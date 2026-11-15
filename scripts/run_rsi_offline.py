@@ -51,7 +51,7 @@ def compare_pair(a, b):
             raise PairingError(f"Incomparable arms: {key}")
 
 
-def child(stage, paths, cwd, *, worker=None, helper_dir=None):
+def child(stage, paths, cwd, *, worker=None, helper_dir=None, business_root=None):
     # Never import the legacy CLI or install its process-global patches in this interpreter.
     env = {k: v for k, v in os.environ.items() if k.upper() in {
         "SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "HOME", "USERPROFILE",
@@ -60,7 +60,7 @@ def child(stage, paths, cwd, *, worker=None, helper_dir=None):
                DATABASE_URL="sqlite://", LANGFUSE_ENABLED="false", RAG_OBSERVABILITY_ENABLED="false",
                RAG_MODEL_ROUTER_MODE="OFF", RAG_SNAPSHOTS_ENABLED="false")
     if helper_dir:
-        env["PYTHONPATH"] = os.pathsep.join(map(str, (ROOT / "backend", helper_dir)))
+        env["PYTHONPATH"] = os.pathsep.join(map(str, (Path(business_root or ROOT) / "backend", helper_dir)))
     with (cwd / "worker.log").open("xb") as log:
         subprocess.run([sys.executable, str(worker or WORKER), stage, *map(str, paths)], env=env, cwd=cwd,
                        stdout=log, stderr=subprocess.STDOUT, check=True, timeout=90)
@@ -138,18 +138,52 @@ def checked_case(case):
     return result
 
 
-def run(manifest_path, out):
+def validate_source_roots(manifest, business_root=None, *, bundle=None, parent_worker=None):
+    """Read-only substrate checks, shared by preflight and the existing executor."""
+    business = Path(business_root or ROOT).resolve()
+    control_head = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    business_head = subprocess.check_output(["git", "-C", str(business), "rev-parse", "HEAD"], text=True).strip()
+    if manifest["status"] not in ("READY", "READY_DEV_ONLY"):
+        raise ValueError("Manifest is not ready")
+    base = manifest["base_commit"]
+    subprocess.run(["git", "-C", str(business), "merge-base", "--is-ancestor", base, business_head], check=True)
+    subprocess.run(["git", "-C", str(business), "diff", "--quiet", base, "--", "backend/app"], check=True)
+    untracked = subprocess.check_output(["git", "-C", str(business), "ls-files", "--others", "--exclude-standard", "--", "backend/app"], text=True)
+    if untracked.strip():
+        raise ValueError("Untracked business backend files could shadow frozen imports")
+    if manifest["fixed"] != FIXED or manifest["evaluator_version"] != EVALUATOR:
+        raise ValueError("Unsupported fixed configuration or evaluator")
+    if "r1" in manifest:
+        from rsi_candidates import verify_arm_sources, validate_seam
+        frozen = subprocess.check_output(["git", "-C", str(ROOT), "show",
+            "297e66ed049d58060fffe2c15d36efaec182ecc8:scripts/rsi_delivery_worker.py"])
+        for source in (WORKER, WORKER.with_name("replay_source_preparation.py")):
+            original = subprocess.check_output(["git", "-C", str(ROOT), "show",
+                "297e66ed049d58060fffe2c15d36efaec182ecc8:scripts/" + source.name])
+            if digest(original) != digest(source.read_bytes()):
+                raise ValueError("Working replay substrate differs from frozen R0")
+        workers = verify_arm_sources(manifest, Path(bundle))
+        for source in workers.values():
+            validate_seam(frozen, source.read_bytes())
+        if parent_worker is not None and workers["B"].read_bytes() != parent_worker:
+            raise ValueError("Registered parent does not match observed source worker")
+    return {"control_root": str(ROOT), "control_head": control_head, "business_root": str(business),
+            "business_head": business_head, "base_commit": base}
+
+
+def run(manifest_path, out, business_root=None):
     manifest_path = Path(manifest_path).resolve()
     out = Path(out).resolve()
     if out.exists():
         raise FileExistsError(out)
     manifest = load(manifest_path)
-    head = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
-    if manifest["status"] not in ("READY", "READY_DEV_ONLY"):
-        raise ValueError("Manifest is not ready")
+    if manifest.get("schema") == "rsi-quality-experiment/v1":
+        from rsi_quality_execute import run_quality
+        return run_quality(manifest_path, out)
+    roots = validate_source_roots(manifest, business_root, bundle=manifest_path.parent)
+    business_root = Path(roots["business_root"])
+    head = roots["control_head"]
     base = manifest["base_commit"]
-    subprocess.run(["git", "-C", str(ROOT), "merge-base", "--is-ancestor", base, head], check=True)
-    subprocess.run(["git", "-C", str(ROOT), "diff", "--quiet", base, "--", "backend/app"], check=True)
     run_id = uuid.uuid4().hex
     registered = "r1" in manifest
     if manifest["fixed"] != FIXED or manifest["evaluator_version"] != EVALUATOR:
@@ -159,18 +193,8 @@ def run(manifest_path, out):
         raise ValueError("Expected two arms from the declared baseline")
     configs = {label: artifact(manifest_path.parent, spec) for label, spec in arms.items()}
     if registered:
-        from rsi_candidates import verify_arm_sources, validate_seam
+        from rsi_candidates import verify_arm_sources
         workers = verify_arm_sources(manifest, manifest_path.parent)
-        # Both worker artifacts must be confined to the reviewed R0 selector seam.
-        frozen = subprocess.check_output(["git", "-C", str(ROOT), "show",
-            "297e66ed049d58060fffe2c15d36efaec182ecc8:scripts/rsi_delivery_worker.py"])
-        for source in workers.values():
-            validate_seam(frozen, source.read_bytes())
-        for source in (WORKER, WORKER.with_name("replay_source_preparation.py")):
-            original = subprocess.check_output(["git", "-C", str(ROOT), "show",
-                "297e66ed049d58060fffe2c15d36efaec182ecc8:scripts/" + source.name])
-            if digest(original) != digest(source.read_bytes()):
-                raise ValueError("Working replay substrate differs from frozen R0")
     elif configs["A"] != {"selection": "all"}:
         raise ValueError("A must preserve baseline delivery")
     cases = artifact(manifest_path.parent, manifest["cases"])
@@ -212,7 +236,7 @@ def run(manifest_path, out):
         for name in ("rsi_candidates.py", "rsi_feedback.py", "rsi_decision.py"):
             shutil.copyfile(WORKER.with_name(name), recovery / name)
             source_hashes[name] = digest((recovery / name).read_bytes())
-    save(out / "versions.json", {"run_id": run_id, "base_commit": base, "checkout": head, "implementation": source_hashes,
+    save(out / "versions.json", {"run_id": run_id, "base_commit": base, "checkout": head, "source_roots": roots, "implementation": source_hashes,
          "python": sys.version, "executable": sys.executable, "evaluator": EVALUATOR})
     records = []
     for index, item in enumerate(cases, 1):
@@ -228,7 +252,8 @@ def run(manifest_path, out):
         records.append(row)
         try:
             snapshot_path = directory / "snapshot.json"
-            snapshot = child("prepare", [directory / "input.json", snapshot_path], directory)
+            snapshot = child("prepare", [directory / "input.json", snapshot_path], directory,
+                             worker=recovery / WORKER.name, helper_dir=recovery, business_root=business_root)
             if snapshot["status"] == "BLOCKED":
                 reason = str(snapshot["reason"])
                 missing = expected.get("missing_file_id")
@@ -245,8 +270,8 @@ def run(manifest_path, out):
                     arm_dir = directory / label
                     arm_dir.mkdir()
                     config = recovery / (label + ".json")
-                    options = ({"worker": recovery / (label + "_worker.py"), "helper_dir": recovery}
-                               if registered else {})
+                    options = {"worker": recovery / (label + "_worker.py") if registered else recovery / WORKER.name,
+                               "helper_dir": recovery, "business_root": business_root}
                     capture_path = arm_dir / "capture.json"
                     capture = child("deliver", [snapshot_path, config, capture_path], arm_dir, **options)
                     if capture.get("status") != "OK":

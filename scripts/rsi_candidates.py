@@ -366,6 +366,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--registry', required=True, type=Path)
     subs = parser.add_subparsers(dest='command', required=True)
+    history = subs.add_parser('register-history', help='Index one verified historical observation; does not execute a candidate')
+    history.add_argument('--spec', required=True, type=Path)
+    history.add_argument('--evidence-root', required=True, type=Path)
     reg = subs.add_parser('register-r0'); reg.add_argument('--manifest', required=True, type=Path); reg.add_argument('--run', required=True, type=Path)
     der = subs.add_parser('derive'); der.add_argument('--parent', required=True); der.add_argument('--config', required=True, type=Path); workers = der.add_mutually_exclusive_group(required=True); workers.add_argument('--worker', type=Path); workers.add_argument('--worker-patch', type=Path)
     der.add_argument('--from-run', required=True, type=Path); der.add_argument('--observation-id', required=True)
@@ -377,7 +380,11 @@ def main():
         der.add_argument('--' + flag, required=True)
     mat = subs.add_parser('materialize'); mat.add_argument('--parent', required=True); mat.add_argument('--child', required=True); mat.add_argument('--out', required=True, type=Path); mat.add_argument('--cases', type=Path); mat.add_argument('--evaluation', type=Path); mat.add_argument('--engineering-fixture', action='store_true')
     args = parser.parse_args()
-    if args.command == 'register-r0':
+    if args.command == 'register-history':
+        from rsi_history import read_observation
+        observation = read_observation(read_json(args.spec), args.evidence_root)
+        output = {'historical_observation_key': record(args.registry, observation), **observation}
+    elif args.command == 'register-r0':
         output = register(args.registry, args.manifest, args.run)
     elif args.command == 'derive':
         if args.decision:

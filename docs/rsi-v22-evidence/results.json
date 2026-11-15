@@ -1,0 +1,238 @@
+{
+  "schema": "rsi-v22-public-evidence/v1",
+  "evidence_scope": "aggregate actual development validation; private raw evidence retained locally; no production/answer-quality claim",
+  "candidate_id": "2fdace91b3c7ba82fba14ff015affe9ab8d86944438e1aacc9c4a0b4070fc977",
+  "parent_id": "a8191e090bef5e0a626d527968d71d91df7badc0445cd13ca2093fe1904836db",
+  "original_ancestor_id": "56975c80c66ea9d5f99b6f72c1002fc0c12f2775bfc8ad69e27925bf528f4b23",
+  "authorship": {
+    "system": "CODEX_ENGINEER",
+    "strategy_direction": "CODEX_ENGINEER_GUIDED",
+    "worker_patch": "RSI_OPENAI_LUNA",
+    "autonomous_test_gain": false
+  },
+  "full_worker_sha256": "dd8f71a5fbfcb68a1a75a7c7a3524a3d2224e4178d446d6561e49537c960dbde",
+  "extracted_selector_sha256": "9b524f22b20cd5019adc7e16d957e52105a693a85c1624a9ce1ced8e8d51b1f2",
+  "config": {
+    "selection": "all"
+  },
+  "training": {
+    "primary": {
+      "cases": 20,
+      "source_groups": 20,
+      "paired": 20,
+      "parent_chars": 17569,
+      "candidate_chars": 14618,
+      "delta_chars": -2951,
+      "reduction_rate": 0.1679663042859582,
+      "candidate_fact_loss_cases": 0,
+      "candidate_source_present_cases": 20,
+      "group_counts": {
+        "favorable": 12,
+        "ties": 8,
+        "unfavorable": 0
+      },
+      "raw_sign_p": {
+        "denominator": 2048,
+        "numerator": 1,
+        "value": 0.00048828125
+      },
+      "adjusted_sign_p": {
+        "denominator": 2048,
+        "numerator": 3,
+        "value": 0.00146484375
+      },
+      "reason_codes": [
+        "TRAINING_GATES_AND_STATISTICS_PASSED"
+      ]
+    },
+    "alternate_queries": {
+      "cases": 20,
+      "source_groups": 20,
+      "paired": 20,
+      "parent_chars": 17569,
+      "candidate_chars": 14458,
+      "delta_chars": -3111,
+      "reduction_rate": 0.17707325402697935,
+      "candidate_fact_loss_cases": 0,
+      "candidate_source_present_cases": 20,
+      "group_counts": {
+        "favorable": 11,
+        "ties": 9,
+        "unfavorable": 0
+      },
+      "raw_sign_p": {
+        "denominator": 1024,
+        "numerator": 1,
+        "value": 0.0009765625
+      },
+      "adjusted_sign_p": null,
+      "reason_codes": [
+        "STATISTICS_PENDING_FAMILY"
+      ]
+    },
+    "next_seed": {
+      "cases": 20,
+      "source_groups": 20,
+      "paired": 20,
+      "parent_chars": 19540,
+      "candidate_chars": 19038,
+      "delta_chars": -502,
+      "reduction_rate": 0.025690890481064484,
+      "candidate_fact_loss_cases": 0,
+      "candidate_source_present_cases": 20,
+      "group_counts": {
+        "favorable": 1,
+        "ties": 19,
+        "unfavorable": 0
+      },
+      "raw_sign_p": {
+        "denominator": 1,
+        "numerator": 1,
+        "value": 1.0
+      },
+      "adjusted_sign_p": null,
+      "reason_codes": [
+        "STATISTICS_PENDING_FAMILY"
+      ]
+    },
+    "previous_seed": {
+      "cases": 20,
+      "source_groups": 20,
+      "paired": 20,
+      "parent_chars": 18444,
+      "candidate_chars": 17942,
+      "delta_chars": -502,
+      "reduction_rate": 0.02721752331381479,
+      "candidate_fact_loss_cases": 0,
+      "candidate_source_present_cases": 20,
+      "group_counts": {
+        "favorable": 1,
+        "ties": 19,
+        "unfavorable": 0
+      },
+      "raw_sign_p": {
+        "denominator": 1,
+        "numerator": 1,
+        "value": 1.0
+      },
+      "adjusted_sign_p": null,
+      "reason_codes": [
+        "STATISTICS_PENDING_FAMILY"
+      ]
+    },
+    "statistical_denominator": 20,
+    "family_size": 3,
+    "verdict": "ADOPT_CANDIDATE"
+  },
+  "sealed": {
+    "primary": {
+      "cases": 18,
+      "source_groups": 18,
+      "paired": 18,
+      "parent_chars": 12115,
+      "candidate_chars": 10415,
+      "delta_chars": -1700,
+      "reduction_rate": 0.140321914981428,
+      "candidate_fact_loss_cases": 0,
+      "candidate_source_present_cases": 18,
+      "group_counts": {
+        "favorable": 13,
+        "ties": 5,
+        "unfavorable": 0
+      },
+      "raw_sign_p": {
+        "denominator": 4096,
+        "numerator": 1,
+        "value": 0.000244140625
+      },
+      "adjusted_sign_p": {
+        "denominator": 2048,
+        "numerator": 1,
+        "value": 0.00048828125
+      },
+      "reason_codes": [
+        "STATISTICS_PENDING_FAMILY"
+      ]
+    },
+    "next_seed": {
+      "cases": 18,
+      "source_groups": null,
+      "paired": 18,
+      "parent_chars": 13631,
+      "candidate_chars": 13631,
+      "delta_chars": 0,
+      "reduction_rate": 0.0,
+      "candidate_fact_loss_cases": 0,
+      "candidate_source_present_cases": 18,
+      "group_counts": null,
+      "raw_sign_p": {
+        "denominator": 1,
+        "numerator": 1,
+        "value": 1.0
+      },
+      "adjusted_sign_p": null,
+      "reason_codes": [
+        "NO_GAIN"
+      ]
+    },
+    "previous_seed": {
+      "cases": 18,
+      "source_groups": null,
+      "paired": 18,
+      "parent_chars": 13631,
+      "candidate_chars": 13631,
+      "delta_chars": 0,
+      "reduction_rate": 0.0,
+      "candidate_fact_loss_cases": 0,
+      "candidate_source_present_cases": 18,
+      "group_counts": null,
+      "raw_sign_p": {
+        "denominator": 1,
+        "numerator": 1,
+        "value": 1.0
+      },
+      "adjusted_sign_p": null,
+      "reason_codes": [
+        "NO_GAIN"
+      ]
+    },
+    "statistical_denominator": 18,
+    "auxiliary_cases": 36,
+    "family_size": 2,
+    "verdict": "VERIFIED",
+    "auxiliary_pass": true,
+    "one_use_bundle_hash": "ce8cef5a1b8e68fcf3a5fa22478e44fad8fa391c0266d7403174a9936ead35d4"
+  },
+  "original_parent_regression": {
+    "cases": 20,
+    "fact_loss_cases": 2,
+    "missing_facts": 4,
+    "action": "PARENT_AND_SUPPORTED_HANDBOOK_RULE_QUARANTINED"
+  },
+  "safety_repair": {
+    "author": "CODEX_ENGINEER",
+    "candidate_id": "72311680e2a892b8a47d66bb559c940a2edc966930ffc8d15db206bc8be5941f",
+    "facts_restored": 4,
+    "overall_verdict": "PARENT_FAULT; engineering repair, not optimization admission"
+  },
+  "autonomous_a1": {
+    "phase": "FROZEN_AUTONOMOUS_TEST",
+    "terminal_round": 28,
+    "verdict": "FAILED_AND_ENGINEER_INVALIDATED",
+    "new_adoptions": 0,
+    "monitor_supplied_formula": false,
+    "known_defects": [
+      "failure memory only last3",
+      "generic static feedback",
+      "invalid error category during invalidation"
+    ],
+    "subsequent_system_fixes_are_not_a1_gains": true
+  },
+  "raw_receipt_hashes": {
+    "training": "c271c4662625bd588ccd92d9e919abeae71b72c1144ab3aed064430b330a1029",
+    "sealed": "0477edd48095749a6cec02c5a88ab8943a06440daedb49ba34c494102384da17"
+  },
+  "answer_quality": "NOT_RUN",
+  "retrieval_quality": "NOT_RUN",
+  "production_changed": false
+}
