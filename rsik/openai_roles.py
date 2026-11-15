@@ -85,7 +85,7 @@ def single_request(body, key_file, timeout, *, response_path=None):
 
 
 class OpenAIRoles:
-    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None):
+    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None, launch=None):
         self.budget, self.directory = budget, Path(directory)
         self.key_file, self.scanner = Path(key_file), scanner
         self.deadline, self.transport = deadline, transport
@@ -94,6 +94,7 @@ class OpenAIRoles:
         self.seam_profile=seam_profile
         self.role_profile=role_profile
         self.strategy_context=strategy_context
+        self.launch=launch
         roles_for(role_profile)
         self.models = dict(models or {})
         if set(self.models)-set(TASKS) or any(model not in {'gpt-6-luna','gpt-6.1-sol'} for model in self.models.values()):
@@ -157,11 +158,17 @@ class OpenAIRoles:
         if diagnosis is not None:
             validate_diagnosis(diagnosis, public)
         for attempt in range(2):
+            if self.transport is single_request:
+                from .launch import validate_launch
+                validate_launch(self.launch)
             if self.before_request:self.before_request()
             context = {'public': deepcopy(public), 'diagnosis': diagnosis}
             if attempt:
                 context['repair_instruction'] = 'Previous output violated the local contract. Return a valid response or ABSTAIN.'
             model = self.models.get(role, 'gpt-6-luna')
+            if self.transport is single_request:
+                configured=json.loads(Path(self.launch.plan_path).read_bytes())['models']
+                if configured.get(role)!=model:raise ValueError('LAUNCH_MODEL_IDENTITY_MISMATCH')
             policy=POLICY
             task=TASKS[role]
             if self.role_profile==DEPENDENCY:

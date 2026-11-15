@@ -6,7 +6,8 @@ This does not create ordinary per-case execution receipts or admit a parent.
 from pathlib import Path
 import time
 from .experiment import load,executor,read_decision,bytes_hash
-from .foundation import check_split
+from .baseline_qualification import adapters
+from .source_relations import PROFILE as RELATIONS_PROFILE, assess as assess_relations, family_clusters
 from .query_batch import diagnostic_worker
 from .query_aware import invariant_probe_source
 from .locking import atomic_write
@@ -18,22 +19,32 @@ from .adjudicate import evaluate_candidate,adjudicate_round
 def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
     ordinary_round=Path(ordinary_round);entries=[];baseline={};parent_id=None;worker=None;config=None
     for suite,fixture in enumerate(fixtures,1):
-        fixture=Path(fixture);check_split(fixture,expected_count=20)
+        fixture=Path(fixture);freeze=adapters(fixture)[0](fixture,expected_count=20)
+        relational=freeze.get('profile')==RELATIONS_PROFILE
         run=ordinary_round/('suite-'+str(suite));manifest=load(run/'manifest.json')
         spec=manifest['arms']['B']
-        audited=read_decision(run,fixture,spec['candidate_id'],{'angle':'P2_BUDGET','proposal_id':manifest['schema']},spec['worker_sha256'],spec['sha256'],evidence=evidence)
+        audited=adapters(fixture)[2](run,fixture,spec['candidate_id'],{'angle':'P2_BUDGET','proposal_id':manifest['schema']},spec['worker_sha256'],spec['sha256'],evidence=evidence)
         current=manifest['arms'][arm];raw_worker=(run/(arm+'_worker.py')).read_bytes();raw_config=(run/(arm+'.json')).read_bytes()
         if bytes_hash(raw_worker)!=current['worker_sha256'] or bytes_hash(raw_config)!=current['sha256']:raise ValueError('PREVIEW_PARENT_ARTIFACT_CHANGED')
         if parent_id is not None and (parent_id!=current['candidate_id'] or worker!=raw_worker or config!=raw_config):raise ValueError('MIXED_PREVIEW_PARENT')
         parent_id,worker,config=current['candidate_id'],raw_worker,raw_config
-        cases,rubric,proof=load(fixture/'cases.json'),load(fixture/'evaluation.json'),load(fixture/'provenance.restricted.json')
+        cases=load(fixture/'cases.json')
+        if relational:
+            proof=load(fixture/'relations.restricted.json');rubric={item['qid']:{'facts':[],'forbidden':[]} for item in cases}
+            clusters=family_clusters(cases,proof)
+        else:
+            rubric,proof=load(fixture/'evaluation.json'),load(fixture/'provenance.restricted.json')
         for index,(item,row) in enumerate(zip(cases,audited['per_question'],strict=True),1):
             key=f'{suite}-{index}';directory=run/f'case-{index:03}';snapshot=load(directory/'arm-input.json');capture=load(directory/arm/'capture.json')
             if row['pair_status']!='PAIRED' or not row['pair_identity']:raise ValueError('UNPAIRED_PREVIEW_BASELINE')
             if capture['upstream_sha256']!=executor.fingerprint(snapshot):raise ValueError('PREVIEW_FRAME_CHANGED')
             entries.append({'key':key,'snapshot':snapshot,'config':load(run/(arm+'.json'))})
             baseline[key]={'case':item['case'],'qid':item['qid'],'capture':capture,'rubric':rubric[item['qid']],
-                'proof':proof[item['qid']],'source_bytes':(fixture/proof[item['qid']]['source_relative_path']).read_bytes(),'suite':suite}
+                'proof':proof[item['qid']],
+                'source_bytes':({sid:(fixture/source['relative_path']).read_bytes() for sid,source in proof[item['qid']]['sources'].items()}
+                    if relational else (fixture/proof[item['qid']]['source_relative_path']).read_bytes()),
+                'source_group':clusters[item['qid']] if relational else proof[item['qid']]['source_group'],
+                'evaluator_profile':RELATIONS_PROFILE if relational else 'legacy','suite':suite}
     return {'parent_id':parent_id,'worker':worker,'config':config,'entries':entries,'baseline':baseline}
 
 
@@ -61,11 +72,14 @@ def replay(capsule,frame,worker,output,candidate_id):
     groups={i:[] for i in range(1,5)}
     for key,base in frame['baseline'].items():
         a,b=base['capture'],captures[key];case=base['case'];proof=base['proof']
-        pa=assess_provenance(case,a,proof,base['source_bytes']);pb=assess_provenance(case,b,proof,base['source_bytes'])
+        relational=base.get('evaluator_profile')==RELATIONS_PROFILE
+        assessor=assess_relations if relational else assess_provenance
+        pa=assessor(case,a,proof,base['source_bytes']);pb=assessor(case,b,proof,base['source_bytes'])
+        facts_key,id_key=('atoms','atom_id') if relational else ('facts','fact_id')
         sa=executor.assess(case,a,base['rubric'],'A');sb=executor.assess(case,b,base['rubric'],'B')
-        groups[base['suite']].append({'qid':base['qid'],'source_group':proof['source_group'],
+        groups[base['suite']].append({'qid':base['qid'],'source_group':base['source_group'],
             'chars_A':len(a.get('context','')),'chars_B':len(b.get('context','')),
-            'parent_facts':{f['fact_id']:f['status'] for f in pa['facts']},'candidate_facts':{f['fact_id']:f['status'] for f in pb['facts']},
+            'parent_facts':{f[id_key]:f['status'] for f in pa[facts_key]},'candidate_facts':{f[id_key]:f['status'] for f in pb[facts_key]},
             'parent_faults':sa['faults'],'candidate_faults':sb['faults'],'provenance_A':pa['status'],'provenance_B':pb['status'],
             'execution':'COMPLETED','pair_status':'PAIRED' if a.get('status')==b.get('status')=='OK' else 'FAILED',
             'pair_identity':a.get('upstream_sha256')==b.get('upstream_sha256'),'fault_origin':'CANDIDATE' if sb['faults'] else 'NONE'})

@@ -16,6 +16,9 @@ def main():
     for name in ('legacy-registry','query-registry','baseline-round','baseline-verification','primary','query-stress','next-stress','previous-stress',
                  'identity','business-root','key-file','budget-ledger','repair-receipt','directory','validation-audit'):
         p.add_argument('--'+name,required=True,type=Path)
+    p.add_argument('--launch-plan',required=True,type=Path)
+    p.add_argument('--launch-plan-sha256',required=True)
+    p.add_argument('--run-id',required=True)
     p.add_argument('--repair-id',required=True);p.add_argument('--host',required=True)
     p.add_argument('--profile',choices=('single','parallel'),default='parallel')
     p.add_argument('--role-profile',choices=('legacy/v1','query-k3-dependency/v1'),default='query-k3-dependency/v1')
@@ -34,7 +37,7 @@ def main():
     validation=load(a.validation_audit)
     if bytes_hash(Path(validation['log_path']).read_bytes())!=validation['log_sha256']:raise ValueError('VALIDATION_LOG_CHANGED')
     baseline=load(a.baseline_verification)
-    if baseline['verdict']!='VERIFIED':raise ValueError('VERIFIED_BASELINE_REQUIRED')
+    if baseline.get('verdict')!='VERIFIED' and baseline.get('status')!='BASELINE_QUALIFIED':raise ValueError('QUALIFIED_BASELINE_REQUIRED')
     a.directory.mkdir(parents=True);restrict_directory(a.directory)
     fixtures=[a.primary,a.query_stress,a.next_stress,a.previous_stress]
     from rsik.query_workflow import implementation_hashes
@@ -70,7 +73,10 @@ def main():
     config.update(profile=a.profile,role_profile=a.role_profile,handbook=str((a.handbook or a.legacy_registry/'handbook').resolve()),
         handbook_compatibility_fingerprint=fingerprint,handbook_format=a.handbook_format,handbook_features=features)
     atomic_write(a.directory/'launch.json',canonical(config),exclusive=True)
-    result=run(config)
+    from rsik.launch import LaunchContext,validate_launch
+    context=LaunchContext(str(a.launch_plan),a.launch_plan_sha256,a.run_id,'AUTONOMOUS_SEARCH',str(a.budget_ledger),str(a.query_registry),str(a.business_root),learning)
+    validate_launch(context,fixtures=fixtures)
+    result=run(config,launch=context)
     print(json.dumps({'phase':result['phase'],'execution_state':result['execution_state'],
         'stop_reason':result.get('stop_reason'),'rounds':result['rounds'],'current_parent_id':result['current_parent_id'],'budget':result['budget']}))
 

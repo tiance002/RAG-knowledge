@@ -144,9 +144,19 @@ def remember_round(memory,history,result,worker,round_number):
     return items
 
 
-def run(config):
+def run(config, *, launch=None):
+    from .launch import validate_launch
+    validate_launch(launch,phase='AUTONOMOUS_SEARCH',fixtures=config['fixtures'],directory=config.get('directory'))
     directory=Path(config['directory']);registry=Path(config['query_registry']);fixtures=[Path(p) for p in config['fixtures']]
-    budget=Budget(config['budget_ledger']);log=EventLog(directory/'events.sqlite')
+    budget=Budget(config['budget_ledger'])
+    if 'search_start_nano' in config:
+        from .campaign import SearchBudget
+        from .launch import read_binding
+        plan=load(launch.plan_path)
+        if (plan['experiment'].get('nominal_usd')!=config.get('search_nominal_usd','0.20')
+                or plan['experiment'].get('search_start_nano')!=config['search_start_nano']):raise ValueError('SEARCH_BUDGET_CONFIGURATION_CHANGED')
+        budget=SearchBudget(config['budget_ledger'],start_nano=config['search_start_nano'],nominal_usd=config.get('search_nominal_usd','0.20'))
+    log=EventLog(directory/'events.sqlite')
     baseline_round=Path(config['baseline_round']);arm='B';history=[];round_number=0
     memory={'schema':'rsi-autonomy-memory/v1','rounds':0,'evicted_entries':0,'entries':[]}
     profile=config.get('profile','parallel')
@@ -185,13 +195,18 @@ def run(config):
             finish(error.reason_code,'COMPLETED' if error.reason_code=='OWNER_REQUESTED_STOP' else 'FAILED')
             if error.reason_code=='OWNER_REQUESTED_STOP':return state
             raise
-        verify_training(registry,baseline_round,fixtures,config['baseline_id'])
+        if load(config['baseline_verification']).get('status')=='BASELINE_QUALIFIED':
+            from .baseline_qualification import verify_baseline_qualification
+            from .execution_evidence import ExecutionEvidence
+            verify_baseline_qualification(registry=registry,receipt=config['baseline_verification'],fixtures=fixtures,
+                evidence=ExecutionEvidence.real(config['business_root']))
+        else:verify_training(registry,baseline_round,fixtures,config['baseline_id'])
         seed_receipt=Path(config['baseline_verification'])
         verified=load(seed_receipt)
-        if verified.get('verdict')!='VERIFIED' or verified.get('candidate_id')!=config['baseline_id']:
+        if (verified.get('verdict')!='VERIFIED' and verified.get('status')!='BASELINE_QUALIFIED') or verified.get('candidate_id')!=config['baseline_id']:
             raise ValueError('VERIFIED_INITIAL_PARENT_REQUIRED')
         sealed_log=EventLog(registry/'sealed.sqlite')
-        if not any(e['event_type']=='QUERY_SEALED_BUNDLE_FINISHED' and e['payload'].get('candidate_id')==config['baseline_id']
+        if verified.get('status')!='BASELINE_QUALIFIED' and not any(e['event_type']=='QUERY_SEALED_BUNDLE_FINISHED' and e['payload'].get('candidate_id')==config['baseline_id']
                    and e['payload'].get('verdict')=='VERIFIED' and e['payload'].get('receipt_sha256')==bytes_hash(seed_receipt.read_bytes()) for e in sealed_log.read()):
             raise ValueError('UNBOUND_INITIAL_VERIFICATION')
         log.append('started','AUTONOMY_TEST_STARTED',state);save()
@@ -200,7 +215,7 @@ def run(config):
                 guard();money=budget.snapshot()
                 if money['unbounded_usage_requests'] or money['pending_request_keys']:
                     finish('BILLING_OR_REQUEST_STATUS_UNKNOWN','FAILED');return state
-                if money['recorded_cost_nano_upper']>=budget.limit_nano:
+                if money['recorded_cost_nano_upper']>=budget.limit_nano or (hasattr(budget,'search_start_nano') and money['recorded_cost_nano_upper']-budget.search_start_nano>=budget.search_allowance_nano):
                     finish('BUDGET_EXHAUSTED');return state
                 round_number+=1;trial=directory/f'round-{round_number:06}';trial.mkdir();restrict_directory(trial)
                 state.update(rounds=round_number,stage='DIAGNOSIS',current_round=str(trial));save()
@@ -226,10 +241,10 @@ def run(config):
                 atomic_write(trial/'baseline.json',canonical({'parent_id':frame['parent_id'],'parent_worker_sha256':bytes_hash(frame['worker']),
                     'parent_config_sha256':bytes_hash(frame['config']),'ordinary_round':str(baseline_round.resolve()),
                     'ordinary_round_sha256':bytes_hash((baseline_round/'round.json').read_bytes()),'arm':arm}),exclusive=True)
-                roles=OpenAIRoles(budget,trial/'roles',config['key_file'],scanner,seam_profile='query-autonomous-v1',role_profile=role_profile,strategy_context=experience_session.verify if experience_session else None,
+                roles=OpenAIRoles(budget,trial/'roles',config['key_file'],scanner,seam_profile='query-autonomous-v1',role_profile=role_profile,launch=launch,strategy_context=experience_session.verify if experience_session else None,
                     models={'P2_BUDGET':proposer_model(history)},before_request=guard)
                 advisory_roles=OpenAIRoles(budget,trial/'advisory-roles',config['key_file'],scanner,
-                    seam_profile='legacy',before_request=guard,strategy_context=experience_session.verify if experience_session else None)
+                    seam_profile='legacy',before_request=guard,launch=launch,strategy_context=experience_session.verify if experience_session else None)
                 parent=QueryRegistry(registry).get(state['current_parent_id'])
                 def capsule_factory(output):
                     return Capsule(config['host'],Path(config['identity']),Path(config['business_root']),output)
@@ -237,7 +252,7 @@ def run(config):
                 result=run_query_round(public=public,roles=roles,advisory_roles=advisory_roles,
                     parent=parent,fixtures=fixtures,registry=QueryRegistry(registry),directory=trial/'integrated',
                     capsule_factory=capsule_factory,scanner=scanner,enabled_slots=enabled_slots,guard=guard,
-                    role_profile=role_profile,experience_session=experience_session,handbook=handbook,compatibility_fingerprint=config.get('handbook_compatibility_fingerprint'),
+                    role_profile=role_profile,experience_session=experience_session,launch=launch,handbook=handbook,compatibility_fingerprint=config.get('handbook_compatibility_fingerprint'),
                     features=config.get('handbook_features'),format=config.get('handbook_format','OTHER'))
                 guard()
                 items=remember_round(memory,history,result,frame['worker'],round_number)
@@ -258,6 +273,8 @@ def run(config):
                 if cid:
                     ordinary=Path(result['selected_training_directory'])
                     verify_training(registry,ordinary,fixtures,cid)
+                    from dataclasses import replace
+                    launch=replace(launch,exploration_training=str(ordinary.resolve()))
                     baseline_round=ordinary;state.update(current_parent_id=cid,current_parent_round=str(ordinary),
                         current_parent_quality='TRAINING_VALIDATED_EXPLORATION; new sealed verification required')
                     save()

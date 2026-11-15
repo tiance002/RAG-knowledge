@@ -14,6 +14,7 @@ from .contracts import validate_proposal
 from .events import EventLog
 from .experiment import bytes_hash, load, read_decision
 from .foundation import check_split
+from .baseline_qualification import adapters as profile_adapters
 from .family_decision import make_family, validate_family, selected_receipt
 from .holdout import replay_artifacts
 from .locking import atomic_write, restrict_directory
@@ -24,6 +25,14 @@ from .role_profiles import LEGACY,profile_manifest,preserves_selection_order,rol
 from .state import canonical, digest, StageJournal
 from .workflow import execute_round
 from run_rsi_loop import selector
+
+
+def adapters(fixture):
+    """Select only the explicit versioned profile; retain the legacy evaluator."""
+    manifest = Path(fixture) / 'manifest.json'
+    if manifest.is_file() and load(manifest).get('profile') == 'source-relations/v1':
+        return profile_adapters(fixture)
+    return check_split, replay_artifacts, read_decision
 
 
 def implementation_hashes():
@@ -37,7 +46,7 @@ def implementation_hashes():
     paths = [p for p in package.rglob('*.py') if 'tests' not in p.relative_to(package).parts]
     scripts = root / 'scripts'
     paths += [p for p in scripts.glob('*.py') if p.name.startswith(('rsi_', 'run_rsi_'))
-              or p.name == 'replay_source_preparation.py']
+              or p.name in {'replay_source_preparation.py','qualify_rsi_baseline.py','prepare_rsi_v23.py','recover_rsi_learning.py'}]
     return {p.relative_to(root).as_posix(): bytes_hash(p.read_bytes()) for p in sorted(paths)}
 
 
@@ -80,7 +89,7 @@ def resume_query_round(*, directory, registry, fixtures, evidence=None):
     read_only_quarantine_check(registry, parent['candidate_id'])
     if bytes_hash(parent['worker']) != record['parent_worker_sha256'] or bytes_hash(parent['config']) != record['parent_config_sha256']:
         raise ValueError('QUERY_COMPLETED_PARENT_CHANGED')
-    freezes = {str(Path(f).resolve()): check_split(f, expected_count=20) for f in fixtures}
+    freezes = {str(Path(f).resolve()): adapters(f)[0](f, expected_count=20) for f in fixtures}
     if freezes != record['fixture_freezes']:
         raise ValueError('QUERY_COMPLETED_FIXTURE_CHANGED')
     public = load(directory / 'public-context.json')
@@ -132,7 +141,7 @@ def resume_query_round(*, directory, registry, fixtures, evidence=None):
                 if (spec['candidate_id'] != artifact['candidate_id'] or spec['worker_sha256'] != bytes_hash(artifact['worker'])
                         or spec['sha256'] != bytes_hash(artifact['config'])):
                     raise ValueError('QUERY_COMPLETED_LINEAGE_CHANGED')
-            decision = read_decision(run, fixture, child['candidate_id'],
+            decision = adapters(fixture)[2](run, fixture, child['candidate_id'],
                 {'angle': 'P2_BUDGET', 'proposal_id': 'rsi-query-aware-engineering/v1'},
                 bytes_hash(worker), bytes_hash(parent['config']), evidence=evidence)
             if decision != load(output / f'decision-{index}.json'):
@@ -224,13 +233,23 @@ def assert_order_angle(run):
 def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry,
                     directory, capsule_factory, scanner, handbook=None,
                     compatibility_fingerprint=None, features=None, format='OTHER',
-                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None):
+                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None, launch=None, evidence=None):
     """Run Diagnosis/P1/P2/P3, ordinary four-suite replay, then Curator/Meta.
 
     advisory_roles must use the legacy read-only profile, sharing the same Budget.
     The selected_training_directory uses the existing query verification format.
     It is training adoption only; fresh sealed verification remains mandatory.
     """
+    from .launch import guard_real,validate_launch
+    from .execution_evidence import ExecutionEvidence
+    expected_models={r:getattr(roles,'models',{}).get(r,'gpt-6-luna') for r in ('diagnose',)+tuple(roles_for(role_profile).values())}
+    expected_models.update({r:getattr(advisory_roles,'models',{}).get(r,'gpt-6-luna') for r in ('curator','meta')})
+    if evidence is None:
+        validate_launch(launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile)
+    else:
+        guard_real(evidence,launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile)
+    if hasattr(roles,'launch'):roles.launch=launch
+    if hasattr(advisory_roles,'launch'):advisory_roles.launch=launch
     original_guard = guard
     def guard():
         original_guard()
@@ -254,7 +273,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         raise ValueError('QUERY_PARENT_CHANGED')
     if public.get('parent_code') != selector(parent['worker'].decode())[1]:
         raise ValueError('QUERY_PUBLIC_PARENT_CODE_CHANGED')
-    freezes = {str(f.resolve()): check_split(f, expected_count=20) for f in fixtures}
+    freezes = {str(f.resolve()): adapters(f)[0](f, expected_count=20) for f in fixtures}
     public = deepcopy(public)
     if handbook is not None:
         if not compatibility_fingerprint:
@@ -302,6 +321,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         output, worker = artifact['output'], artifact['worker']
         guard()
         capsule = capsule_factory(output / 'capsule')
+        capsule.launch_context=launch
         decisions = []
         try:
             capsule.setup()
@@ -348,18 +368,18 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
             atomic_write(output / 'fixture-freezes.restricted.json', canonical(freezes), exclusive=True)
             for index, fixture in enumerate(fixtures, 1):
                 guard()
-                if check_split(fixture, expected_count=20) != freezes[str(fixture.resolve())]:
+                if adapters(fixture)[0](fixture, expected_count=20) != freezes[str(fixture.resolve())]:
                     raise StageFailure('STORAGE_ERROR', 'FIXTURE_CHANGED_DURING_PROPOSAL')
                 run = output / f'suite-{index}'
                 def ordinary(_):
-                    return replay_artifacts(capsule, fixture, {'A': parent, 'B': child}, run,
+                    return adapters(fixture)[1](capsule, fixture, {'A': parent, 'B': child}, run,
                         deadline=deadline, schema='rsi-query-aware-engineering/v1',
                         scope='ordinary query training; auxiliary suites are fact gates, not independent samples')
                 def reconciled(_):
                     if not run.exists(): return {'status': 'ABSENT', 'safe_retry': True}
                     if not (run / 'results.json').is_file() or not (run / 'manifest.json').is_file():
                         return {'status': 'UNKNOWN'}
-                    audited = read_decision(run, fixture, cid,
+                    audited = adapters(fixture)[2](run, fixture, cid,
                         {'angle': 'P2_BUDGET', 'proposal_id': 'rsi-query-aware-engineering/v1'},
                         bytes_hash(worker), bytes_hash(parent['config']), evidence=capsule.evidence_policy)
                     return {'status': 'MATCHED', 'output': audited}
@@ -412,7 +432,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     result['real_eligible'] = result['evidence_mode'] == 'REAL_REPLAY' and all(d.get('real_eligible') is True for a in artifacts.values() for d in a.get('suite_decisions', []))
     if 'candidate_decisions' in result:
         result['candidate_decisions'].sort(key=lambda d: SLOTS.index(d['angle']))
-    result.update(schema='rsi-query-multi-role/v2.3', parent_id=parent['candidate_id'],
+    result.update(launch_run_id=launch.run_id if launch else None,launch_plan_sha256=launch.plan_sha256 if launch else None,schema='rsi-query-multi-role/v2.3', parent_id=parent['candidate_id'],
                   role_profile=profile_manifest(role_profile),
                   compatibility_fingerprint=compatibility_fingerprint,
                   experience_frontier=frontier, strategy_input_binding=binding,
@@ -460,7 +480,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
             return record_query_round_learning(handbook=handbook, record=result, public=public,
                                               compatibility_fingerprint=compatibility_fingerprint)
         if experience_session is not None:
-            experience_session.learn(digest(result), record_learning)
+            experience_session.learn_round(record_path=directory/'round.json',public_path=directory/'public-context.json',compatibility_fingerprint=compatibility_fingerprint)
         else:
             record_learning()
     # Separate role profile: completed_projection is intentionally legacy-shaped.

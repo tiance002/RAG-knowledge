@@ -64,7 +64,7 @@ def external_pair(capsule, registry, fixture, parent_id, candidate_id, output, *
 def replay_artifacts(capsule, fixture, artifacts, output, *, deadline, schema, scope):
     """Shared execution plumbing; caller supplies explicit experiment identity."""
     fixture,output=Path(fixture),Path(output)
-    if schema not in {'rsi-external-holdout/v2.2','rsi-query-aware-engineering/v1','rsi-safety-engineering/v1'}:
+    if schema not in {'rsi-external-holdout/v2.2','rsi-query-aware-engineering/v1','rsi-safety-engineering/v1','rsi-baseline-aa/v1'}:
         raise ValueError('UNKNOWN_REPLAY_PROFILE')
     if set(artifacts)!={'A','B'}:raise ValueError('TWO_ARTIFACT_ARMS_REQUIRED')
     output.mkdir(parents=True,exist_ok=False)
@@ -119,12 +119,15 @@ def replay_artifacts(capsule, fixture, artifacts, output, *, deadline, schema, s
 
 
 def verify_sealed(*, registry, training, train_fixture, sealed_fixture, candidate_id,
-                  trusted_id, lineage_id, policy, capsule, output):
+                  trusted_id, lineage_id, policy, capsule, output, launch=None):
     registry,output,fixture=Path(registry),Path(output),Path(sealed_fixture)
     from .execution_evidence import resolve_policy
     execution_policy=resolve_policy(getattr(capsule,'evidence_policy',None))
     if not execution_policy.real_eligible:
         raise ValueError('SYNTHETIC_CONTROL_NOT_REAL_QUALIFICATION')
+    from .launch import guard_real
+    guard_real(execution_policy,launch,phase='FINAL_VERIFICATION')
+    capsule.launch_context=launch
     with WorkspaceLock(registry/'writer.lock','sealed-holdout'):
         training_hash=verify_training_adoption(training,train_fixture,registry,candidate_id)
         candidate=registry_api.candidate(registry,candidate_id)

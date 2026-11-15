@@ -54,13 +54,13 @@ def record_query_round_learning(*, handbook, record, public, compatibility_finge
 
 
 class ExperienceSession:
-    """Freeze initial memory and reject any writes outside a learning transaction.
+    """Freeze memory and recover only declared, input-bound learning operations.
 
-    A crash during a transaction is intentionally not auto-approved. Archived
-    evidence must be reconciled before a new request, rather than accepting the
-    current event tail as though it belonged to the original experiment.
+    An arbitrary callback remains usable for legacy controls, but is never
+    deserialized or retried after interruption. No recovery path sends a model
+    request or accepts an unclassified event tail.
     """
-    def __init__(self, directory, handbook):
+    def __init__(self, directory, handbook, *, recovery=False):
         self.directory, self.handbook = Path(directory), handbook
         self.directory.mkdir(parents=True, exist_ok=True)
         self.initial = self.directory / 'initial-memory.json'
@@ -69,7 +69,7 @@ class ExperienceSession:
             value = self.snapshot()
             atomic_write(self.initial, canonical(value), exclusive=True)
             atomic_write(self.frontier, canonical(value), exclusive=True)
-        self.verify()
+        if not recovery:self.verify()
 
     def snapshot(self):
         events = self.handbook.log.read()
@@ -90,7 +90,11 @@ class ExperienceSession:
             raise ValueError('EXTERNAL_EXPERIENCE_CHANGE')
         return frontier
 
+    def checkpoint(self, point):
+        """No-op host crash-injection seam; never part of model inputs."""
+
     def learn(self, evidence_id, operation):
+        # Legacy arbitrary callbacks are deliberately nonrecoverable.
         self.verify()
         intent = self.directory / 'learning-intent.json'
         atomic_write(intent, canonical({'evidence_id': evidence_id, 'before': load(self.frontier)}), exclusive=True)
@@ -99,8 +103,300 @@ class ExperienceSession:
         atomic_write(self.directory / ('learning-' + evidence_id + '.json'),
                      canonical({'evidence_id': evidence_id, 'after': after}))
         atomic_write(self.frontier, canonical(after))
-        intent.unlink()  # one owned file, after durable reconciliation receipt
+        intent.unlink()
         return result
+
+    def learn_round(self, *, record_path, public_path, compatibility_fingerprint):
+        record_path,public_path=Path(record_path),Path(public_path)
+        record,public=load(record_path),load(public_path)
+        class Recorder:
+            evidence_mode=self.handbook.evidence_mode
+            def append(_self,key,kind,payload,**kwargs):commands.append({'key':key,'kind':kind,'payload':payload})
+        commands=[];book=Recorder();book.log=book
+        record_query_round_learning(handbook=book,record=record,public=public,compatibility_fingerprint=compatibility_fingerprint)
+        descriptor={'kind':'ROUND_EVENTS','commands':commands,'result':None,
+            'bindings':file_bindings([record_path,public_path]),
+            'record_path':str(record_path.resolve()),'public_path':str(public_path.resolve()),
+            'compatibility_fingerprint':compatibility_fingerprint}
+        return self._start(digest(record),descriptor)
+
+    def learn_delta(self, evidence_id, *, response_path, public_path, context_path,
+                    prefix_events=(), result=None, result_path=None, verification=None, request_proof=None):
+        from datetime import datetime,timezone
+        response_path,public_path,context_path=map(Path,(response_path,public_path,context_path))
+        response,public,context=map(load,(response_path,public_path,context_path))
+        delta=unwrap_response(response)
+        if delta is not None:validate_readonly(delta,public,'curator')
+        if context.get('evidence_mode',self.handbook.evidence_mode)!=self.handbook.evidence_mode:
+            raise ValueError('HANDBOOK_EVIDENCE_MODE_MISMATCH')
+        created_at=datetime.now(timezone.utc).isoformat()
+        commands=list(deepcopy(prefix_events));commands2,entry_id=_plan_delta(self.handbook,delta,context,evidence_id,created_at)
+        commands.extend(commands2)
+        value=deepcopy(result or {'evidence_id':evidence_id,'entries':[] if entry_id is None else [entry_id]})
+        if 'entries' in value:value['entries']=[] if entry_id is None else [entry_id]
+        descriptor={'kind':'CURATOR_DELTA','commands':commands,'result':value,
+            'bindings':file_bindings([response_path,public_path,context_path]),
+            'response_path':str(response_path.resolve()),'public_path':str(public_path.resolve()),
+            'context_path':str(context_path.resolve()),'created_at':created_at,
+            'result_path':str(Path(result_path).resolve()) if result_path else None,
+            'verification':verification,'request_proof':request_proof,'prefix_events':list(deepcopy(prefix_events))}
+        return self._start(evidence_id,descriptor)
+
+    def _start(self,evidence_id,descriptor):
+        self.verify()
+        if not isinstance(evidence_id,str) or not evidence_id or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.' for c in evidence_id):
+            raise ValueError('INVALID_LEARNING_ID')
+        if descriptor['kind']=='CURATOR_DELTA' and self.handbook.evidence_mode=='REAL_REPLAY':
+            _validate_request_proof(descriptor.get('request_proof'),load(descriptor['response_path']))
+        descriptor={**descriptor,'schema':'rsi-learning-operation/v1','evidence_id':evidence_id,
+            'handbook':str(self.handbook.directory.resolve()),'evidence_mode':self.handbook.evidence_mode,
+            'implementation':recovery_implementation()}
+        path=self.directory/('operation-'+evidence_id+'.json')
+        data=canonical(descriptor)
+        if path.exists():
+            old=load(path)
+            # A completed idempotent call has its original plan/timestamp.
+            if (old['bindings']!=descriptor['bindings'] or old['kind']!=descriptor['kind']
+                    or old['implementation']!=descriptor['implementation']):raise ValueError('LEARNING_OPERATION_CHANGED')
+            receipt=self.directory/('learning-'+evidence_id+'.json')
+            if not receipt.exists():raise ValueError('RECOVERY_BLOCKED_OPERATION_WITHOUT_RECEIPT')
+            prior=load(receipt)
+            if (prior.get('operation_hash')!=bytes_hash(path.read_bytes()) or prior.get('result')!=old['result']):
+                raise ValueError('LEARNING_RECEIPT_CHANGED')
+            events=self.handbook.log.read();n=prior['after']['sequence']
+            if n>len(events) or (events[n-1]['event_hash'] if n else '0'*64)!=prior['after']['event_hash']:
+                raise ValueError('LEARNING_COMMITTED_EFFECTS_MISSING')
+            return prior['result']
+        atomic_write(path,data,exclusive=True)
+        intent={'schema':'rsi-learning-intent/v2','evidence_id':evidence_id,'before':load(self.frontier),
+                'operation_path':path.name,'operation_hash':bytes_hash(data)}
+        atomic_write(self.directory/'learning-intent.json',canonical(intent),exclusive=True)
+        self.checkpoint('intent')
+        return self.recover()
+
+    def _blocked(self,reason):
+        atomic_write(self.directory/'recovery-status.json',canonical({'status':'RECOVERY_BLOCKED','reason':reason}))
+        raise ValueError('RECOVERY_BLOCKED_'+reason)
+
+    def recover(self):
+        try:return self._recover()
+        except (ValueError,RuntimeError,OSError,KeyError,TypeError) as error:
+            reason=str(error)
+            if reason.startswith('RECOVERY_BLOCKED_'):reason=reason[len('RECOVERY_BLOCKED_'):]
+            elif reason not in {'LEARNING_TRANSACTION_RECONCILIATION_REQUIRED'}:reason='EVIDENCE_OR_EVENT_VALIDATION_FAILED'
+            return self._blocked(reason)
+
+    def _recover(self):
+        """Reconcile a trusted event prefix without external calls or blind redo."""
+        intent_path=self.directory/'learning-intent.json'
+        if not intent_path.exists():
+            self.verify();return {'status':'NO_PENDING_TRANSACTION'}
+        intent=load(intent_path)
+        if intent.get('schema')!='rsi-learning-intent/v2':return self._blocked('UNDECLARED_OPERATION')
+        op_path=(self.directory/intent['operation_path']).resolve()
+        if not op_path.is_relative_to(self.directory.resolve()):return self._blocked('OPERATION_PATH')
+        data=op_path.read_bytes()
+        if bytes_hash(data)!=intent['operation_hash']:return self._blocked('OPERATION_CHANGED')
+        op=load(op_path)
+        if (op.get('schema')!='rsi-learning-operation/v1' or op.get('kind') not in {'CURATOR_DELTA','ROUND_EVENTS'}
+                or op['evidence_id']!=intent['evidence_id'] or op['implementation']!=recovery_implementation()
+                or op['handbook']!=str(self.handbook.directory.resolve()) or op['evidence_mode']!=self.handbook.evidence_mode):
+            return self._blocked('IDENTITY_CHANGED')
+        for path,expected in op['bindings'].items():
+            if not Path(path).is_file() or bytes_hash(Path(path).read_bytes())!=expected:return self._blocked('INPUT_CHANGED')
+        # Revalidate host evidence, not only the JSON hashes.
+        if op['kind']=='CURATOR_DELTA':
+            response,public,context=map(load,(op['response_path'],op['public_path'],op['context_path']))
+            delta=unwrap_response(response)
+            if delta is not None:validate_readonly(delta,public,'curator')
+            if self.handbook.evidence_mode=='REAL_REPLAY':
+                if not op.get('verification'):return self._blocked('REAL_EVIDENCE_REQUIRED')
+                _validate_request_proof(op.get('request_proof'),response)
+                args=op['verification'];from .execution_evidence import ExecutionEvidence
+                bound=VerifiedCandidateEvidence.from_archives(**args,evidence=ExecutionEvidence.real())
+                expected_public,expected_context=bound.projection(self.handbook.scanner,context['compatibility_fingerprint'])
+                if expected_public!=public or expected_context!=context:return self._blocked('VERIFIED_CONTEXT_CHANGED')
+        else:
+            record,public=load(op['record_path']),load(op['public_path'])
+            if self.handbook.evidence_mode=='REAL_REPLAY':
+                from .family_decision import validate_family
+                family_path=Path(op['record_path']).parent/'family-decision.json'
+                if record.get('candidate_decisions'):
+                    outcome=validate_family(load(family_path))
+                    if any(record.get(k)!=outcome.get(k) for k in ('verdict','adopted_candidate_id','candidate_decisions')):
+                        return self._blocked('ROUND_EVIDENCE_CHANGED')
+        events=self.handbook.log.read();before=intent['before'];n=before['sequence']
+        if n>len(events) or (events[n-1]['event_hash'] if n else '0'*64)!=before['event_hash']:
+            return self._blocked('FRONTIER_CHANGED')
+        initial=load(self.initial);m=initial['sequence']
+        if m>n or (events[m-1]['event_hash'] if m else '0'*64)!=initial['event_hash']:
+            return self._blocked('INITIAL_MEMORY_CHANGED')
+        if any(bytes_hash((self.handbook.directory/'entries'/k).read_bytes())!=v for k,v in before['entries'].items()):
+            return self._blocked('BASE_ENTRY_CHANGED')
+        tail=events[n:];commands=op['commands']
+        frontier=load(self.frontier)
+        if frontier!=before and (len(tail)!=len(commands) or frontier!=self.snapshot()):
+            return self._blocked('FRONTIER_CHANGED')
+        if op['kind']=='CURATOR_DELTA':
+            from .handbook.projection import project
+            class BaselineBook:
+                evidence_mode=self.handbook.evidence_mode
+                directory=self.handbook.directory
+                def get(_self,key):return self.handbook.get(key)
+                def view(_self):return project(events[:n],evidence_mode=self.handbook.evidence_mode)
+            planned,_=_plan_delta(BaselineBook(),delta,context,op['evidence_id'],op['created_at'])
+            prefix=op['prefix_events']
+            if op.get('verification'):
+                expected_prefix=[{'key':'query-verified:'+op['evidence_id'],'kind':'HOLDOUT_PASSED',
+                    'payload':{'candidate_id':context['refs'][next(iter(context['refs']))]['candidate_id'],
+                        'evidence_version':op['evidence_id'],'evidence_mode':self.handbook.evidence_mode,
+                        'receipt_hash':bytes_hash((Path(op['verification']['verification'])/'receipt.restricted.json').read_bytes())}}]
+                if prefix!=expected_prefix:return self._blocked('VERIFIED_EVENT_CHANGED')
+            elif prefix and self.handbook.evidence_mode!='SYNTHETIC_CONTROL':return self._blocked('EVENT_PROVENANCE_UNKNOWN')
+            if commands!=prefix+planned:return self._blocked('EFFECT_PLAN_CHANGED')
+        else:
+            expected=[]
+            class Recorder:
+                evidence_mode=self.handbook.evidence_mode
+                def append(_self,key,kind,payload,**kwargs):expected.append({'key':key,'kind':kind,'payload':payload})
+            recorder=Recorder();recorder.log=recorder
+            record_query_round_learning(handbook=recorder,record=record,public=public,
+                compatibility_fingerprint=op['compatibility_fingerprint'])
+            if commands!=expected:return self._blocked('EFFECT_PLAN_CHANGED')
+        if len(tail)>len(commands):return self._blocked('FOREIGN_EVENT_TAIL')
+        for event,command in zip(tail,commands):
+            if (event['idempotency_key']!=command['key'] or event['event_type']!=command['kind']
+                    or event['payload']!=command['payload'] or event['actor']!='workflow' or event['evidence_hashes']):
+                return self._blocked('FOREIGN_EVENT_TAIL')
+        if op['kind']=='CURATOR_DELTA':
+            # Fixed timestamp makes an entry file written immediately before a
+            # crash safe to match byte-for-byte, even before ENTRY_CREATED.
+            if delta is not None:
+                _validate_planned_delta_files(self.handbook,delta,context,op['created_at'])
+        # Replay only whitelisted commands. Idempotency keys retain one event and
+        # compare payloads; entry/evidence files are installed before references.
+        for index,command in enumerate(commands):
+            if op['kind']=='CURATOR_DELTA' and command['kind'] in {'ENTRY_CREATED','ENTRY_REVISED'}:
+                _install_delta_files(self.handbook,delta,context,op['created_at'])
+            self.handbook.log.append(command['key'],command['kind'],command['payload'])
+            if index==0:self.checkpoint('partial_events')
+            if command['kind'] in {'ENTRY_CREATED','ENTRY_REVISED'}:self.checkpoint('entry_created')
+            if command['kind']=='ENTRY_ACTIVATED':self.checkpoint('entry_activated')
+        if op['kind']=='CURATOR_DELTA' and op.get('verification') and op['result'].get('entries'):
+            registry=Path(op['verification']['registry']);cid=context['refs'][next(iter(context['refs']))]['candidate_id']
+            EventLog(registry/'learning-links.sqlite').append('book:'+op['evidence_id']+':'+digest(str(self.handbook.directory.resolve())),
+                'CANDIDATE_HANDBOOK_BOUND',{'candidate_id':cid,'evidence_id':op['evidence_id'],
+                    'handbook':str(self.handbook.directory.resolve()),'evidence_mode':self.handbook.evidence_mode})
+        after=self.snapshot();result=op['result'];receipt={'schema':'rsi-learning-recovery-receipt/v1',
+            'evidence_id':op['evidence_id'],'operation_hash':intent['operation_hash'],'after':after,'result':result}
+        if op.get('result_path'):
+            target=Path(op['result_path'])
+            if target.exists() and target.read_bytes()!=canonical(result):return self._blocked('RESULT_CHANGED')
+            if not target.exists():atomic_write(target,canonical(result),exclusive=True)
+        atomic_write(self.directory/('learning-'+op['evidence_id']+'.json'),canonical(receipt))
+        self.checkpoint('completed_receipt')
+        atomic_write(self.frontier,canonical(after))
+        self.checkpoint('frontier_updated')
+        self.checkpoint('before_intent_cleanup')
+        intent_path.unlink()
+        atomic_write(self.directory/'recovery-status.json',canonical({'status':'RECOVERED','evidence_id':op['evidence_id']}))
+        self.verify()
+        return result
+
+
+def _validate_request_proof(proof,response):
+    if not isinstance(proof,dict):raise ValueError('RECOVERY_BLOCKED_REQUEST_IDENTITY_UNKNOWN')
+    from .budgets import Budget
+    request_path,receipt_path=Path(proof['request_path']),Path(proof['receipt_path'])
+    if (bytes_hash(request_path.read_bytes())!=proof['request_sha256'] or bytes_hash(receipt_path.read_bytes())!=proof['receipt_sha256']):
+        raise ValueError('RECOVERY_BLOCKED_REQUEST_IDENTITY_CHANGED')
+    request,receipt=load(request_path),load(receipt_path)
+    starts=[e['payload'] for e in Budget(proof['budget_ledger']).log.read() if e['event_type']=='MODEL_REQUEST_STARTED' and e['payload']['request_key']==proof['request_key']]
+    ends=[e['payload'] for e in Budget(proof['budget_ledger']).log.read() if e['event_type']=='MODEL_REQUEST_COMPLETED' and e['payload']['request_key']==proof['request_key']]
+    state=Budget(proof['budget_ledger']).snapshot()
+    if (len(starts)!=1 or len(ends)!=1 or starts[0]['role']!='curator' or starts[0]['request_hash']!=digest(request)
+            or state['pending_request_keys'] or state['unbounded_usage_requests'] or receipt.get('transport_status')!='RECEIVED'):
+        raise ValueError('RECOVERY_BLOCKED_REQUEST_OR_BILLING_UNKNOWN')
+    parts=[p['text'] for m in receipt.get('response',{}).get('output',[]) if m.get('type')=='message'
+        and m.get('phase') in (None,'final_answer') for p in m.get('content',[]) if p.get('type')=='output_text']
+    import json
+    if len(parts)!=1 or json.loads(parts[0])!=response:raise ValueError('RECOVERY_BLOCKED_MODEL_RESPONSE_CHANGED')
+
+
+def file_bindings(paths):
+    return {str(Path(p).resolve()):bytes_hash(Path(p).read_bytes()) for p in paths}
+
+
+def recovery_implementation():
+    root=Path(__file__).resolve().parent
+    return {str(p.relative_to(root)):bytes_hash(p.read_bytes()) for p in
+            (root/'query_learning.py',root/'handbook/store.py',root/'handbook/contracts.py',root/'contracts.py',root/'events.py')}
+
+
+def _delta_files(handbook,delta,context,created_at):
+    body={**delta['proposed_entry'],'evidence_mode':handbook.evidence_mode,'created_at':created_at}
+    data=canonical(body);entry_id=bytes_hash(data)
+    bundle={'entry_id':entry_id,'refs':{k:context['refs'][k] for k in body['support_refs']},
+            'verified_candidates':context.get('verified_candidates',{}),'compatibility_fingerprint':context['compatibility_fingerprint']}
+    evidence=canonical(bundle)
+    return entry_id,data,bytes_hash(evidence),evidence
+
+
+def _validate_planned_delta_files(handbook,delta,context,created_at):
+    if delta['op']=='DEPRECATE':return
+    entry_id,data,bundle_hash,bundle=_delta_files(handbook,delta,context,created_at)
+    for path,expected in [(handbook.directory/'entries'/entry_id,data),(handbook.directory/'evidence'/bundle_hash,bundle)]:
+        if path.exists() and path.read_bytes()!=expected:raise ValueError('RECOVERY_BLOCKED_ENTRY_CHANGED')
+    for ref in context['refs'].values():
+        if ref.get('result_path') and bytes_hash(Path(ref['result_path']).read_bytes())!=ref['result_hash']:
+            raise ValueError('RECOVERY_BLOCKED_EVIDENCE_CHANGED')
+
+
+def _install_delta_files(handbook,delta,context,created_at):
+    _validate_planned_delta_files(handbook,delta,context,created_at)
+    entry_id,data,bundle_hash,bundle=_delta_files(handbook,delta,context,created_at)
+    for path,value in [(handbook.directory/'entries'/entry_id,data),(handbook.directory/'evidence'/bundle_hash,bundle)]:
+        if not path.exists():atomic_write(path,value,exclusive=True)
+
+
+def _plan_delta(handbook,delta,context,evidence_id,created_at):
+    if delta is None:return [],None
+    from .handbook.contracts import validate_entry,conflicting,conditions_match
+    if not delta['evidence_refs'] or set(delta['evidence_refs'])-set(context['refs']):raise ContractError('UNAUTHORIZED_HANDBOOK_REFERENCE')
+    for ref in context['refs'].values():
+        if any(not isinstance(ref.get(k),str) or not ref[k] for k in ('observation_id','candidate_id','parent_id','run_id','result_hash','source_group')):
+            raise ContractError('UNTRACEABLE_HANDBOOK_EVIDENCE')
+    if delta['op']=='DEPRECATE':
+        handbook.get(delta['target_entry_id'])
+        return [{'key':'delta:'+evidence_id,'kind':'DEPRECATION_REQUESTED','payload':{'entry_id':delta['target_entry_id'],
+            'delta_hash':digest(delta),'reason':delta['reason'],'evidence_refs':delta['evidence_refs']}}],delta['target_entry_id']
+    entry=validate_entry(delta['proposed_entry'])
+    if ('allowed_actions' in context and entry['action'] not in context['allowed_actions']):raise ContractError('UNSUPPORTED_HANDBOOK_INFERENCE')
+    if entry['compatibility_fingerprint']!=context['compatibility_fingerprint'] or set(entry['applicable_format'])-set(context['allowed_formats']):
+        raise ContractError('INCOMPATIBLE_HANDBOOK_SCOPE')
+    if not entry['support_refs'] or set(entry['support_refs'])-set(delta['evidence_refs']):raise ContractError('UNAUTHORIZED_HANDBOOK_REFERENCE')
+    if delta['op']=='ADD' and (delta['target_entry_id'] is not None or entry['supersedes']):raise ContractError()
+    if delta['op']=='REVISE':
+        handbook.get(delta['target_entry_id'])
+        if entry['supersedes']!=[delta['target_entry_id']]:raise ContractError()
+    entry_id,data,bundle_hash,bundle=_delta_files(handbook,delta,context,created_at)
+    commands=[{'key':'delta:'+evidence_id,'kind':'ENTRY_CREATED' if delta['op']=='ADD' else 'ENTRY_REVISED',
+        'payload':{'entry_id':entry_id,'delta_hash':digest(delta),'evidence_refs':delta['evidence_refs'],'supersedes':entry['supersedes']}},
+        {'key':'evidence:'+entry_id+':'+bundle_hash,'kind':'ENTRY_EVIDENCE_BOUND',
+         'payload':{'entry_id':entry_id,'evidence_bundle_sha256':bundle_hash}}]
+    conflict=False
+    for other_id,state in handbook.view()['states'].items():
+        if state=='DEPRECATED' or not conflicting(entry,handbook.get(other_id)):continue
+        conflict=True;pair=sorted([entry_id,other_id])
+        for target in pair:commands.append({'key':'conflict:'+':'.join(pair)+':'+target,'kind':'ENTRY_QUARANTINED',
+            'payload':{'entry_id':target,'conflicting_entries':pair,'reason':'FINITE_ACTION_CONFLICT'}})
+    refs=[context['refs'][k] for k in entry['support_refs'] if conditions_match(entry,context['refs'][k].get('features',{}))]
+    groups={r['source_group'] for r in refs};candidates={r['candidate_id'] for r in refs}
+    verified={c for c in candidates if isinstance(context.get('verified_candidates',{}).get(c),str) and len(context['verified_candidates'][c])==64}
+    if not conflict and len(groups)>=2 and verified:
+        commands.append({'key':'activate:'+entry_id+':'+digest(sorted(verified)),'kind':'ENTRY_ACTIVATED',
+            'payload':{'entry_id':entry_id,'source_group_count':len(groups),'verified_candidate_ids':sorted(verified),'evidence_refs':entry['support_refs']}})
+    return commands,entry_id
 
 
 class VerifiedCandidateEvidence:
@@ -193,6 +489,7 @@ class VerifiedCandidateEvidence:
         # One alias per verified source group, same safe aggregate quote only.
         refs = {}
         safe = observation['safe_evidence'][0]
+        safe['evidence_ref'] = 'evidence-' + digest({'id': self.evidence_id, 'aggregate': True})[:32]
         for index, group in enumerate(sorted({r['source_group'] for r in rows})):
             alias = 'evidence-' + digest({'id': self.evidence_id, 'index': index})[:32]
             observation['safe_evidence'].append({'evidence_ref': alias, 'text': safe['text']})
@@ -232,8 +529,16 @@ def curate_verified_candidate(*, registry, training, train_fixtures, verificatio
                   'compatibility_fingerprint':compatibility_fingerprint}
     output = Path(verification) / 'learning'
     output.mkdir(exist_ok=True)
+    receipt = output / 'learning-receipt.json'
+    if receipt.exists() and load(receipt).get('handbook_binding')!=book_binding:
+        raise ValueError('LEARNING_HANDBOOK_BINDING_CHANGED')
     # Deterministic aliases and receipt binding make restart idempotent. Never
     # call the model again once a response has been archived, including ABSTAIN.
+    public_path=output/'curator-public.json';context_path=output/'curator-context.restricted.json'
+    for path,value in [(public_path,public),(context_path,context)]:
+        if path.exists():
+            if path.read_bytes()!=canonical(value):raise ValueError('LEARNING_CONTEXT_CHANGED')
+        else:atomic_write(path,canonical(value),exclusive=True)
     response_path = output / 'curator.json'
     if response_path.exists():
         response = load(response_path)
@@ -243,7 +548,6 @@ def curate_verified_candidate(*, registry, training, train_fixtures, verificatio
     delta = unwrap_response(response)
     if delta is not None:
         validate_readonly(delta, public, 'curator')
-    receipt = output / 'learning-receipt.json'
     if receipt.exists():
         previous = load(receipt)
         if previous['evidence_id'] != bound.evidence_id or previous['response_hash'] != digest(response):
@@ -282,8 +586,37 @@ def curate_verified_candidate(*, registry, training, train_fixtures, verificatio
         return {'schema': 'query-learning/v1', 'evidence_id': bound.evidence_id,
                 'response_hash': digest(response), 'entries': entries, 'evidence_mode': bound.mode,'handbook_binding':book_binding,
                 'real_eligible': bound.mode == 'REAL_REPLAY', 'association_only': True}
-    result = session.learn(bound.evidence_id, commit) if session else commit()
-    atomic_write(receipt, canonical(result), exclusive=True)
+    if session:
+        proof=None
+        if bound.mode=='REAL_REPLAY':
+            request_key=public['round_id']+'-curator-0'
+            # A repaired envelope is tied to the attempt that actually produced
+            # this archived response, never guessed from a cached return value.
+            for attempt in (1,0):
+                key=public['round_id']+'-curator-'+str(attempt)
+                request=roles.directory/(key+'.request.json');received=roles.directory/(key+'.json')
+                if request.is_file() and received.is_file():
+                    candidate_proof={'request_key':key,'request_path':str(request.resolve()),
+                        'receipt_path':str(received.resolve()),'request_sha256':bytes_hash(request.read_bytes()),
+                        'receipt_sha256':bytes_hash(received.read_bytes()),'budget_ledger':str(roles.budget.log.path.resolve())}
+                    try:_validate_request_proof(candidate_proof,response)
+                    except ValueError:continue
+                    proof=candidate_proof;break
+            if proof is None:raise ValueError('RECOVERY_BLOCKED_REQUEST_IDENTITY_UNKNOWN')
+        prefix=[{'key':'query-verified:'+bound.evidence_id,'kind':'HOLDOUT_PASSED',
+            'payload':{'candidate_id':bound.candidate['candidate_id'],'evidence_version':bound.evidence_id,
+                'evidence_mode':bound.mode,'receipt_hash':bytes_hash(bound.receipt_path.read_bytes())}}]
+        result=session.learn_delta(bound.evidence_id,response_path=response_path,public_path=public_path,
+            context_path=context_path,prefix_events=prefix,result={'schema':'query-learning/v1','evidence_id':bound.evidence_id,
+                'response_hash':digest(response),'entries':[],'evidence_mode':bound.mode,'handbook_binding':book_binding,
+                'real_eligible':bound.mode=='REAL_REPLAY','association_only':True},result_path=receipt,
+            verification={'registry':str(Path(registry).resolve()),'training':str(Path(training).resolve()),
+                'train_fixtures':[str(Path(f).resolve()) for f in train_fixtures],'verification':str(Path(verification).resolve())},
+            request_proof=proof)
+    else:result=commit()
+    if receipt.exists():
+        if receipt.read_bytes()!=canonical(result):raise ValueError('LEARNING_RECEIPT_CHANGED')
+    else:atomic_write(receipt, canonical(result), exclusive=True)
     return result
 
 

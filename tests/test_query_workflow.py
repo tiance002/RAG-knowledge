@@ -77,7 +77,8 @@ def setup(monkeypatch, tmp_path, *, p3_change=False, failed_slot=None):
     monkeypatch.setattr(q, 'replay_artifacts', replay)
     kwargs = dict(public=public_context(), roles=FakeRoles(same_patch=True, barrier=True), advisory_roles=advisory,
         parent=registry.parent, fixtures=[tmp_path / str(i) for i in range(4)], registry=registry,
-        directory=tmp_path / 'round', scanner=LeakScanner(), capsule_factory=lambda output: Capsule())
+        directory=tmp_path / 'round', scanner=LeakScanner(), capsule_factory=lambda output: Capsule(),
+        evidence=__import__('rsik.execution_evidence',fromlist=['ExecutionEvidence']).ExecutionEvidence.synthetic_control())
     return kwargs, calls, advisory
 
 

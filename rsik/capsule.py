@@ -216,6 +216,8 @@ for line in sys.stdin:
             return response
 
     def setup(self):
+        from .launch import validate_launch
+        validate_launch(getattr(self,'launch_context',None),evidence=self.evidence_policy)
         subprocess.run(['git', '-C', str(self.business_root), 'diff', '--quiet', BASE_COMMIT,
                         '--', 'backend/app'], check=True)
         data = source_archive(self.business_root)

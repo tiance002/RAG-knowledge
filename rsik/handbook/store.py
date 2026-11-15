@@ -60,7 +60,7 @@ class Handbook:
         self.log.append('evidence:'+entry_id+':'+key,'ENTRY_EVIDENCE_BOUND',{'entry_id':entry_id,'evidence_bundle_sha256':key})
         return key
 
-    def commit_delta(self, delta, context, *, idempotency_key):
+    def commit_delta(self, delta, context, *, idempotency_key, created_at=None):
         """context is built from trusted archived evidence, never model arguments.
 
         refs maps opaque visible aliases to private evidence metadata;
@@ -113,9 +113,12 @@ class Handbook:
             self.get(target)
             if entry['supersedes'] != [target]:
                 raise ContractError()
-        body = {**entry, 'evidence_mode':self.evidence_mode, 'created_at': datetime.now(timezone.utc).isoformat()}
+        body = {**entry, 'evidence_mode':self.evidence_mode, 'created_at': created_at or datetime.now(timezone.utc).isoformat()}
         data = canonical(body);entry_id = hashlib.sha256(data).hexdigest()
-        atomic_write(self.directory / 'entries' / entry_id, data, exclusive=True)
+        path=self.directory / 'entries' / entry_id
+        if path.exists():
+            if path.read_bytes()!=data:raise RuntimeError('HANDBOOK_ENTRY_HASH_MISMATCH')
+        else:atomic_write(path, data, exclusive=True)
         self.log.append('delta:' + idempotency_key, 'ENTRY_CREATED' if delta['op'] == 'ADD' else 'ENTRY_REVISED',
                         {'entry_id': entry_id, 'delta_hash': delta_hash, 'evidence_refs': delta['evidence_refs'],
                          'supersedes': entry['supersedes']})

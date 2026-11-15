@@ -64,6 +64,14 @@ def test_controller_dispatches_integrated_pipeline_and_shared_advisory_budget(tm
     import rsik.autonomous as controller
     import rsik.query_workflow as integrated
     import rsik.selector_contract as structural
+    import rsik.launch as launch_boundary
+    # This orchestration control replaces every external boundary. Its explicit
+    # launch double cannot authorize a real model request or capsule execution.
+    synthetic_launch=object()
+    def synthetic_admission(context,**kwargs):
+        assert context is synthetic_launch
+        assert kwargs['phase']=='AUTONOMOUS_SEARCH'
+    monkeypatch.setattr(launch_boundary,'validate_launch',synthetic_admission)
     directory=tmp_path/'run';directory.mkdir()
     registry=tmp_path/'registry';registry.mkdir()
     baseline=tmp_path/'baseline';baseline.mkdir();(baseline/'round.json').write_text('{}')
@@ -98,7 +106,7 @@ def test_controller_dispatches_integrated_pipeline_and_shared_advisory_budget(tm
     result=controller.run({'directory':str(directory),'query_registry':str(registry),'fixtures':[],
         'budget_ledger':'unused','baseline_round':str(baseline),'baseline_id':'parent-candidate',
         'baseline_verification':str(receipt),'freeze':'unused','freeze_sha256':'f'*64,
-        'key_file':'unused','profile':profile})
+        'key_file':'unused','profile':profile},launch=synthetic_launch)
     assert result['stop_reason']=='BUDGET_EXHAUSTED' and result['rounds']==1
     assert tuple(calls[0]['enabled_slots'])==expected
     assert calls[0]['directory']==directory/'round-000001/integrated'

@@ -27,6 +27,10 @@ def main():
     for name in ('query-registry', 'directory', 'baseline-round', 'primary', 'query-stress',
                  'next-stress', 'previous-stress', 'identity', 'business-root', 'key-file', 'budget-ledger'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--launch-plan',type=Path,required=True)
+    parser.add_argument('--launch-plan-sha256',required=True)
+    parser.add_argument('--run-id',required=True)
+    parser.add_argument('--baseline-qualification',type=Path)
     parser.add_argument('--parent-id', required=True)
     parser.add_argument('--host', required=True)
     parser.add_argument('--role-profile',choices=(LEGACY,DEPENDENCY),default=DEPENDENCY)
@@ -48,7 +52,19 @@ def main():
         print(json.dumps({'verdict': result['verdict'], 'completed_recovery': True, 'new_model_calls': 0, 'new_capsules': 0}))
         return
     with WorkspaceLock(args.query_registry / 'writer.lock', 'query-multi-role-round'):
-        parent, _ = verify_training(args.query_registry, args.baseline_round, fixtures, args.parent_id)
+        from rsik.launch import LaunchContext,validate_launch
+        from rsik.handbook.store import Handbook
+        if not args.handbook or not args.learning_session:raise ValueError('LAUNCH_MEMORY_SESSION_REQUIRED')
+        handbook=Handbook(args.handbook)
+        session=ExperienceSession(args.learning_session,handbook)
+        context=LaunchContext(str(args.launch_plan),args.launch_plan_sha256,args.run_id,'QUERY_ROUND',str(args.budget_ledger),str(args.query_registry),str(args.business_root),session)
+        validate_launch(context,fixtures=fixtures)
+        if args.baseline_qualification:
+            from rsik.baseline_qualification import verify_baseline_qualification
+            from rsik.execution_evidence import ExecutionEvidence
+            parent,_=verify_baseline_qualification(registry=args.query_registry,receipt=args.baseline_qualification,
+                fixtures=fixtures,evidence=ExecutionEvidence.real(args.business_root))
+        else:parent, _ = verify_training(args.query_registry, args.baseline_round, fixtures, args.parent_id)
         frame = frames(args.baseline_round, fixtures, arm='B')
         if frame['parent_id'] != parent['candidate_id'] or frame['worker'] != parent['worker'] or frame['config'] != parent['config']:
             raise ValueError('QUERY_PARENT_FRAME_CHANGED')
@@ -65,13 +81,9 @@ def main():
                       parent_selection=json.loads(parent['config'])['selection'])
         budget = Budget(args.budget_ledger)
         roles = OpenAIRoles(budget, args.directory.parent / (args.directory.name + '-roles'), args.key_file,
-                            scanner, seam_profile='query-autonomous-v1',role_profile=args.role_profile)
-        advisory = OpenAIRoles(budget, args.directory.parent / (args.directory.name + '-advisory-roles'), args.key_file, scanner)
-        handbook = None
-        if args.handbook:
-            from rsik.handbook.store import Handbook
-            handbook = Handbook(args.handbook, scanner=scanner)
-        session=ExperienceSession(args.learning_session or args.directory.parent/'learning-session',handbook) if handbook else None
+                            scanner, seam_profile='query-autonomous-v1',role_profile=args.role_profile,launch=context)
+        advisory = OpenAIRoles(budget, args.directory.parent / (args.directory.name + '-advisory-roles'), args.key_file, scanner,launch=context)
+        handbook.scanner=scanner
         if session:
             roles.before_request=session.verify
             roles.strategy_context=session.verify
@@ -82,7 +94,7 @@ def main():
             capsule_factory=lambda output: Capsule(args.host, args.identity, args.business_root, output),
             enabled_slots=SLOTS if args.profile == 'parallel' else (args.single_angle,),
             handbook=handbook, compatibility_fingerprint=args.handbook_fingerprint,
-            format=args.handbook_format, features=args.handbook_features,role_profile=args.role_profile,experience_session=session)
+            format=args.handbook_format, features=args.handbook_features,role_profile=args.role_profile,experience_session=session,launch=context)
         print(json.dumps({'verdict': result['verdict'], 'adopted_candidate_id': result.get('adopted_candidate_id'),
                           'budget': budget.snapshot(), 'production_changed': False}))
     verify_boundary()

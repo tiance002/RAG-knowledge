@@ -107,7 +107,7 @@ def completed(tmp_path):
                         parent_code=selector(parent['worker'].decode())[1])
     curator=Curator()
     def train_operation():
-        return run_query_round(public=public,roles=Proposers(),advisory_roles=curator,parent=parent,
+        return run_query_round(evidence=ExecutionEvidence.synthetic_control(),public=public,roles=Proposers(),advisory_roles=curator,parent=parent,
             fixtures=train_fixtures,registry=registry,directory=tmp_path/'round',
             capsule_factory=lambda _:CaptureDouble(),scanner=LeakScanner(),handbook=handbook,
             compatibility_fingerprint='SYNTHETIC-compatible',features={'same_source':True},role_profile=DEPENDENCY,experience_session=session)
@@ -185,7 +185,7 @@ def test_complete_control_loop_recomputes_archives_projects_and_retrieves(comple
     parent=c['registry'].get(c['cid'])
     next_public=make_visible([project_summary('REPLAY_SUMMARY',{'questions':20},include_count_evidence=True)],
         parent_code=selector(parent['worker'].decode())[1])
-    run_query_round(public=next_public,roles=NextDiagnosis(),advisory_roles=c['curator'],parent=parent,
+    run_query_round(evidence=ExecutionEvidence.synthetic_control(),public=next_public,roles=NextDiagnosis(),advisory_roles=c['curator'],parent=parent,
         fixtures=c['train_fixtures'],registry=c['registry'],directory=c['root']/'next-round',
         capsule_factory=lambda _:pytest.fail('ABSTAIN must not create replay'),scanner=LeakScanner(),
         handbook=c['handbook'],compatibility_fingerprint='SYNTHETIC-compatible',features={'same_source':True},

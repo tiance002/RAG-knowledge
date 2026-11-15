@@ -337,7 +337,11 @@ class Experiment:
         verify_boundary()
         return result
 
-    def run(self, roles, *, enabled_slots, resume=False):
+    def run(self, roles, *, enabled_slots, resume=False, launch=None):
+        from .launch import guard_real
+        guard_real(self.capsule.evidence_policy,launch)
+        self.capsule.launch_context=launch
+        if hasattr(roles,'launch'):roles.launch=launch
         with WorkspaceLock(self.registry / 'writer.lock', self.round_id), WorkspaceLock(self.directory / 'run.lock', self.round_id):
             self.deadline = time.monotonic()+1800
             roles.deadline = self.deadline
