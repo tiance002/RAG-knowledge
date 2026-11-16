@@ -25,8 +25,11 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - name: Install test dependency
-        run: python -m pip install pytest==8.3.5
+      - name: Install test dependencies
+        run: >-
+          python -m pip install pytest==8.3.5 sqlmodel==0.0.27 openai==1.109.1
+          requests==2.32.5 pydantic-settings==2.12.0 langchain-openai==1.1.5
+          langgraph==1.0.5
       - name: Check frozen source bytes
         run: python -c "from rsik.foundation import verify_boundary; verify_boundary()"
       - name: Run portable contract and synthetic evidence tests
