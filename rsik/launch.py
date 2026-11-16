@@ -70,6 +70,10 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
     if bytes_hash(path.read_bytes()) != context.plan_sha256:
         raise ValueError('LAUNCH_PLAN_CHANGED')
     plan = load(path)
+    fixed_history = plan.get('evaluator_profile') == 'source-relations-fixed-history/v1'
+    if any((load(Path(f)/'manifest.json').get('profile') == 'source-relations-fixed-history/v1') != fixed_history
+           for f in plan.get('fixtures', {})):
+        raise ValueError('LAUNCH_EVALUATOR_PROFILE_MISMATCH')
     selected_phase = phase or context.phase
     if (plan.get('schema') != 'rsi-launch/v1' or plan.get('run_id') != context.run_id
             or selected_phase != context.phase or selected_phase not in plan.get('allowed_phases',[])):
@@ -155,11 +159,15 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
     if (not families or not exposure):
         raise ValueError('LAUNCH_DATA_READINESS_REQUIRED')
     # Rebuild coverage and source exposure through their trusted adapters.
-    from .source_relations import recompute_coverage
+    if fixed_history:
+        from .fixed_history_coverage import recompute_coverage, verify_coverage_execution
+        if not collecting and coverage.get('schema') != 'rsi-fixed-history-coverage/v1':
+            raise ValueError('FIXED_HISTORY_NEW_COVERAGE_REQUIRED')
+    else:
+        from .source_relations import recompute_coverage, verify_coverage_execution
     from .exposure import validate_snapshot
     actual_coverage=None if collecting else recompute_coverage(coverage)
     if not collecting:
-        from .source_relations import verify_coverage_execution
         verify_coverage_execution(coverage, policy)
     checked_exposure=validate_snapshot(exposure,require_final=selected_phase=='FINAL_VERIFICATION')
     if families!=checked_exposure.get('sources'):raise ValueError('LAUNCH_SOURCE_FAMILIES_CHANGED')
@@ -236,7 +244,8 @@ def bind_fixture_sources(plan, snapshot):
     relational=[]
     for fixture in plan.get('fixtures',{}):
         manifest=Path(fixture)/'manifest.json'
-        if manifest.is_file() and load(manifest).get('profile')=='source-relations/v1':
+        if manifest.is_file() and load(manifest).get('profile') in {
+                'source-relations/v1','source-relations-fixed-history/v1'}:
             relational.append(Path(fixture))
     if not relational:return
     rows=snapshot.get('sources')
@@ -256,6 +265,9 @@ def bind_fixture_sources(plan, snapshot):
 
 def collection_tasks(plan, registry):
     """Validate reviewed intentions, never substitute intentions for captures."""
+    if plan.get('evaluator_profile') == 'source-relations-fixed-history/v1':
+        from .fixed_history_coverage import collection_tasks as fixed_tasks
+        return fixed_tasks(plan, registry)
     collection = read_binding(plan['coverage_collection'])
     subject = {k:v for k,v in collection.items() if k != 'review'}
     _review(collection.get('review'), digest(subject))

@@ -40,6 +40,15 @@ def selections(dev_csv,final_csv):
     return dev,set(final)
 
 
+def partition_selections(dev_csv, final_csv, partition='DEV'):
+    dev, final = selections(dev_csv, final_csv)
+    if partition == 'DEV': return dev, final
+    if partition != 'FINAL': raise ValueError('QA500_SELECTION_PARTITION_INVALID')
+    with Path(final_csv).open(encoding='utf-8-sig',newline='') as stream:
+        selected = list(csv.DictReader(stream))
+    return selected, {r['item_id'] for r in dev}
+
+
 def jsonl_rows(path):
     """Retain physical row identity; callers gate IDs before content projection."""
     for number,raw in enumerate(Path(path).read_bytes().splitlines(),1):
@@ -132,13 +141,15 @@ def capture_metadata(result):
 
 
 def audit(*,dev_csv,final_csv,gold,audit_reviews,runtime_input,baseline_root,source_snapshot,output,expected_count=20,
-          index_validation_report=None,source_snapshot_manifest=None):
-    dev,final=selections(dev_csv,final_csv);ids={r['item_id'] for r in dev}
+          index_validation_report=None,source_snapshot_manifest=None,partition='DEV'):
+    dev,final=partition_selections(dev_csv,final_csv,partition);ids={r['item_id'] for r in dev}
     if len(dev)!=expected_count:raise ValueError('QA500_SELECTED_DEV_COUNT_CHANGED')
     gold_items=[r for r in load(gold)['items'] if r.get('item_id') in ids]
     manifest_index,manifest_binding=snapshot_paths(source_snapshot_manifest)
     by_id={r['item_id']:r for r in gold_items}
     if len(gold_items)!=len(by_id) or set(by_id)!=ids:raise ValueError('QA500_SELECTED_GOLD_IDENTITY_MISMATCH')
+    if partition == 'FINAL' and any(r.get('item_kind') != 'standalone' for r in gold_items):
+        raise ValueError('QA500_FINAL_STANDALONE_REQUIRED')
     metadata=input_metadata(runtime_input);runtime={r['item_id']:r for r in metadata}
     for _,_,row in jsonl_rows(runtime_input):
         if row.get('item_id') in ids and row.get('question')!=by_id[row['item_id']]['question']:
@@ -204,6 +215,10 @@ def audit(*,dev_csv,final_csv,gold,audit_reviews,runtime_input,baseline_root,sou
             'Standalone history=[] is a new isolated epoch policy, not reproduction of the historical conversation.',
             'Missing source mirrors or partial captures are reported; selected questions are never dropped or replaced.']}
     if manifest_binding:report['inputs']['source_snapshot_manifest']=manifest_binding
+    if partition == 'FINAL':
+        report['schema']='qa500-selected-final-passive-audit/v1'
+        report['partition']='FINAL_HOLDOUT'
+        report['selected_final_count']=report.pop('selected_dev_count')
     output.mkdir(parents=True);restrict_directory(output)
     (output/'audit.restricted.json').write_bytes(canonical(report))
     kb_ids={c['kb_id'] for r in rows for c in r['capture']['citations'] if c.get('kb_id')}
@@ -243,4 +258,5 @@ if __name__=='__main__':
         p.add_argument('--'+name,required=True)
     p.add_argument('--index-validation-report')
     p.add_argument('--source-snapshot-manifest')
+    p.add_argument('--partition',choices=['DEV','FINAL'],default='DEV')
     a=p.parse_args();r=audit(**vars(a));print(json.dumps({'status':r['status'],'summary':r['summary']}))

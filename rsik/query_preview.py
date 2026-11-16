@@ -14,13 +14,15 @@ from .locking import atomic_write
 from .state import canonical
 from .provenance import assess_provenance
 from .adjudicate import evaluate_candidate,adjudicate_round
+from . import fixed_history_profile as fixed_history
 
 
 def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
     ordinary_round=Path(ordinary_round);entries=[];baseline={};parent_id=None;worker=None;config=None
     for suite,fixture in enumerate(fixtures,1):
         fixture=Path(fixture);freeze=adapters(fixture)[0](fixture,expected_count=20)
-        relational=freeze.get('profile')==RELATIONS_PROFILE
+        fixed=freeze.get('profile')==fixed_history.PROFILE
+        relational=freeze.get('profile') in {RELATIONS_PROFILE,fixed_history.PROFILE}
         run=ordinary_round/('suite-'+str(suite));manifest=load(run/'manifest.json')
         spec=manifest['arms']['B']
         audited=adapters(fixture)[2](run,fixture,spec['candidate_id'],{'angle':'P2_BUDGET','proposal_id':manifest['schema']},spec['worker_sha256'],spec['sha256'],evidence=evidence)
@@ -31,7 +33,14 @@ def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
         cases=load(fixture/'cases.json')
         if relational:
             proof=load(fixture/'relations.restricted.json');rubric={item['qid']:{'facts':[],'forbidden':[]} for item in cases}
-            clusters=family_clusters(cases,proof)
+            clusters=family_clusters([item for item in cases if item['qid'] in proof],proof)
+            if fixed:
+                fixed_history.require_retrieval_clusters(clusters)
+                fixture_manifest=load(fixture/'manifest.json')
+                for item in cases:
+                    if item['qid'] not in proof:
+                        proof[item['qid']]={'business_control':fixture_manifest['business_controls'][item['qid']], 'sources':{}}
+                        clusters[item['qid']]='BUSINESS_CONTROL::'+item['qid']
         else:
             rubric,proof=load(fixture/'evaluation.json'),load(fixture/'provenance.restricted.json')
         for index,(item,row) in enumerate(zip(cases,audited['per_question'],strict=True),1):
@@ -44,7 +53,10 @@ def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
                 'source_bytes':({sid:(fixture/source['relative_path']).read_bytes() for sid,source in proof[item['qid']]['sources'].items()}
                     if relational else (fixture/proof[item['qid']]['source_relative_path']).read_bytes()),
                 'source_group':clusters[item['qid']] if relational else proof[item['qid']]['source_group'],
-                'evaluator_profile':RELATIONS_PROFILE if relational else 'legacy','suite':suite}
+                'evaluator_profile':freeze.get('profile') if relational else 'legacy','suite':suite}
+            if fixed:
+                baseline[key]['history_sidecar']=load(fixture/fixture_manifest['history_sidecars'][item['qid']]['path'])
+                baseline[key]['query_derivation']=fixture_manifest.get('query_derivations',{}).get(item['qid'])
     return {'parent_id':parent_id,'worker':worker,'config':config,'entries':entries,'baseline':baseline}
 
 
@@ -72,9 +84,24 @@ def replay(capsule,frame,worker,output,candidate_id):
     groups={i:[] for i in range(1,5)}
     for key,base in frame['baseline'].items():
         a,b=base['capture'],captures[key];case=base['case'];proof=base['proof']
-        relational=base.get('evaluator_profile')==RELATIONS_PROFILE
-        assessor=assess_relations if relational else assess_provenance
-        pa=assessor(case,a,proof,base['source_bytes']);pb=assessor(case,b,proof,base['source_bytes'])
+        fixed=base.get('evaluator_profile')==fixed_history.PROFILE
+        relational=base.get('evaluator_profile') in {RELATIONS_PROFILE,fixed_history.PROFILE}
+        if fixed:
+            for capture in (a,b):
+                fixed_history.validate_capture_history(case,capture,base['history_sidecar'],query_derivation=base['query_derivation'])
+            if any(a.get(k)!=b.get(k) for k in ('qid','lineage_id','history_sha256','sidecar_sha256')):
+                raise ValueError('PREVIEW_FIXED_HISTORY_PAIR_CHANGED')
+        if fixed and 'business_control' in proof:
+            def control_assessment(capture):
+                result=fixed_history.business_control(capture)
+                return {**result,'atoms':[{'atom_id':'BUSINESS_EXECUTION_ASSERTION::INSUFFICIENT_EVIDENCE','status':result['status']}]}
+            pa,pb=control_assessment(a),control_assessment(b)
+        elif fixed:
+            pa=fixed_history.assess(case,a,proof,base['source_bytes'],sidecar=base['history_sidecar'],query_derivation=base['query_derivation'])
+            pb=fixed_history.assess(case,b,proof,base['source_bytes'],sidecar=base['history_sidecar'],query_derivation=base['query_derivation'])
+        else:
+            assessor=assess_relations if relational else assess_provenance
+            pa=assessor(case,a,proof,base['source_bytes']);pb=assessor(case,b,proof,base['source_bytes'])
         facts_key,id_key=('atoms','atom_id') if relational else ('facts','fact_id')
         sa=executor.assess(case,a,base['rubric'],'A');sb=executor.assess(case,b,base['rubric'],'B')
         groups[base['suite']].append({'qid':base['qid'],'source_group':base['source_group'],

@@ -14,6 +14,9 @@ from run_rsi_loop import selector
 
 def adapters(fixture):
     manifest=load(Path(fixture)/'manifest.json')
+    if manifest.get('profile')=='source-relations-fixed-history/v1':
+        from .fixed_history_profile import check_fixture, replay_artifacts, read_decision
+        return check_fixture,replay_artifacts,read_decision
     if manifest.get('profile')=='source-relations/v1':
         from .source_relations import check_fixture, replay_artifacts, read_decision
         return check_fixture,replay_artifacts,read_decision

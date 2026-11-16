@@ -40,6 +40,11 @@ def prepare_collection(*, registry, candidate_id, fixtures, output):
 
     No capsule setup, network, execution receipts or coverage verdict is made.
     """
+    profiles = {load(Path(fixture)/'manifest.json').get('profile') for fixture in fixtures}
+    if 'source-relations-fixed-history/v1' in profiles:
+        if profiles != {'source-relations-fixed-history/v1'}: raise ValueError('MIXED_COVERAGE_PROFILES')
+        from .fixed_history_coverage import prepare_collection as fixed_prepare
+        return fixed_prepare(registry=registry,candidate_id=candidate_id,fixtures=fixtures,output=output)
     registry = QueryRegistry(registry); positive = registry.get(candidate_id)
     registry.require_not_quarantined(candidate_id)
     output = Path(output).resolve(); output.mkdir(parents=True,exist_ok=False)
@@ -84,6 +89,10 @@ def prepare_collection(*, registry, candidate_id, fixtures, output):
 
 def collect(*, registry, candidate_id, fixtures, capsule, output, launch, timeout_seconds=7200):
     """Execute approved frozen prepare/positive/removal stages and verify receipts."""
+    if load(launch.plan_path).get('evaluator_profile') == 'source-relations-fixed-history/v1':
+        from .fixed_history_coverage import collect as fixed_collect
+        return fixed_collect(registry=registry,candidate_id=candidate_id,fixtures=fixtures,
+            capsule=capsule,output=output,launch=launch,timeout_seconds=timeout_seconds)
     registry = QueryRegistry(registry); candidate = registry.get(candidate_id)
     if registry.directory.resolve() != Path(launch.registry).resolve():
         raise ValueError('COLLECTION_REGISTRY_MISMATCH')

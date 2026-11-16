@@ -9,6 +9,82 @@ from .state import digest, canonical
 from .locking import atomic_write
 
 
+def freeze_fixed_history_qa_cases(*, run_directory, fixture_directory, rubrics, context_receipt):
+    """Freeze actual ordinary A/B provider inputs after a VERIFIED context run."""
+    from pathlib import Path
+    from .experiment import load
+    from .execution_evidence import ExecutionEvidence
+    from .launch import file_binding
+    from . import fixed_history_profile as profile
+    run, fixture = Path(run_directory).resolve(), Path(fixture_directory).resolve()
+    manifest = load(run/'manifest.json'); identity = manifest['arms']['B']
+    policy = ExecutionEvidence(**manifest['execution_policy'])
+    proposal = {'angle':'P2_BUDGET','proposal_id':manifest['schema']}
+    decision = profile.read_decision(run,fixture,identity['candidate_id'],proposal,
+        identity['worker_sha256'],identity['sha256'],evidence=policy)
+    if decision.get('verdict') != 'VERIFIED' or digest(decision) != digest(context_receipt):
+        raise ValueError('QA_VERIFIED_ORDINARY_CONTEXT_REQUIRED')
+    items = load(fixture/'cases.json')
+    if set(rubrics) != {i['qid'] for i in items}: raise ValueError('QA_ALL20_RUBRICS_REQUIRED')
+    source = {'run_directory':str(run),'fixture_directory':str(fixture),
+        'context_receipt_sha256':digest(decision)}
+    cases = {}
+    for index,item in enumerate(items,1):
+        captures={arm:run/f'case-{index:03}'/label/'capture.json'
+                  for arm,label in [('PARENT','A'),('CANDIDATE','B')]}
+        capture=load(captures['PARENT'])
+        cases[item['qid']] = {'evaluator_profile':profile.PROFILE,'question':item['case']['question'],
+            'rubric':rubrics[item['qid']], 'verified_context_source':source,
+            **{k:capture[k] for k in ('history_sha256','sidecar_sha256','qid','lineage_id',
+                'base_question_sha256','current_question_sha256','query_derivation_sha256')},
+            'actual_business_captures':{arm:file_binding(path) for arm,path in captures.items()},
+            'actual_business_receipts':{arm:file_binding(path.parent/'execution-receipt.json')
+                for arm,path in captures.items()}}
+    return cases
+
+
+def verify_fixed_history_qa_cases(frozen_cases,context_receipt):
+    first=next(iter(frozen_cases.values()))
+    source=first.get('verified_context_source',{})
+    if source.get('context_receipt_sha256') != digest(context_receipt):
+        raise ValueError('QA_FIXED_HISTORY_CONTEXT_BINDING_REQUIRED')
+    rebuilt=freeze_fixed_history_qa_cases(run_directory=source['run_directory'],
+        fixture_directory=source['fixture_directory'],
+        rubrics={qid:case['rubric'] for qid,case in frozen_cases.items()},context_receipt=context_receipt)
+    if rebuilt != frozen_cases: raise ValueError('QA_FIXED_HISTORY_FROZEN_CASES_CHANGED')
+
+
+def fixed_history_qa_input(case, arm):
+    """Use hash-bound actual business messages; a no-call arm stays no-call.
+
+    Launch admission additionally verifies the complete ordinary context run.
+    The bindings here prevent a caller from rebuilding a different QA prompt.
+    """
+    from .launch import read_binding
+    from .fixed_history_profile import PROFILE, HISTORY_PROFILE, business_control
+    capture = read_binding(case['actual_business_captures'][arm])
+    receipt = read_binding(case['actual_business_receipts'][arm])
+    binding = case['actual_business_captures'][arm]
+    if (case.get('evaluator_profile') != PROFILE or capture.get('evaluator_profile') != PROFILE
+            or capture.get('history_profile') != HISTORY_PROFILE
+            or receipt.get('capture_sha256') != binding['sha256']
+            or any(capture.get(k) != case.get(k) or receipt.get(k) != case.get(k)
+                   for k in ('history_sha256','sidecar_sha256','qid','lineage_id',
+                       'base_question_sha256','current_question_sha256','query_derivation_sha256'))):
+        raise ValueError('QA_FIXED_HISTORY_CAPTURE_BINDING_REQUIRED')
+    if capture.get('provider_delivery_status') == 'NO_PROVIDER_REQUEST':
+        if business_control(capture)['status'] != 'PRESENT':
+            raise ValueError('QA_FIXED_HISTORY_NO_CALL_UNVERIFIED')
+        return None
+    messages = capture.get('messages')
+    if (capture.get('request_calls') != 1
+            or capture.get('provider_delivery_status') != 'PROVIDER_REQUEST_CAPTURED'
+            or not isinstance(messages,list) or not messages
+            or messages[-1] != {'role':'user','content':case['question']}):
+        raise ValueError('QA_FIXED_HISTORY_MESSAGES_REQUIRED')
+    return messages
+
+
 def qa_plan(qids, *, seed=20261115):
     if not qids or len(set(qids))!=len(qids):raise ValueError('QA_CASE_IDENTITIES_REQUIRED')
     order=[]
@@ -28,7 +104,7 @@ def summarize(records, *, expected_qids):
         key=(r['qid'],r['repeat'])
         if r['arm'] in pairs[key]:raise ValueError('DUPLICATE_QA_ARM')
         pairs[key][r['arm']]=r
-    effects=[];quality='PASS_ON_THIS_SAMPLE'
+    effects=[];quality='PASS_ON_THIS_SAMPLE';no_call_pairs=0
     for qid in expected_qids:
         rows=[]
         for repeat in range(3):
@@ -36,6 +112,13 @@ def summarize(records, *, expected_qids):
             if set(pair)!={'PARENT','CANDIDATE'}:
                 unknown.append({'qid':qid,'repeat':repeat,'reason':'INCOMPLETE_PAIR'});continue
             a,b=pair['PARENT'],pair['CANDIDATE']
+            if (a.get('status') == b.get('status') == 'NO_PROVIDER_REQUEST'
+                    and all(r.get('evidence_kind') == 'BUSINESS_EXECUTION_ASSERTION'
+                            and r.get('control_status') == 'PRESENT' for r in (a,b))):
+                no_call_pairs += 1
+                rows.append({'input_tokens_delta':None,'cost_delta':0,
+                    'latency_delta':None,'ttft_delta':None,'business_control_pair':True})
+                continue
             for r in (a,b):
                 if (r.get('quality') in (None,'UNKNOWN','DISPUTED') or r.get('status')!='COMPLETED') and quality!='CONFIRMED_REGRESSION':quality='QUALITY_UNKNOWN'
             critical=('critical_omissions','entity_value_condition_errors','unsupported_key_claims','citation_mismatches')
@@ -49,7 +132,10 @@ def summarize(records, *, expected_qids):
         effects.append({'qid':qid,'complete_pairs':len(rows),'effects':rows})
     if unknown and quality!='CONFIRMED_REGRESSION':quality='QUALITY_UNKNOWN'
     return {'questions_expected':len(expected_qids),'repeat_pairs_expected':3*len(expected_qids),
-        'generations_observed':len(records),'complete_pairs':sum(e['complete_pairs'] for e in effects),
+        'generations_observed':sum(r.get('status')!='NO_PROVIDER_REQUEST' for r in records),
+        'slots_observed':len(records),'no_provider_control_pairs':no_call_pairs,
+        'quality_scope':'generated answers; no-provider controls are separate business assertions',
+        'complete_pairs':sum(e['complete_pairs'] for e in effects),
         'quality_status':quality,'unknown':unknown,'effects':effects,
         'missing_usage_is_zero':False,'population_noninferiority_proven':False,'production_changed':False}
 
@@ -72,6 +158,12 @@ def run_paired_qa(*, plan, frozen_cases, generator, blind_judge, budget, model, 
     if (permit.get('qa_plan_sha256')!=digest(plan) or permit.get('qa_cases_sha256')!=digest(frozen_cases)
             or permit.get('qa_context_receipt_sha256')!=digest(context_receipt)):
         raise ValueError('QA_FROZEN_INPUT_BINDING_REQUIRED')
+    fixed = {case.get('evaluator_profile') == 'source-relations-fixed-history/v1' for case in frozen_cases.values()}
+    if True in fixed:
+        if fixed != {True}: raise ValueError('QA_MIXED_PROFILES_FORBIDDEN')
+        if set(decode) & {'model','store','input'}:
+            raise ValueError('QA_FIXED_HISTORY_REQUEST_OVERRIDE_FORBIDDEN')
+        verify_fixed_history_qa_cases(frozen_cases,context_receipt)
     out=Path(output);out.mkdir(parents=True,exist_ok=False)
     if {x['qid'] for x in plan['order']}!=set(frozen_cases):raise ValueError('QA_FROZEN_CASE_SET_CHANGED')
     atomic_write(out/'plan.json',canonical(plan),exclusive=True)
@@ -79,7 +171,19 @@ def run_paired_qa(*, plan, frozen_cases, generator, blind_judge, budget, model, 
     for index,item in enumerate(plan['order']):
         validate_launch(launch,phase='QA_VALIDATION')
         case=frozen_cases[item['qid']];arm=item['arm']
-        body={'model':model,'store':False,'input':[{'role':'system','content':prompt},
+        actual_messages = None
+        if case.get('evaluator_profile') == 'source-relations-fixed-history/v1':
+            actual_messages = fixed_history_qa_input(case,arm)
+            if actual_messages is None:
+                row={**item,'status':'NO_PROVIDER_REQUEST','quality':'UNKNOWN',
+                    'evidence_kind':'BUSINESS_EXECUTION_ASSERTION',
+                    'control_status':'PRESENT',
+                    'qa_answer_generated':False,'input_tokens':None,'output_tokens':None,
+                    'cost_usd':0,'latency_seconds':None,'ttft_seconds':None}
+                records.append(row);atomic_write(out/(str(index)+'.result.json'),canonical(row),exclusive=True)
+                continue
+        body={'model':model,'store':False,'input':actual_messages if actual_messages is not None else [
+            {'role':'system','content':prompt},
             {'role':'user','content':case['question']+'\n'+case['contexts'][arm]}],**decode}
         key=launch.run_id+'-QA-'+str(index);cost_before=budget.snapshot()['recorded_cost_nano_upper'];budget.start(key,'QA_GENERATION',model,digest(body))
         t=clock()
@@ -101,7 +205,8 @@ def run_paired_qa(*, plan, frozen_cases, generator, blind_judge, budget, model, 
              'output_tokens':(receipt.get('usage') or {}).get('output_tokens'),
              'cached_tokens':((receipt.get('usage') or {}).get('input_tokens_details') or {}).get('cached_tokens'),
              'cost_usd':(state['recorded_cost_nano_upper']-cost_before)/1_000_000_000,'cost_basis':'USAGE_RATE_UPPER_ESTIMATE_NOT_INVOICE','empty':not bool(receipt.get('answer')),
-             'truncated':receipt.get('truncated','UNKNOWN'),'model':model,'prompt_hash':digest(prompt)}
+             'truncated':receipt.get('truncated','UNKNOWN'),'model':model,
+             'prompt_hash':digest(actual_messages) if actual_messages is not None else digest(prompt)}
         records.append(row);atomic_write(out/(str(index)+'.result.json'),canonical(row),exclusive=True)
     summary=summarize(records,expected_qids=list(frozen_cases))
     atomic_write(out/'summary.json',canonical(summary),exclusive=True)

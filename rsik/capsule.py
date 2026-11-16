@@ -282,6 +282,26 @@ for line in sys.stdin:
         files = {'worker.py': worker.read_bytes(), 'input.json': Path(paths[0]).read_bytes()}
         if stage == 'deliver':
             files['config.json'] = Path(paths[1]).read_bytes()
+        history_binding = {}
+        input_value = json.loads(files['input.json'])
+        fixed_history = (input_value.get('profile') == 'source-relations-fixed-history/v1'
+            or input_value.get('evaluator_profile') == 'source-relations-fixed-history/v1')
+        if fixed_history:
+            from .fixed_history_profile import PROFILE, HISTORY_PROFILE
+            from .events import digest
+            if stage == 'prepare':
+                trusted = ROOT/'scripts/rsi_fixed_history_worker_v1.py'
+                if files['worker.py'] != trusted.read_bytes():
+                    raise ValueError('FIXED_HISTORY_UNLISTED_PREPARE_WORKER')
+                sidecar = input_value['history_sidecar']
+                if (input_value.get('history_sha256') != digest(sidecar['history'])
+                        or input_value.get('sidecar_sha256') != digest(sidecar)):
+                    raise ValueError('FIXED_HISTORY_INPUT_BINDING_MISMATCH')
+            elif input_value.get('history_profile') != HISTORY_PROFILE:
+                raise ValueError('FIXED_HISTORY_PROFILE_MISMATCH')
+            history_binding = {'evaluator_profile':PROFILE,'history_profile':HISTORY_PROFILE,
+                **{k:input_value[k] for k in ('history_sha256','sidecar_sha256','qid','lineage_id',
+                    'base_question_sha256','current_question_sha256','query_derivation_sha256')}}
         collection_matches = None
         launch = getattr(self, 'launch_context', None)
         if getattr(launch, 'phase', None) == 'COVERAGE_COLLECTION':
@@ -292,7 +312,8 @@ for line in sys.stdin:
             tasks = collection_tasks(load(launch.plan_path), launch.registry)
             input_hash = hashlib.sha256(files['input.json']).hexdigest()
             if stage == 'prepare':
-                if files['worker.py'] != (ROOT/'scripts/rsi_delivery_worker.py').read_bytes():
+                trusted_prepare = ROOT/'scripts'/('rsi_fixed_history_worker_v1.py' if fixed_history else 'rsi_delivery_worker.py')
+                if files['worker.py'] != trusted_prepare.read_bytes():
                     raise ValueError('COLLECTION_UNLISTED_PREPARE_WORKER')
                 collection_matches = [task for task in tasks if task['prepare_input_sha256']==input_hash]
                 if not collection_matches:raise ValueError('COLLECTION_UNLISTED_PREPARE_INPUT')
@@ -328,7 +349,7 @@ for line in sys.stdin:
                        'input_sha256': hashlib.sha256(files['input.json']).hexdigest(),
                        'config_sha256': hashlib.sha256(files['config.json']).hexdigest() if 'config.json' in files else None,
                        'code_archive_sha256': self.code_archive_sha256, 'image': self.image,
-                       **response, **self.context_identity()}, stream, sort_keys=True)
+                       **response, **self.context_identity(), **history_binding}, stream, sort_keys=True)
         if response['exit_code'] or response['reason'] or len(captures) != 1 or len(runtimes) != 1:
             raise ValueError('INFRA_FAILURE: isolated worker incomplete; see worker.log')
         data = base64.b64decode(captures[0], validate=True)

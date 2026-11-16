@@ -30,7 +30,8 @@ from run_rsi_loop import selector
 def adapters(fixture):
     """Select only the explicit versioned profile; retain the legacy evaluator."""
     manifest = Path(fixture) / 'manifest.json'
-    if manifest.is_file() and load(manifest).get('profile') == 'source-relations/v1':
+    if manifest.is_file() and load(manifest).get('profile') in {
+            'source-relations/v1','source-relations-fixed-history/v1'}:
         return profile_adapters(fixture)
     return check_split, replay_artifacts, read_decision
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from scripts.audit_rsi_selected_qa500_dev import binding,jsonl_rows,load,selections,verify_binding
+from scripts.audit_rsi_selected_qa500_dev import binding,jsonl_rows,load,selections,verify_binding,partition_selections
 from rsik.events import canonical,digest
 from rsik.locking import restrict_directory
 
@@ -99,17 +99,22 @@ def paired_prompt_inputs(sidecar,*,question,context_a,context_b):
             for arm,context in (('A',context_a),('B',context_b))}
 
 
-def build(*,audit_report,output):
+def build(*,audit_report,output,partition='DEV'):
     report=load(audit_report)
-    if report.get('schema')!='qa500-selected-dev-passive-audit/v1' or report.get('status')!='AUDIT_ONLY_NOT_ADMITTED':
+    schema='qa500-selected-dev-passive-audit/v1' if partition=='DEV' else 'qa500-selected-final-passive-audit/v1'
+    if (partition not in {'DEV','FINAL'} or report.get('schema')!=schema
+            or report.get('status')!='AUDIT_ONLY_NOT_ADMITTED'
+            or report.get('partition','DEV') != ('DEV' if partition=='DEV' else 'FINAL_HOLDOUT')):
         raise ValueError('QA500_PASSIVE_AUDIT_REQUIRED')
     for ref in report['inputs'].values():verify_binding(ref)
-    dev,final=selections(report['inputs']['dev_csv']['path'],report['inputs']['final_csv']['path'])
+    dev,final=partition_selections(report['inputs']['dev_csv']['path'],report['inputs']['final_csv']['path'],partition)
     ids=[r['item_id'] for r in dev]
     if ids!=report['item_ids'] or ids!=[r['item_id'] for r in report['items']]:
         raise ValueError('QA500_SIDECAR_SELECTED_IDS_CHANGED')
     sidecars=[];blocked=[]
     for item in report['items']:
+        if partition=='FINAL' and item.get('item_kind')!='standalone':
+            raise ValueError('QA500_FINAL_STANDALONE_REQUIRED')
         qid=item['item_id'];identity=item['runtime_identity']
         ref={'file':report['inputs']['runtime_input'],'line_number':identity['line_number'],'line_sha256':identity['line_sha256']}
         current=read_bound_line(ref);reject_gold(current)
@@ -142,6 +147,7 @@ def build(*,audit_report,output):
             'old_history_FINAL_ids_metadata_only':item['prior_selected_FINAL_ids_metadata_only'],
             'old_standalone_history_body_assembled':False,'candidate_history_access':False,
             'audit_binding':binding(audit_report),'gold_history_used':False}
+        if partition=='FINAL':sidecar['partition']='FINAL_HOLDOUT'
         sidecar['subject_sha256']=digest(sidecar);sidecars.append(sidecar)
     output=Path(output).resolve()
     if output.exists():raise ValueError('FRESH_QA500_HISTORY_OUTPUT_REQUIRED')
@@ -163,4 +169,5 @@ def build(*,audit_report,output):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--audit-report',required=True);p.add_argument('--output',required=True)
+    p.add_argument('--partition',choices=['DEV','FINAL'],default='DEV')
     a=p.parse_args();r=build(**vars(a));print(json.dumps({k:r[k] for k in ('status','selected_item_count','written_sidecars','blocked','upstream_unknown_count')}))
