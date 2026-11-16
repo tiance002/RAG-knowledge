@@ -25,12 +25,22 @@ from rsik.query_workflow import implementation_hashes
 
 
 def prepare(*, fixture, historical_ledger, registry, candidate_id, budget_ledger,
-            collection_plan, price_review, business_root, output, run_output):
+            collection_plan, price_review, business_root, output, run_output,
+            additional_fixtures=()):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     fixture = Path(fixture).resolve()
-    specs = json.loads((fixture/'relations.restricted.json').read_bytes())
-    aliases = {sid:s for spec in specs.values() for sid,s in spec['sources'].items()}
+    fixtures = [fixture]+[Path(p).resolve() for p in additional_fixtures]
+    if len(set(fixtures)) != len(fixtures):
+        raise ValueError('DUPLICATE_COLLECTION_FIXTURE')
+    aliases = {}
+    for directory in fixtures:
+        specs = json.loads((directory/'relations.restricted.json').read_bytes())
+        for spec in specs.values():
+            for sid, source in spec['sources'].items():
+                if sid in aliases and aliases[sid] != source:
+                    raise ValueError('MULTI_FIXTURE_SOURCE_IDENTITY_MISMATCH')
+                aliases[sid] = source
     original_binding = file_binding(historical_ledger)
     old = object.__new__(ExposureLedger)
     old.log = object.__new__(EventLog)
@@ -42,18 +52,36 @@ def prepare(*, fixture, historical_ledger, registry, candidate_id, budget_ledger
     fields = ('document_id','version','content_sha256','source_family_id','relation',
               'related_source_ids','exposure_status')
     now = datetime.now(timezone.utc).isoformat()
-    by_hash = {s['content_sha256']:sid for sid,s in aliases.items()}
+    by_hash = {}
+    for sid, source in aliases.items():
+        if source['content_sha256'] in by_hash and by_hash[source['content_sha256']] != sid:
+            raise ValueError('ALIAS_CONTENT_HASH_COLLISION')
+        by_hash[source['content_sha256']] = sid
     for sid, source in sources.items():
         if source['content_sha256'] in by_hash:
             alias_id = by_hash[source['content_sha256']]
             alias = aliases[alias_id]
-            # New alias labels are provisional; they must not resolve UNKNOWN.
-            if alias['relation'] != 'UNKNOWN' or alias['exposure_status'] != 'EXPOSURE_UNKNOWN':
-                raise ValueError('UNKNOWN_HISTORY_MUST_NOT_BE_RELABELLED_KNOWN')
-            record = {'source_id':alias_id,'origin':'VERSIONED_DOCUMENT_ALIAS_UNKNOWN_FAMILY',
+            if source['relation'] == 'UNKNOWN':
+                # Legacy unknown identities still cannot resolve themselves.
+                if alias['relation'] != 'UNKNOWN' or alias['exposure_status'] != 'EXPOSURE_UNKNOWN':
+                    raise ValueError('UNKNOWN_HISTORY_MUST_NOT_BE_RELABELLED_KNOWN')
+                origin = 'VERSIONED_DOCUMENT_ALIAS_UNKNOWN_FAMILY'
+            else:
+                known_fields = ('content_sha256','source_family_id','relation','related_source_ids','exposure_status')
+                subject = {k:v for k,v in source.items() if k != 'review'}
+                r = source.get('review', {})
+                if (any(alias[k] != source[k] for k in known_fields)
+                        or r.get('status') not in {'AI_REVIEWED','HUMAN_REVIEWED'}
+                        or r.get('subject_sha256') != digest(subject)
+                        or alias.get('review_status') != r['status']
+                        or not r.get('reviewer') or not r.get('reviewed_at')):
+                    raise ValueError('REVIEWED_KNOWN_ALIAS_IDENTITY_REQUIRED')
+                origin = 'VERSIONED_DOCUMENT_ALIAS_REVIEWED_KNOWN_FAMILY'
+            record = {'source_id':alias_id,'origin':origin,
                       **{k:alias[k] for k in fields}}
             review = {'status':alias['review_status'],'subject_sha256':digest(record),
-                      'reviewer':'Codex exact DEV document identity only; upstream relation unresolved',
+                      'reviewer':('Codex exact DEV document identity only; upstream relation unresolved'
+                                  if source['relation']=='UNKNOWN' else source['review']['reviewer']),
                       'reviewed_at':now}
             mapping[sid] = alias_id
         else:
@@ -75,6 +103,7 @@ def prepare(*, fixture, historical_ledger, registry, candidate_id, budget_ledger
         'original_ledger':original_binding,
         'original_frontier':{'sequence':len(events),'event_hash':events[-1]['event_hash']},
         'source_id_mapping':mapping,'historical_exposure_events':sum(e['event_type']=='SOURCE_EXPOSED' for e in events),
+        'fixture_paths':[str(p) for p in fixtures],
         'claim':'Document aliases only; UNKNOWN cluster and every prior exposure preserved; no new independence or freshness',
         'original_ledger_modified':False}
     if file_binding(historical_ledger) != original_binding:
@@ -102,7 +131,7 @@ def prepare(*, fixture, historical_ledger, registry, candidate_id, budget_ledger
                   'limit_usd':'5','reserve_usd':'0',
                   'event_prefix':{'sequence':len(log),'event_hash':log[-1]['event_hash'] if log else '0'*64}},
         'price_review':file_binding(price_review),'models':{'diagnose':'gpt-6-luna'},
-        'fixtures':{str(fixture):fixture_identity(fixture)},'evaluator_profile':'source-relations/v1',
+        'fixtures':{str(p):fixture_identity(p) for p in fixtures},'evaluator_profile':'source-relations/v1',
         'seam_profile':'rsi-query-aware-selector/v1',
         'source_families':file_binding(output/'source-families.restricted.json'),
         'exposure_snapshot':file_binding(output/'exposure-snapshot.restricted.json'),
@@ -128,5 +157,6 @@ if __name__ == '__main__':
     for name in ('fixture','historical-ledger','registry','candidate-id','budget-ledger',
                  'collection-plan','price-review','business-root','output','run-output'):
         parser.add_argument('--'+name,required=True)
+    parser.add_argument('--additional-fixture',dest='additional_fixtures',action='append',default=[])
     args = vars(parser.parse_args())
     print(json.dumps(prepare(**{k.replace('-','_'):v for k,v in args.items()})))

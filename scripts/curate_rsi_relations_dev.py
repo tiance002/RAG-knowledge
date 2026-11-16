@@ -19,7 +19,7 @@ from rsik.locking import restrict_directory
 
 
 def load(path):
-    return json.loads(Path(path).read_text(encoding='utf-8'))
+    return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 
 def build(source, curation, output, families=None, variant='primary'):
