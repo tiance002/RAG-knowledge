@@ -203,3 +203,99 @@ def test_non_identifier_public_proposal_identity_is_hashed(tmp_path):
     observer = Observer(tmp_path/'metadata.sqlite')
     event = observer.emit('PROPOSAL_CREATED', {'proposal_id': 'public proposal with spaces'})
     assert event['payload']['proposal_id'] == digest('public proposal with spaces')
+
+
+@pytest.mark.parametrize('kind', ['INVOCATION_STARTED', 'RESPONSE_RECEIVED', 'INVOCATION_FINISHED'])
+@pytest.mark.parametrize('error_type', [OSError, __import__('sqlite3').OperationalError])
+def test_required_lifecycle_storage_failures_stop_and_preserve_real_ledger(tmp_path, monkeypatch, kind, error_type):
+    calls = []
+    c = client(tmp_path, lambda *_: calls.append(1) or receipt(ABSTAIN))
+    context = public()
+    original = c.observer.log.append
+    def fail(key, event_type, *args, **kwargs):
+        if event_type == kind:
+            raise error_type('private disk failure')
+        return original(key, event_type, *args, **kwargs)
+    monkeypatch.setattr(c.observer.log, 'append', fail)
+    with pytest.raises(StageFailure) as caught:
+        c.diagnose(context)
+    assert caught.value.category == 'STORAGE_ERROR'
+    assert caught.value.global_stop is True
+    snapshot = c.budget.snapshot()
+    if kind == 'INVOCATION_STARTED':
+        assert not calls and snapshot['attempts'] == snapshot['completed'] == 0
+        assert not events(c)
+    else:
+        assert calls == [1] and snapshot['attempts'] == snapshot['completed'] == 1
+        assert snapshot['total_cost_status'] == 'USAGE_ESTIMATED'
+        assert snapshot['recorded_cost_nano_upper'] > 0
+        from rsik.analytics.metrics import compute_metrics
+        from rsik.analytics.projections import project_sources
+        from rsik.analytics.reader import read_event_log
+        records = project_sources([read_event_log(c.observer.path)])
+        invocation, = [r for r in records if r['projection_type'] == 'AgentInvocation']
+        assert invocation['payload']['evidence_complete'] is False
+        group, = compute_metrics(records)['groups']
+        r6 = next(m for m in group['metrics'] if m['metric_id'] == 'R6')
+        assert (r6['numerator'], r6['denominator']) == (1, 1)
+        with pytest.raises(StageFailure, match='OBSERVATION_STORAGE_UNAVAILABLE'):
+            c.diagnose(context)
+        assert calls == [1] and c.budget.snapshot() == snapshot
+        monkeypatch.setattr(c.observer.log, 'append', original)
+        assert c.diagnose(context) == ABSTAIN
+        assert calls == [1] and c.budget.snapshot() == snapshot
+    assert 'private disk failure' not in json.dumps(events(c))
+
+
+def test_response_storage_failure_keeps_unknown_cost_and_never_resends(tmp_path, monkeypatch):
+    calls = []
+    c = client(tmp_path, lambda *_: calls.append(1) or receipt(ABSTAIN))
+    context = public()
+    from rsik import openai_roles
+    original = openai_roles.atomic_write
+    def fail(path, *args, **kwargs):
+        if path.name.endswith('.json') and not any(part in path.name for part in ('.request.', '.strategy.')):
+            raise OSError('private response disk failure')
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(openai_roles, 'atomic_write', fail)
+    with pytest.raises(StageFailure) as caught:
+        c.diagnose(context)
+    assert caught.value.category == 'STORAGE_ERROR'
+    snapshot = c.budget.snapshot()
+    assert calls == [1] and snapshot['attempts'] == 1 and snapshot['completed'] == 0
+    assert snapshot['pending_request_keys'] and snapshot['total_cost_status'] == 'UNKNOWN'
+    assert snapshot['provider_invoiced_charge'] == 'UNKNOWN'
+    monkeypatch.setattr(openai_roles, 'atomic_write', original)
+    with pytest.raises(StageFailure, match='REQUEST_STATUS_UNKNOWN'):
+        c.diagnose(context)
+    assert calls == [1] and c.budget.snapshot() == snapshot
+
+
+
+def test_shared_observer_does_not_create_unused_private_role_databases(tmp_path):
+    clients = [client(tmp_path / str(i), lambda *_: receipt(ABSTAIN)) for i in range(3)]
+    assert not list(tmp_path.rglob('observations.sqlite'))
+    shared = Observer(tmp_path / 'shared' / 'observations.sqlite')
+    for c in clients:
+        c.observer = shared
+        assert c.diagnose(public()) == ABSTAIN
+    assert list(tmp_path.rglob('observations.sqlite')) == [shared.path]
+    assert len([e for e in shared.log.read() if e['event_type'] == 'INVOCATION_FINISHED']) == 3
+
+
+
+@pytest.mark.parametrize('kind', ['INVOCATION_STARTED', 'RESPONSE_RECEIVED', 'INVOCATION_FINISHED'])
+def test_injected_observer_raw_storage_failure_is_not_swallowed(tmp_path, monkeypatch, kind):
+    calls = []
+    c = client(tmp_path, lambda *_: calls.append(1) or receipt(ABSTAIN))
+    original = c.observer.emit
+    def fail(event_type, *args, **kwargs):
+        if event_type == kind:
+            raise OSError('private injected observer failure')
+        return original(event_type, *args, **kwargs)
+    monkeypatch.setattr(c.observer, 'emit', fail)
+    with pytest.raises(StageFailure) as caught:
+        c.diagnose(public())
+    assert caught.value.category == 'STORAGE_ERROR' and caught.value.global_stop
+    assert len(calls) == (0 if kind == 'INVOCATION_STARTED' else 1)
+    assert not finished(c)

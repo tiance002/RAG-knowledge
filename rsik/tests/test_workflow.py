@@ -145,3 +145,16 @@ def test_critical_storage_failure_inside_agent_cannot_be_downgraded_to_abstain()
     review, replay, reviewed, replayed = callbacks()
     result = execute_round(public_context(), Broken(), review, replay)
     assert result['verdict'] == 'ROUND_ABORTED' and not reviewed and not replayed
+
+
+
+def test_diagnosis_storage_failure_is_system_infrastructure_not_agent_quality():
+    class Broken(FakeRoles):
+        def diagnose(self, public):
+            raise StageFailure('STORAGE_ERROR', 'OBSERVATION_STORAGE_UNAVAILABLE')
+    review, replay, reviewed, replayed = callbacks()
+    result = execute_round(public_context(), Broken(), review, replay)
+    assert result['execution_state'] == 'FAILED' and result['verdict'] == 'ROUND_ABORTED'
+    assert not reviewed and not replayed
+    error = result['errors'][0]
+    assert error['category'] == 'STORAGE_ERROR' and error['scope'] == 'SYSTEM'

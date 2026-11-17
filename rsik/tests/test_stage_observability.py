@@ -50,3 +50,19 @@ def test_observation_storage_failure_is_infrastructure(tmp_path, monkeypatch):
         observer.emit('STAGE_STARTED',{'stage_id':'s'})
     assert error.value.category=='STORAGE_ERROR'
     assert error.value.global_stop is True
+
+
+
+def test_stage_observation_read_storage_failure_prevents_action(tmp_path, monkeypatch):
+    from rsik.errors import StageFailure
+    import sqlite3
+    observer = Observer(tmp_path / 'observations.sqlite')
+    journal = StageJournal(tmp_path / 'stages', observer=observer)
+    def fail():
+        raise sqlite3.OperationalError('private read failure')
+    monkeypatch.setattr(observer.log, 'read', fail)
+    with pytest.raises(StageFailure) as caught:
+        journal.execute('a', {}, lambda _: pytest.fail('must not execute'),
+                        lambda _: {'status': 'ABSENT', 'safe_retry': True})
+    assert caught.value.category == 'STORAGE_ERROR' and caught.value.global_stop
+    assert not (tmp_path / 'stages').exists()

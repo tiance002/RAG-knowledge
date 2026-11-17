@@ -215,7 +215,7 @@ class Experiment:
                     raise StageFailure('PATCH_ERROR', 'UNIT_TEST_FAILED') from None
                 raise StageFailure('REPLAY_ERROR', 'INFRA_FAILURE') from None
         self.journal.execute(proposal['angle'] + '-unit', {'worker_sha256': bytes_hash(changed), 'angle': proposal['angle']}, action, reconcile)
-        return {'worker_path': str(worker), 'worker_hash': bytes_hash(changed)}
+        return {'worker_path': str(worker), 'worker_hash': bytes_hash(changed), 'worker': changed}
 
     def replay(self, proposal, artifact):
         slot, worker_hash = proposal['angle'], artifact['worker_hash']

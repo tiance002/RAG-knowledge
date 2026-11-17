@@ -15,6 +15,13 @@ from .contracts import conflicting, conditions_match, validate_entry
 from .projection import project
 
 
+class RetrievalReceipt(list):
+    """List-compatible public entries with a private runtime operation identity."""
+    def __init__(self, entries, retrieval_id):
+        super().__init__(entries)
+        self.retrieval_id = retrieval_id
+
+
 class Handbook:
     def __init__(self, directory, *, scanner=None, evidence_mode="REAL_REPLAY"):
         if evidence_mode not in {'REAL_REPLAY','SYNTHETIC_CONTROL'}:raise ValueError('UNKNOWN_EVIDENCE_MODE')
@@ -163,12 +170,13 @@ class Handbook:
         if not 0 <= limit <= 3:
             raise ValueError('at most three compatible active entries may be injected')
         observer = observer or observation_for(self)
-        attempt = 1 + sum(e['event_type'] == 'MEMORY_RETRIEVAL_COMPLETED' for e in observer.log.read())
+        attempt = 1 + sum(e['event_type'] in {'MEMORY_RETRIEVAL_STARTED', 'MEMORY_RETRIEVAL_COMPLETED'} for e in observer.log.read())
         retrieval_id = digest({'context': observer.context, 'section': section, 'format': format,
                                'features': features, 'compatibility_fingerprint': compatibility_fingerprint,
                                'attempt': attempt})
         common = {'retrieval_id': retrieval_id, 'section': section, 'format': format,
                   'compatibility_fingerprint': compatibility_fingerprint, 'attempt': attempt}
+        observer.emit('MEMORY_RETRIEVAL_STARTED', common)
         result, retained = [], []
         states = sorted(self.view()['states'].items())
         for entry_id, state in states:
@@ -209,4 +217,4 @@ class Handbook:
                 observer.emit('MEMORY_CONFLICT_DETECTED', {**common, 'pair_entry_ids': pair, 'reason': 'FINITE_ACTION_CONFLICT'})
         observer.emit('MEMORY_RETRIEVAL_COMPLETED', {**common, 'entry_ids': [e['entry_id'] for e in selected],
             'population_count': len(states), 'returned_count': len(selected), 'filtered_count': len(states)-len(result)})
-        return selected
+        return RetrievalReceipt(selected, retrieval_id)

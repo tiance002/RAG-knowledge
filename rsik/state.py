@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sqlite3
 import time
 
 from .locking import atomic_write
@@ -61,7 +62,11 @@ class StageJournal:
         from .observability import observation_for
         observer = observation_for(self)
         operation_id = digest({'stage': stage, 'input_hash': digest(inputs)})
-        prior = observer.log.read()
+        try:
+            prior = observer.log.read()
+        except (OSError, sqlite3.Error) as error:
+            from .errors import StageFailure
+            raise StageFailure('STORAGE_ERROR', 'OBSERVATION_STORAGE_UNAVAILABLE') from error
         attempt = 1 + sum(e['event_type'] == 'STAGE_STARTED' and
                           e['payload'].get('operation_id') == operation_id for e in prior)
         attempt_id = digest({'operation_id': operation_id, 'attempt': attempt})

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from uuid import uuid4
 from pathlib import Path
 
 from .events import EventLog
@@ -179,12 +180,13 @@ class ParentPool:
 
     def select(self, policy, *, exploration=False, seed=0, allow_bootstrap=False, round_id=None, observer=None):
         observer = observer or observation_for(self)
-        attempt = 1 + sum(e['event_type'] == 'PARENT_SELECTION_COMPLETED' for e in observer.log.read())
+        attempt = 1 + sum(e['event_type'] == 'PARENT_SELECTION_STARTED' for e in observer.log.read())
         selection_id = digest({'round_id': round_id or 'UNKNOWN', 'seed': seed,
-            'exploration': exploration, 'allow_bootstrap': allow_bootstrap, 'attempt': attempt})
+            'exploration': exploration, 'allow_bootstrap': allow_bootstrap, 'attempt': attempt, 'nonce': uuid4().hex})
         common = {'selection_id': selection_id, 'round_id': round_id or 'UNKNOWN', 'attempt': attempt,
             'policy_version': 'rsi-parent-pareto-seeded/v2.3', 'seed': seed,
             'exploration': exploration, 'allow_bootstrap': allow_bootstrap, 'evidence_mode': self.evidence_mode}
+        observer.emit('PARENT_SELECTION_STARTED', common)
         candidates = {}
         quarantined={e['payload']['candidate_id'] for e in self.log.read() if e['event_type']=='PARENT_QUARANTINED'}
         for event in self.log.read():

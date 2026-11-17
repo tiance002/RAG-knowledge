@@ -63,7 +63,8 @@ def build_report(paths, artifact_specs=(), filters=None, expected_hashes=None):
     known = lambda value: value not in (None, '', 'UNKNOWN')
     search = []
     for group in statistics['groups']:
-        members = [r for r in records if all(r['dimensions'].get(k, 'UNKNOWN') == group['dimensions'][k] for k in GROUP_DIMENSIONS)]
+        members = [r for r in records if all(r['dimensions'].get(k, 'UNKNOWN') == group['dimensions'][k] for k in GROUP_DIMENSIONS)
+                   and r['payload'].get('metric_contract_version', 'LEGACY') == group.get('metric_contract_version', 'LEGACY')]
         edges = sorted({(r['dimensions'].get('parent_id'), r['dimensions'].get('candidate_id'))
                         for r in members if known(r['dimensions'].get('parent_id')) and known(r['dimensions'].get('candidate_id'))})
         round_parents = Counter(r['dimensions']['parent_id'] for r in members
@@ -72,7 +73,9 @@ def build_report(paths, artifact_specs=(), filters=None, expected_hashes=None):
                        'status': 'OBSERVED_PARTIAL' if edges else 'UNKNOWN',
                        'observed_round_parent_counts': dict(sorted(round_parents.items())),
                        'selection_count_status': 'UNKNOWN'})
-    return {'schema': 'rsi-analytics-report/v1', 'metrics_schema': 'rsi-metrics/v1',
+        if 'metric_contract_version' in group:
+            search[-1]['metric_contract_version'] = group['metric_contract_version']
+    report = {'schema': 'rsi-analytics-report/v1', 'metrics_schema': 'rsi-metrics/v1',
             'source_fingerprint': digest(sorted(set(s['sha256'] for s in sources + artifacts))),
             'sources': sorted([{k: s[k] for k in ('source_id', 'path', 'sha256')} for s in sources + artifacts],
                               key=lambda s: (s['source_id'], s['path'])),
@@ -88,6 +91,11 @@ def build_report(paths, artifact_specs=(), filters=None, expected_hashes=None):
             'next_stage': {'implemented': False, 'name': 'M1',
                            'profiles': ['M1_SPECIALIZED_V1', 'M1_INDEPENDENT_V1', 'M1_ADAPTIVE_V1', 'M1_EXPERIENCE_GUIDED_V1'],
                            'recommendation': '先补齐缺失的调用/检索/父代选择记录契约，再经人工审查冻结对照实验；不覆盖 LEGACY。'}}
+    contracts = sorted({g['metric_contract_version'] for g in statistics['groups'] if g.get('metric_contract_version')})
+    if contracts:
+        report['metric_contract_versions'] = contracts
+        report['metrics_schema'] = contracts[0] if len(contracts) == 1 and all(g.get('metric_contract_version') for g in statistics['groups']) else 'PARTITIONED'
+    return report
 
 
 def render_markdown(report):
@@ -98,6 +106,9 @@ def render_markdown(report):
         lines.append('| ' + ' | '.join(str(row[k]).replace('|', '/') for k in ('module', 'status', 'entrypoint', 'gap')) + ' |')
     lines += ['', '## 分区统计', '']
     for group in report['statistics']['groups']:
+        if group.get('metric_contract_version'):
+            lines += ['指标契约：`' + group['metric_contract_version'] + '`。', '',
+                      'Memory 分母：M1 为唯一 retrieval_id 操作（包含空结果与已启动中断）；M2 为 retrieval_id + entry_id；M3 为 round_id + entry_id。', '']
         lines += ['维度：`' + json.dumps(group['dimensions'], ensure_ascii=False, sort_keys=True) + '`', '',
                   '| 指标 | 状态 | 分子 | 分母 | 值 | 单位 |', '|---|---|---:|---:|---:|---|']
         for m in group['metrics']:
@@ -108,11 +119,13 @@ def render_markdown(report):
                   'Proposal Portfolio：', '', '```json', json.dumps(group['portfolio'], ensure_ascii=False, sort_keys=True, indent=2), '```', '']
     if not report['statistics']['groups']:
         lines += ['无符合筛选条件的可观测记录；指标 N/A/UNKNOWN，不填零。', '']
+    current = any(g.get('metric_contract_version') for g in report['statistics']['groups'])
     lines += ['## 搜索与回放、Memory、独立核查', '',
               '父代分布、完整家族回放、训练裁决、Memory 和 Holdout 指标见各分区 S/P/M 系列；缺记录即保留未知。', '',
               '## 错误与缺口', '', '传输状态：`' + json.dumps(report['transport_status_distribution'], sort_keys=True) + '`。', '',
               *['- ' + gap for gap in report['evidence_gaps']], '', '## M1 设计入口', '',
-              report['next_stage']['recommendation'], '', 'M0 完成后停止；未实施 M1。', '']
+              report['next_stage']['recommendation'], '',
+              '当前包含 M1-A.1 运行观测；版本分区独立统计，未实施后续能力。' if current else 'M0 完成后停止；未实施 M1。', '']
     return '\n'.join(lines)
 
 
@@ -156,7 +169,9 @@ def main(argv=None):
     args.output.mkdir(parents=True, exist_ok=False)
     (args.output / 'report.json').write_bytes(canonical(report))
     (args.output / 'report.zh.md').write_text(render_markdown(report), encoding='utf-8')
-    (args.output / 'metrics-schema.json').write_bytes(canonical(METRICS))
+    contracts = {g['metric_contract_version']: g['metric_definitions'] for g in report['statistics']['groups'] if g.get('metric_contract_version')}
+    schema = {'legacy': METRICS, 'contracts': contracts} if contracts else METRICS
+    (args.output / 'metrics-schema.json').write_bytes(canonical(schema))
     print(json.dumps({'output': str(args.output), 'source_fingerprint': report['source_fingerprint'],
                       'projection_count': report['projection_count'], 'model_calls': 0, 'source_writes': 0}))
 

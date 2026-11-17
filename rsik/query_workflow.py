@@ -235,7 +235,7 @@ def assert_order_angle(run):
 def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry,
                     directory, capsule_factory, scanner, handbook=None,
                     compatibility_fingerprint=None, features=None, format='OTHER',
-                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None, launch=None, evidence=None):
+                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None, launch=None, evidence=None, observer=None):
     """Run Diagnosis/P1/P2/P3, ordinary four-suite replay, then Curator/Meta.
 
     advisory_roles must use the legacy read-only profile, sharing the same Budget.
@@ -265,9 +265,12 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     restrict_directory(directory)
-    observer = observation_for(directory)
+    observer = observer if observer is not None else observation_for(directory)
     observer.update_context(round_id=public['round_id'], parent_id=parent['candidate_id'],
-                            role_profile=role_profile, role_profile_hash=digest(profile_manifest(role_profile)), run_id=launch.run_id if launch else 'UNKNOWN')
+                            role_profile=role_profile, role_profile_hash=digest(profile_manifest(role_profile)), run_id=launch.run_id if launch else digest(str(directory.resolve())),
+                            evidence_mode=evidence.mode if evidence is not None else 'REAL_REPLAY',
+                            profile=getattr(roles, 'seam_profile', 'UNKNOWN'),
+                            compatibility_fingerprint=compatibility_fingerprint or 'UNKNOWN')
     roles.observer = observer
     advisory_roles.observer = observer
     deadline = deadline if deadline is not None else time.monotonic() + 4500
@@ -285,15 +288,29 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     if handbook is not None:
         if not compatibility_fingerprint:
             raise ValueError('HANDBOOK_COMPATIBILITY_REQUIRED')
-        entries = []
+        entries, retrievals = [], []
         from inspect import signature, Parameter
         parameters = signature(handbook.retrieve).parameters
         observation_kwargs = {'observer': observer} if ('observer' in parameters or
             any(p.kind == Parameter.VAR_KEYWORD for p in parameters.values())) else {}
         for section in ('dedup', 'budget', 'order', 'format'):
-            entries.extend(handbook.retrieve(section, format, features or {}, compatibility_fingerprint, **observation_kwargs))
+            receipt = handbook.retrieve(section, format, features or {}, compatibility_fingerprint, **observation_kwargs)
+            entries.extend(receipt)
+            retrievals.append(receipt)
         entries = sorted({e['entry_id']: e for e in entries}.values(), key=lambda e: e['entry_id'])[:3]
-        observer.emit('MEMORY_INJECTED', {'entry_ids': [e['entry_id'] for e in entries], 'scope': 'GLOBAL_TOP3', 'returned_count': len(entries)})
+        selected_ids = {e['entry_id'] for e in entries}
+        attributed = set()
+        # Deduplication above retains the last occurrence of an entry.
+        for receipt in reversed(retrievals):
+            retrieval_id = getattr(receipt, 'retrieval_id', None)
+            injected_ids = [e['entry_id'] for e in receipt if e['entry_id'] in selected_ids - attributed]
+            if injected_ids:
+                # Plain-list adapters can still provide prompts but cannot invent
+                # an operation receipt for analytics attribution.
+                payload = {'entry_ids': injected_ids, 'scope': 'GLOBAL_TOP3', 'returned_count': len(injected_ids)}
+                if retrieval_id is not None: payload['retrieval_id'] = retrieval_id
+                observer.emit('MEMORY_INJECTED', payload)
+                attributed.update(injected_ids)
         public['handbook_entries'] = entries
         public['handbook_entry_ids'] = [e['entry_id'] for e in entries]
         validate_handbook_summaries(entries, public['handbook_entry_ids'])
@@ -307,7 +324,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     atomic_write(directory / 'fixture-freezes.restricted.json', canonical(freezes), exclusive=True)
     artifacts = {}
     observed_outputs = {}
-    journal = StageJournal(directory / 'stages')
+    journal = StageJournal(directory / 'stages', observer=observer, run_id=observer.context['run_id'])
 
     def review(proposal):
         guard()
@@ -502,7 +519,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
             return record_query_round_learning(handbook=handbook, record=result, public=public,
                                               compatibility_fingerprint=compatibility_fingerprint)
         if experience_session is not None:
-            experience_session.learn_round(record_path=directory/'round.json',public_path=directory/'public-context.json',compatibility_fingerprint=compatibility_fingerprint)
+            experience_session.learn_round(record_path=directory/'round.json',public_path=directory/'public-context.json',compatibility_fingerprint=compatibility_fingerprint, observer=observer)
         else:
             record_learning()
     # Separate role profile: completed_projection is intentionally legacy-shaped.
