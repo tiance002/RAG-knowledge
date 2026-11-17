@@ -1,0 +1,7 @@
+# Findings
+
+PR1基线未变化。原E工作区12个业务/前端跟踪脏文件，D产品也有脏文件，均隔离保留。EventLog.__init__会建Schema，不允许分析层调用；链格式rsi-event/v2.2包含row和payload多重哈希。
+
+事件审计完成：31项规范已版本化，缺语义状态/原始retrieval/父代选择分母；8维compat分区含完整profile指纹。发现并修正/追踪跨日志requestkey碰撞、pending误当失败、无improvement标志误判0、缺roundid错误连接、symlink闭合文件绕过、模拟晋级分区。选定8个历史事件源+1个公开旧round归档，hash快照后只读分析，不读取closed题目。
+
+历史预算真实观察264请求、5UNKNOWN；总实际usage不完整，已知usage小计另列；账本上界1370204365nano，供应商invoiceUNKNOWN。旧query engineering归档缺round_id/execution_state，未伪造可关联round。一个公开legacyround有1个可观察proposal实例，contract/AST保持UNKNOWN。数据不足的指标仍交付公式/测试，不等于已有真实自主收益。

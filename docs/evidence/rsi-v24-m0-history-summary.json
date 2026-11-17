@@ -1,0 +1,1572 @@
+{
+  "capabilities": [
+    {
+      "entrypoint": "events.py:EventLog; analytics.reader.read_event_log",
+      "gap": "验证链与文件哈希；无可信锚点不能证明历史尾部完整",
+      "module": "EventLog",
+      "status": "已实现"
+    },
+    {
+      "entrypoint": "openai_roles.py:OpenAIRoles.call",
+      "gap": "传输记录不能证明输出契约有效，缺统一语义 invocation 事件",
+      "module": "六个 Agent",
+      "status": "部分实现"
+    },
+    {
+      "entrypoint": "analytics.portfolio.analyze_portfolio",
+      "gap": "仅比较已保存且可验证的策略身份，不猜测自然语言等价",
+      "module": "Proposal Portfolio",
+      "status": "已实现"
+    },
+    {
+      "entrypoint": "query_workflow.py:run_query_round",
+      "gap": "主要身份来自归档 round，事件源覆盖不完整",
+      "module": "Query Workflow",
+      "status": "已实现"
+    },
+    {
+      "entrypoint": "query_aware.py:QueryRegistry",
+      "gap": "只读已保存不可变身份；不以当前快照重建历史",
+      "module": "Registry",
+      "status": "已实现"
+    },
+    {
+      "entrypoint": "family_decision.py:make_family",
+      "gap": "完整三槽与终态资格必须显式存在",
+      "module": "FamilyDecision",
+      "status": "已实现"
+    },
+    {
+      "entrypoint": "query_learning.py; handbook/store.py",
+      "gap": "原始检索次数、共同检索集合和完整冲突分母缺失",
+      "module": "Memory",
+      "status": "部分实现"
+    },
+    {
+      "entrypoint": "lineage.py:ParentPool.select",
+      "gap": "选择返回未写事件，不能把父代准入当选择",
+      "module": "Parent Selection",
+      "status": "数据不足"
+    },
+    {
+      "entrypoint": "holdout.py:replay_artifacts",
+      "gap": "真实资格、配对、完成、版本缺一不可，演练单列",
+      "module": "Replay",
+      "status": "已实现"
+    },
+    {
+      "entrypoint": "query_verification.py:verify_sealed",
+      "gap": "仅投影授权终态汇总，不读取封闭题目/答案/证据",
+      "module": "Holdout",
+      "status": "已实现"
+    },
+    {
+      "entrypoint": "promotion.py:PromotionSandbox",
+      "gap": "现有实现为隔离演练，不证明生产批准或发布",
+      "module": "Promotion",
+      "status": "仅有接口"
+    },
+    {
+      "entrypoint": "query_learning.py:ExperienceSession",
+      "gap": "最终状态文件不构成所有恢复尝试分母",
+      "module": "Recovery",
+      "status": "部分实现"
+    },
+    {
+      "entrypoint": "budgets.py; analytics.metrics",
+      "gap": "usage、上界、UNKNOWN 与实际供应商账单分开",
+      "module": "Cost",
+      "status": "部分实现"
+    },
+    {
+      "entrypoint": "M0 未新增权限",
+      "gap": "M0 只新增分析代码",
+      "module": "任意系统源码自改",
+      "status": "尚未实现"
+    }
+  ],
+  "evidence_gaps": [
+    "未记录的维度保持 UNKNOWN；不同模式、Evaluator、Profile 和兼容指纹不合并。",
+    "MODEL_REQUEST_COMPLETED 是传输回执，不是 Schema 成功；训练 ADOPT 不等于独立 VERIFIED。",
+    "Memory matched 是已归档最终匹配列表；不伪造原始 retrieval 和共同检索对分母。",
+    "历史实际费用缺供应商账单时 UNKNOWN；账本上界不等于实扣金额。",
+    "当前 Registry tip 不用于推断历史选择、资格或回滚状态。"
+  ],
+  "failure_origin_unknown_count": 264,
+  "metrics_schema": "rsi-metrics/v1",
+  "next_stage": {
+    "implemented": false,
+    "name": "M1",
+    "profiles": [
+      "M1_SPECIALIZED_V1",
+      "M1_INDEPENDENT_V1",
+      "M1_ADAPTIVE_V1",
+      "M1_EXPERIENCE_GUIDED_V1"
+    ],
+    "recommendation": "先补齐缺失的调用/检索/父代选择记录契约，再经人工审查冻结对照实验；不覆盖 LEGACY。"
+  },
+  "projection_count": 757,
+  "projection_types": {
+    "AgentInvocation": 264,
+    "Candidate": 8,
+    "CostEvent": 264,
+    "Experiment": 141,
+    "Holdout": 5,
+    "MemoryEvent": 7,
+    "Parent": 6,
+    "Promotion": 4,
+    "Proposal": 1,
+    "Replay": 1,
+    "Round": 56
+  },
+  "schema": "rsi-analytics-report/v1",
+  "source_fingerprint": "3b32961deba380b0c20ed7cede308918b681fde597b73fb558734a9bf19bb56f",
+  "statistics": {
+    "groups": [
+      {
+        "agent_roles": [],
+        "compatibility_status": "UNKNOWN",
+        "cost_breakdown": {
+          "actual_usage": {
+            "cached_tokens": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "failed_request_upper_nano": null,
+          "ledger_upper_nano": null,
+          "observed_request_lower_bound": 0,
+          "pending_requests_count": 0,
+          "provider_invoiced_nano": null,
+          "requests": null,
+          "status": "UNKNOWN",
+          "unknown_usage_requests_count": 0
+        },
+        "current_promoted_candidates": [],
+        "current_promoted_histories": [],
+        "dimensions": {
+          "compatibility_fingerprint": "UNKNOWN",
+          "epoch": "UNKNOWN",
+          "evaluator_version": "UNKNOWN",
+          "evidence_mode": "ENGINEERING_DEMO",
+          "experiment_id": "UNKNOWN",
+          "profile": "UNKNOWN",
+          "role_profile": "UNKNOWN",
+          "role_profile_sha256": "UNKNOWN"
+        },
+        "metrics": [
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "A1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "A2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "A3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "A4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P5",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 0,
+            "evidence_refs": [],
+            "metric_id": "S2",
+            "numerator": 0,
+            "reason": "only independent completed verification; training adoption is excluded",
+            "status": "N/A",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S5",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "generation",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S6",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "HHI",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "count",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M5",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M6",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "C1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "USD",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "C2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "USD/proposal",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "C3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "USD/replay",
+            "value": null
+          },
+          {
+            "denominator": 0,
+            "evidence_refs": [],
+            "metric_id": "C4",
+            "numerator": null,
+            "reason": "no independently verified improvement",
+            "status": "N/A",
+            "unit": "USD/improvement",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 1,
+            "evidence_refs": [
+              {
+                "sha256": "4b3799e675f5d67c57b0d47b1a8649690165cd8601db552241e10cc5523509be",
+                "source_id": "sha256:4b3799e675f5d67c57b0d47b1a8649690165cd8601db552241e10cc5523509be"
+              }
+            ],
+            "metric_id": "R5",
+            "numerator": 1,
+            "reason": "explicit observed evidence",
+            "status": "OK",
+            "unit": "ratio",
+            "value": 1.0
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R6",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          }
+        ],
+        "portfolio": {
+          "ast_structure": {
+            "duplicate_instances": null,
+            "known_instances": 0,
+            "unique_count": null,
+            "unknown_instances": 0
+          },
+          "expected_impact": {
+            "duplicate_instances": null,
+            "known_instances": 0,
+            "unique_count": null,
+            "unknown_instances": 0
+          },
+          "hypothesis": {
+            "duplicate_instances": null,
+            "known_instances": 0,
+            "unique_count": null,
+            "unknown_instances": 0
+          },
+          "instances": [],
+          "interpretation": "Exact identities only; natural-language equivalence is UNKNOWN. Replacement AST is not full candidate AST.",
+          "observed_proposal_instances_lower_bound": 0,
+          "patch_bytes": {
+            "duplicate_instances": null,
+            "known_instances": 0,
+            "unique_count": null,
+            "unknown_instances": 0
+          },
+          "proposal_instances": null
+        }
+      },
+      {
+        "agent_roles": [
+          {
+            "agent_role": "P1_DEDUP",
+            "metrics": [
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "P2_BUDGET",
+            "metrics": [
+              {
+                "denominator": 50,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 50,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 50,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 50,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "P3_ORDER",
+            "metrics": [
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "answer_grader",
+            "metrics": [
+              {
+                "denominator": 11,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 8,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 11,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 11,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "answer_grader_full_context_v1",
+            "metrics": [
+              {
+                "denominator": 72,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 72,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 72,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 72,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "curator",
+            "metrics": [
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 5,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "diagnose",
+            "metrics": [
+              {
+                "denominator": 52,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 51,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 52,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 52,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "glm40_candidate_concurrency2",
+            "metrics": [
+              {
+                "denominator": 60,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 59,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 60,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 60,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "glm40_explicit_retry1",
+            "metrics": [
+              {
+                "denominator": 1,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 1,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 1,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 1,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          },
+          {
+            "agent_role": "meta",
+            "metrics": [
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A1",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A2",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A3",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              },
+              {
+                "denominator": 4,
+                "evidence_refs": [],
+                "metric_id": "A4",
+                "numerator": null,
+                "reason": "missing required observations",
+                "status": "UNKNOWN",
+                "unit": "ratio",
+                "value": null
+              }
+            ]
+          }
+        ],
+        "compatibility_status": "UNKNOWN",
+        "cost_breakdown": {
+          "actual_usage": {
+            "cached_tokens": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "failed_request_count": 0,
+          "failed_request_upper_nano": 0,
+          "failure_count_scope": "CONFIRMED_TRANSPORT_FAILURES_ONLY; uncertain outcomes excluded and separately retained",
+          "known_ledger_upper_nano": 1370204365,
+          "known_usage_request_count": 259,
+          "known_usage_subtotal": {
+            "cached_tokens": {
+              "reported_requests": 259,
+              "tokens": 17701
+            },
+            "input_tokens": {
+              "reported_requests": 259,
+              "tokens": 1324378
+            },
+            "output_tokens": {
+              "reported_requests": 259,
+              "tokens": 167676
+            }
+          },
+          "ledger_upper_nano": 1370204365,
+          "observed_request_lower_bound": 264,
+          "pending_requests_count": 0,
+          "provider_invoiced_nano": null,
+          "requests": 264,
+          "status": "BOUNDED_USAGE_ESTIMATE",
+          "total_failure_count_status": "UNKNOWN",
+          "uncertain_request_keys_count": 5,
+          "uncertain_request_upper_nano": 228284800,
+          "unknown_usage_requests_count": 5,
+          "unknown_usage_upper_nano": 228284800
+        },
+        "current_promoted_candidates": [],
+        "current_promoted_histories": [],
+        "dimensions": {
+          "compatibility_fingerprint": "UNKNOWN",
+          "epoch": "UNKNOWN",
+          "evaluator_version": "UNKNOWN",
+          "evidence_mode": "UNKNOWN",
+          "experiment_id": "UNKNOWN",
+          "profile": "UNKNOWN",
+          "role_profile": "UNKNOWN",
+          "role_profile_sha256": "UNKNOWN"
+        },
+        "metrics": [
+          {
+            "denominator": 264,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "A1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 259,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "A2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 264,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "A3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 264,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "A4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 1,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              }
+            ],
+            "metric_id": "P1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "P5",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 1,
+            "evidence_refs": [
+              {
+                "sha256": "2d05f7257823a83262bbd751735bbd96004fe0cc0ff295cd5b2dc5f45362a499",
+                "source_id": "sha256:2d05f7257823a83262bbd751735bbd96004fe0cc0ff295cd5b2dc5f45362a499"
+              },
+              {
+                "sha256": "9c660333124d502a0c7f30b5acf52fc99aca55b4c51ee97bee04d9aaf0aa991a",
+                "source_id": "sha256:9c660333124d502a0c7f30b5acf52fc99aca55b4c51ee97bee04d9aaf0aa991a"
+              },
+              {
+                "sha256": "f13ccd7b8ee3f3aa02268c194d777ae3adb017a4425e24bf8221edc680149b32",
+                "source_id": "sha256:f13ccd7b8ee3f3aa02268c194d777ae3adb017a4425e24bf8221edc680149b32"
+              }
+            ],
+            "metric_id": "S2",
+            "numerator": 1,
+            "reason": "only independent completed verification; training adoption is excluded",
+            "status": "OK",
+            "unit": "ratio",
+            "value": 1.0
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S5",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "generation",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "S6",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "HHI",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "count",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 1,
+            "evidence_refs": [
+              {
+                "sha256": "9c660333124d502a0c7f30b5acf52fc99aca55b4c51ee97bee04d9aaf0aa991a",
+                "source_id": "sha256:9c660333124d502a0c7f30b5acf52fc99aca55b4c51ee97bee04d9aaf0aa991a"
+              }
+            ],
+            "metric_id": "M3",
+            "numerator": 1,
+            "reason": "explicit observed evidence",
+            "status": "OK",
+            "unit": "ratio",
+            "value": 1.0
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M5",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "M6",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "C1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "USD",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "C2",
+            "numerator": null,
+            "reason": "provider invoice required; ledger upper is not actual charge",
+            "status": "UNKNOWN",
+            "unit": "USD/proposal",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "C3",
+            "numerator": null,
+            "reason": "provider invoice required; ledger upper is not actual charge",
+            "status": "UNKNOWN",
+            "unit": "USD/replay",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "C4",
+            "numerator": null,
+            "reason": "provider invoice required; ledger upper is not actual charge",
+            "status": "UNKNOWN",
+            "unit": "USD/improvement",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R1",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R2",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R3",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": 264,
+            "evidence_refs": [
+              {
+                "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c",
+                "source_id": "sha256:e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+              },
+              {
+                "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+                "source_id": "sha256:b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+              }
+            ],
+            "metric_id": "R4",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R5",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          },
+          {
+            "denominator": null,
+            "evidence_refs": [],
+            "metric_id": "R6",
+            "numerator": null,
+            "reason": "missing required observations",
+            "status": "UNKNOWN",
+            "unit": "ratio",
+            "value": null
+          }
+        ],
+        "portfolio": {
+          "ast_structure": {
+            "duplicate_instances": null,
+            "known_instances": 0,
+            "unique_count": null,
+            "unknown_instances": 1
+          },
+          "expected_impact": {
+            "duplicate_instances": 0,
+            "known_instances": 1,
+            "unique_count": 1,
+            "unknown_instances": 0
+          },
+          "hypothesis": {
+            "duplicate_instances": 0,
+            "known_instances": 1,
+            "unique_count": 1,
+            "unknown_instances": 0
+          },
+          "instances": [
+            {
+              "agent_role": "P2_BUDGET",
+              "ast_hash": null,
+              "ast_scope": "UNKNOWN",
+              "expected_impact_identity": "874b12c7b4355123d0aa483c6349cc769aa4a80c37765e4975fdad9850f47801",
+              "hypothesis_identity": "4a139a8053003af926a3deb78c8b1df997732062f57ca1d63002ec69ff71a335",
+              "modified_paths": [],
+              "patch_byte_hash": "a68521d86ee953b787c70c8656063947cc58d0195abb6a01ff70f062e72467ae",
+              "proposal_id": "proposal-seed-only-ablation",
+              "round_id": "round-caf2ebc4d081483384d92f43cd0e5f77",
+              "schema_valid": "UNKNOWN",
+              "slot": "P2_BUDGET",
+              "static_pass": true
+            }
+          ],
+          "interpretation": "Exact identities only; natural-language equivalence is UNKNOWN. Replacement AST is not full candidate AST.",
+          "observed_proposal_instances_lower_bound": 1,
+          "patch_bytes": {
+            "duplicate_instances": 0,
+            "known_instances": 1,
+            "unique_count": 1,
+            "unknown_instances": 0
+          },
+          "proposal_instances": 1
+        }
+      }
+    ],
+    "portfolio": {
+      "groups": [
+        {
+          "dimensions": {
+            "compatibility_fingerprint": "UNKNOWN",
+            "epoch": "UNKNOWN",
+            "evaluator_version": "UNKNOWN",
+            "evidence_mode": "ENGINEERING_DEMO",
+            "experiment_id": "UNKNOWN",
+            "profile": "UNKNOWN",
+            "role_profile": "UNKNOWN",
+            "role_profile_sha256": "UNKNOWN"
+          },
+          "portfolio": {
+            "ast_structure": {
+              "duplicate_instances": null,
+              "known_instances": 0,
+              "unique_count": null,
+              "unknown_instances": 0
+            },
+            "expected_impact": {
+              "duplicate_instances": null,
+              "known_instances": 0,
+              "unique_count": null,
+              "unknown_instances": 0
+            },
+            "hypothesis": {
+              "duplicate_instances": null,
+              "known_instances": 0,
+              "unique_count": null,
+              "unknown_instances": 0
+            },
+            "instances": [],
+            "interpretation": "Exact identities only; natural-language equivalence is UNKNOWN. Replacement AST is not full candidate AST.",
+            "observed_proposal_instances_lower_bound": 0,
+            "patch_bytes": {
+              "duplicate_instances": null,
+              "known_instances": 0,
+              "unique_count": null,
+              "unknown_instances": 0
+            },
+            "proposal_instances": null
+          }
+        },
+        {
+          "dimensions": {
+            "compatibility_fingerprint": "UNKNOWN",
+            "epoch": "UNKNOWN",
+            "evaluator_version": "UNKNOWN",
+            "evidence_mode": "UNKNOWN",
+            "experiment_id": "UNKNOWN",
+            "profile": "UNKNOWN",
+            "role_profile": "UNKNOWN",
+            "role_profile_sha256": "UNKNOWN"
+          },
+          "portfolio": {
+            "ast_structure": {
+              "duplicate_instances": null,
+              "known_instances": 0,
+              "unique_count": null,
+              "unknown_instances": 1
+            },
+            "expected_impact": {
+              "duplicate_instances": 0,
+              "known_instances": 1,
+              "unique_count": 1,
+              "unknown_instances": 0
+            },
+            "hypothesis": {
+              "duplicate_instances": 0,
+              "known_instances": 1,
+              "unique_count": 1,
+              "unknown_instances": 0
+            },
+            "instances": [
+              {
+                "agent_role": "P2_BUDGET",
+                "ast_hash": null,
+                "ast_scope": "UNKNOWN",
+                "expected_impact_identity": "874b12c7b4355123d0aa483c6349cc769aa4a80c37765e4975fdad9850f47801",
+                "hypothesis_identity": "4a139a8053003af926a3deb78c8b1df997732062f57ca1d63002ec69ff71a335",
+                "modified_paths": [],
+                "patch_byte_hash": "a68521d86ee953b787c70c8656063947cc58d0195abb6a01ff70f062e72467ae",
+                "proposal_id": "proposal-seed-only-ablation",
+                "round_id": "round-caf2ebc4d081483384d92f43cd0e5f77",
+                "schema_valid": "UNKNOWN",
+                "slot": "P2_BUDGET",
+                "static_pass": true
+              }
+            ],
+            "interpretation": "Exact identities only; natural-language equivalence is UNKNOWN. Replacement AST is not full candidate AST.",
+            "observed_proposal_instances_lower_bound": 1,
+            "patch_bytes": {
+              "duplicate_instances": 0,
+              "known_instances": 1,
+              "unique_count": 1,
+              "unknown_instances": 0
+            },
+            "proposal_instances": 1
+          }
+        }
+      ],
+      "reason": "portfolio comparisons are restricted to compatibility groups",
+      "status": "PARTITIONED"
+    }
+  },
+  "transport_status_distribution": {
+    "INTERRUPTED_NO_RECEIPT": 1,
+    "RECEIVED": 259,
+    "UNKNOWN": 4
+  }
+}
