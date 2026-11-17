@@ -20,10 +20,11 @@ Complete authorized trusted gates, data/evidence preparation, conditional real-s
 ## Git / CI Baseline
 
 - Branch: `codex/rsi-v22-review-20261115`
-- Head: `d47e9a37505a0a726e320120377d62bd4a1e8ddb`
-- Commits: `d3e7651` fixed-history fixtures + literal Gold compiler; `d13f6e4` CI frozen-worker dependencies; `d47e9a3` worker template LF attribute.
-- Push Run: `43894292539` — 4/4 Jobs success, each 518 collected / 518 passed / 0 failed / 0 skipped / 0 errors.
-- PR Run: `43894305537` — 4/4 Jobs success, each 518 collected / 518 passed / 0 failed / 0 skipped / 0 errors.
+- Head: `0b5da4c28dd29a57da4cdeb25ac9b6acddab9cab`
+- Commits: `d3e7651` fixed-history fixtures + literal Gold compiler; `d13f6e4` CI frozen-worker dependencies; `d47e9a3` worker template LF attribute; `0b5da4c` final CI audit and planning docs.
+- Push Run: `43995704696` — 4/4 Jobs success, each 518 collected / 518 passed / 0 failed / 0 skipped / 0 errors.
+- PR Run: `43995710779` — 4/4 Jobs success, each 518 collected / 518 passed / 0 failed / 0 skipped / 0 errors.
+- Previous code commit `d47e9a3`: Push `43894292539` + PR `43894305537`, both 8 × 518/518; retained as history.
 - Local full R2 was stopped at 55% after two 45s cold-import timeouts; it is not a completed full pass.
 - Local clean environment with the same CI selection: 518 passed, exit 0.
 - PR #1: draft / open / unmerged / undeployed; S8 not started.

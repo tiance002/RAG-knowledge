@@ -1,30 +1,38 @@
 # RSI v2.3 S7 最终 CI 审计记录
 
-- 基线 head：`d47e9a37505a0a726e320120377d62bd4a1e8ddb`
-- 记录日期：2026-11-16
-- 说明：以下八 Job 的 518/518 明细来自独立审查记录；本次未重复运行。Run 与 Job 的 `conclusion=success` 已通过 GitHub API 复核。
+- 代码基线 head：`d47e9a37505a0a726e320120377d62bd4a1e8ddb`
+- 首轮文档提交 head：`0b5da4c28dd29a57da4cdeb25ac9b6acddab9cab`
+- 记录日期：2026-11-16/17
+- 说明：八 Job 的 518/518 明细来自独立审查记录；本轮未重复运行旧 Job。新文档提交的八个 Job 已由本次逐 Job 原始日志复核（collected 518 / passed 518）。
 
-## 1. 最新两个 Run
+## 1. 最新两个 Run（文档提交 0b5da4c）
+
+| 触发 | Run ID | 链接 | 结论 |
+|---|---|---|---|
+| Push | 43995704696 | https://github.com/tiance002/RAG-knowledge/actions/runs/43995704696 | success |
+| Pull Request | 43995710779 | https://github.com/tiance002/RAG-knowledge/actions/runs/43995710779 | success |
+
+### 1.1 上一轮代码提交 d47e9a3（保留为历史）
 
 | 触发 | Run ID | 链接 | 结论 |
 |---|---|---|---|
 | Push | 43894292539 | https://github.com/tiance002/RAG-knowledge/actions/runs/43894292539 | success |
 | Pull Request | 43894305537 | https://github.com/tiance002/RAG-knowledge/actions/runs/43894305537 | success |
 
-## 2. 八个 Job 的统计
+## 2. 八个 Job 的统计（0b5da4c）
 
 每组均为：collected 518、passed 518、failed 0、skipped 0、errors 0、pytest step conclusion success。
 
 | Run | OS | Python | collected | passed | failed | skipped | errors | pytest step |
 |---|---|---|---|---|---|---|---|---|
-| Push 43894292539 | Ubuntu | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
-| Push 43894292539 | Windows | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
-| Push 43894292539 | Ubuntu | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
-| Push 43894292539 | Windows | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
-| PR 43894305537 | Windows | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
-| PR 43894305537 | Ubuntu | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
-| PR 43894305537 | Ubuntu | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
-| PR 43894305537 | Windows | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
+| Push 43995704696 | Windows | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
+| Push 43995704696 | Windows | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
+| Push 43995704696 | Ubuntu | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
+| Push 43995704696 | Ubuntu | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
+| PR 43995710779 | Ubuntu | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
+| PR 43995710779 | Ubuntu | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
+| PR 43995710779 | Windows | 3.11 | 518 | 518 | 0 | 0 | 0 | success |
+| PR 43995710779 | Windows | 3.13 | 518 | 518 | 0 | 0 | 0 | success |
 
 同一测试选择在两个 Run、四个环境各执行一次；不得把八次执行写成 4144 个独立测试。
 

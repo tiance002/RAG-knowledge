@@ -58,3 +58,4 @@ FINAL CLOSEOUT 2026-11-16/17:
 - S5: 删除 7 个明确属于本任务的 .rsi-takeover-tmp* 目录；E 盘释放 459,849,728 bytes。保留 var/rsi-pending-user-delete（105,609,080 bytes）交由用户处理。
 - S3 仍为 BLOCKED_DATA；S4/S5 NOT_STARTED；S6 仅合成控制；S7 负结果等待最终审查。
 - 新增付费模型请求 0；供应商最终账单 UNKNOWN。
+- 2026-11-17: 文档提交 0b5da4c 已推送，Push Run 43995704696 与 PR Run 43995710779 各 4/4 Job success，逐 Job collected 518 / passed 518；上一轮 d47e9a3 的 8 × 518/518 保留为历史。
