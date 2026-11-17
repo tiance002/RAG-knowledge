@@ -37,4 +37,7 @@ jobs:
           python -B -m pytest rsik/tests tests/test_query_workflow.py
           backend/tests/test_rsi_candidates.py backend/tests/test_rsi_feedback.py
           backend/tests/test_rsi_decision.py backend/tests/test_rsi_business_source.py
+          backend/tests/test_glm_answer_policy.py
+          backend/tests/test_frozen_context_retrieval.py
+          backend/tests/test_glm40_candidate_runner.py
           -vv --tb=short --basetemp=.rsi-ci-tmp
