@@ -17,8 +17,8 @@
 **Status:** complete
 - 合成测试不含Gold；真实历史只读分析，保留未知与证据缺口。
 ### Phase 5: 完整回归与交付
-**Status:** in_progress
+**Status:** complete
 - 核对退出码/日志/分母/输入哈希，提交推送DraftPR，审查CI原始日志，完成M0停止。
 
 ## Next Step
-等待完整回归后核对原始文件哈希，提交M0并收集四环境CI。
+M0实现/回执已交付；停止等待人工审查，不进入M1。

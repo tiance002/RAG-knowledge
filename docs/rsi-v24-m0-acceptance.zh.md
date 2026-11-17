@@ -67,3 +67,7 @@ M0交付RSI自身分析代码、测试和历史数据结果。基础PR1为87fd83
 M0完成后停止等待人工审查，不进入M1，不合并、不部署、不执行Promotion，也不开放任意源码自改。
 
 工作区核对限制：D产品的chat.py和grounded_generation.py在本任务期间出现与初始hash不同的内容，本任务没有写入这两个业务源文件，也未回退/覆盖其当前内容。该变化来源未独立判定，逐项hash保存在external-workspace-drift.json；不声称D产品整体字节不变。M0输入和计算只依赖新E工作树、明确历史事件/归档和已有解释器，不依赖这些业务源变化。原RSI/GLM工作区已记录脏文件、六个保护文件、原账本和9个分析输入均保持对应基线。
+
+## 已核验四环境CI
+
+实现提交`7b4fc22db8c352674900a707d52b68b842b10d98`的[Run44092688174](https://github.com/tiance002/RAG-knowledge/actions/runs/44092688174)四Job均success：Ubuntu/Windows×Python3.11/3.13，每Job collected579/passed579/failed0/skipped0，pytest step success（默认shell非零即失败，对应exit0）。已下载各Job完整解码日志、逐项核对579条状态和汇总；原始日志保留ci-r1/，公开回执见[evidence/rsi-v24-m0-ci-audit.json](evidence/rsi-v24-m0-ci-audit.json)。后续交付说明提交仅更新文档/计划与CI回执，源码和工作流保持相同；最新提交CI终态同时列在PR描述。
