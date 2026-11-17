@@ -1,0 +1,182 @@
+{
+  "schema": "rsi-k1-k3-matched-comparison/v1",
+  "conditions_matched": true,
+  "comparison_scope": "one matched-setup descriptive pair; independent stochastic requests, no superiority or causal effect claim",
+  "profiles": [
+    {
+      "profile": "K1",
+      "enabled_slots": [
+        "P2_BUDGET"
+      ],
+      "parent_id": "2fdace91b3c7ba82fba14ff015affe9ab8d86944438e1aacc9c4a0b4070fc977",
+      "parent_worker_sha256": "dd8f71a5fbfcb68a1a75a7c7a3524a3d2224e4178d446d6561e49537c960dbde",
+      "fixture_freeze_hashes": {
+        "1": "49b9f3189d33d336e506b7291f606fbbb2e9fce2ac32a2019edb698b8cf179a8",
+        "2": "7b64b7498741ca530b384399db5192aea23da4989ac1a428358128ab02cf760e",
+        "3": "37571ec6d56c948ecdf73753bd601862d24086a4835ff65feee53c48e00c4364",
+        "4": "c52a4d2c55fac612a8bc3f6e618e4eebe27f02ecb429b79de4a9401fe6f3682f"
+      },
+      "public_semantics_sha256": "aecd60b891b768e3ef0b552db78b3d9b2479b85541413b50f182f740dcbe5a8a",
+      "models": {
+        "P1_DEDUP": "gpt-6-luna",
+        "P2_BUDGET": "gpt-6-luna",
+        "P3_ORDER": "gpt-6-luna",
+        "diagnose": "gpt-6-luna"
+      },
+      "actual_model_requests": 4,
+      "requests_by_role": {
+        "diagnose": 1,
+        "P2_BUDGET": 1,
+        "curator": 1,
+        "meta": 1
+      },
+      "estimated_usd_upper": "0.0013771",
+      "nonabstaining_proposals": 1,
+      "static_qualified_instances": 0,
+      "attempted_instances": [],
+      "paired_replay_cases": 0,
+      "candidate_outcomes": [
+        {
+          "slot": "P1_DEDUP",
+          "verdict": "INCONCLUSIVE",
+          "reasons": [
+            "SLOT_DISABLED"
+          ],
+          "delta_chars": null
+        },
+        {
+          "slot": "P2_BUDGET",
+          "verdict": "REJECTED",
+          "reasons": [
+            "STATIC_PATCH_NOT_UNIQUE"
+          ],
+          "delta_chars": null
+        },
+        {
+          "slot": "P3_ORDER",
+          "verdict": "INCONCLUSIVE",
+          "reasons": [
+            "SLOT_DISABLED"
+          ],
+          "delta_chars": null
+        }
+      ],
+      "advisory": {
+        "committed_entries": [],
+        "curator_status": "ABSTAIN",
+        "evaluation_modified": false,
+        "judgments_modified": false,
+        "meta_status": "OK",
+        "production_changed": false,
+        "role_failures": []
+      },
+      "verdict": "NO_ADOPTION",
+      "raw_round_sha256": "164ae6ce9cbc2c14dce9ac2024fea99c4ce2986d7e427af96a156d5a0414deba"
+    },
+    {
+      "profile": "K3",
+      "enabled_slots": [
+        "P1_DEDUP",
+        "P2_BUDGET",
+        "P3_ORDER"
+      ],
+      "parent_id": "2fdace91b3c7ba82fba14ff015affe9ab8d86944438e1aacc9c4a0b4070fc977",
+      "parent_worker_sha256": "dd8f71a5fbfcb68a1a75a7c7a3524a3d2224e4178d446d6561e49537c960dbde",
+      "fixture_freeze_hashes": {
+        "1": "49b9f3189d33d336e506b7291f606fbbb2e9fce2ac32a2019edb698b8cf179a8",
+        "2": "7b64b7498741ca530b384399db5192aea23da4989ac1a428358128ab02cf760e",
+        "3": "37571ec6d56c948ecdf73753bd601862d24086a4835ff65feee53c48e00c4364",
+        "4": "c52a4d2c55fac612a8bc3f6e618e4eebe27f02ecb429b79de4a9401fe6f3682f"
+      },
+      "public_semantics_sha256": "aecd60b891b768e3ef0b552db78b3d9b2479b85541413b50f182f740dcbe5a8a",
+      "models": {
+        "P1_DEDUP": "gpt-6-luna",
+        "P2_BUDGET": "gpt-6-luna",
+        "P3_ORDER": "gpt-6-luna",
+        "diagnose": "gpt-6-luna"
+      },
+      "actual_model_requests": 6,
+      "requests_by_role": {
+        "diagnose": 1,
+        "P2_BUDGET": 1,
+        "P3_ORDER": 1,
+        "P1_DEDUP": 1,
+        "curator": 1,
+        "meta": 1
+      },
+      "estimated_usd_upper": "0.00206205",
+      "nonabstaining_proposals": 2,
+      "static_qualified_instances": 2,
+      "attempted_instances": [
+        "P1_DEDUP",
+        "P2_BUDGET"
+      ],
+      "paired_replay_cases": 160,
+      "candidate_outcomes": [
+        {
+          "slot": "P3_ORDER",
+          "verdict": "INCONCLUSIVE",
+          "reasons": [
+            "ABSTAIN"
+          ],
+          "delta_chars": null
+        },
+        {
+          "slot": "P1_DEDUP",
+          "verdict": "REJECTED",
+          "reasons": [
+            "NO_GAIN"
+          ],
+          "delta_chars": 0
+        },
+        {
+          "slot": "P2_BUDGET",
+          "verdict": "REJECTED",
+          "reasons": [
+            "NO_GAIN"
+          ],
+          "delta_chars": 0
+        }
+      ],
+      "advisory": {
+        "committed_entries": [],
+        "curator_status": "ABSTAIN",
+        "evaluation_modified": false,
+        "judgments_modified": false,
+        "meta_status": "OK",
+        "production_changed": false,
+        "role_failures": []
+      },
+      "verdict": "NO_ADOPTION",
+      "raw_round_sha256": "70d466100cc48a78c379465e9d97c2afeae45d66ea2f85b421862f9f4a3ad9bb"
+    }
+  ],
+  "gain_candidates": 0,
+  "cost_per_gain_candidate": "UNAVAILABLE_ZERO_GAIN_CANDIDATES",
+  "completed_recovery": {
+    "both_rounds_recomputed": true,
+    "new_model_requests": 0,
+    "new_capsules": 0,
+    "archived_files_changed": false
+  },
+  "cumulative_budget": {
+    "attempts": 120,
+    "completed": 120,
+    "recorded_cost_nano_upper": 167283495,
+    "recorded_usd_upper": "0.167283495",
+    "limit_usd": "5",
+    "unknown_usage_requests": [
+      "round-fbf8b3ba59444533a4c5dd98f9f90c4c-diagnose-0"
+    ],
+    "pending_request_keys": [],
+    "unbounded_usage_requests": [],
+    "bounded_unknown_usage_costs_nano": {
+      "round-fbf8b3ba59444533a4c5dd98f9f90c4c-diagnose-0": 2560000
+    },
+    "total_cost_status": "BOUNDED_USAGE_ESTIMATE",
+    "reservation_usd": "0",
+    "count_limit": null,
+    "provider_invoiced_charge": "UNKNOWN",
+    "price_version": "official-model-pages-2026-11-15-standard-short-context"
+  }
+}

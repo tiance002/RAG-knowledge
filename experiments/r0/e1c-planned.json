@@ -1,0 +1,61 @@
+{
+  "experiment_id": "e1c-source-member-selection",
+  "status": "NOT_RUN",
+  "base_commit": "90d86ce87e8c76c8c45f5f296160ddf53de71d54",
+  "evaluator_version": "delivered-source-facts-v1",
+  "cases": {
+    "path": "LOCAL_APPROVED_INPUT_REQUIRED.json",
+    "sha256": null
+  },
+  "evaluation": {
+    "path": "LOCAL_FROZEN_RUBRIC_REQUIRED.json",
+    "sha256": null
+  },
+  "arms": {
+    "A": {
+      "candidate_id": "baseline-expanded",
+      "parent_id": null,
+      "change": "baseline",
+      "path": "all.json",
+      "sha256": "1b6a7f3472e1525a76f1733a6793c139e736c866a6dd1f3c1aa0f520c59174e4"
+    },
+    "B": {
+      "candidate_id": "e1c-candidate-to-freeze",
+      "parent_id": "baseline-expanded",
+      "change": "仅在上游排序与来源校验之后改变最终送入上下文的成员；保留独立种子及必要性未知的成员。",
+      "path": "FORMAL_CANDIDATE_CONFIG_REQUIRED.json",
+      "sha256": null
+    }
+  },
+  "fixed": {
+    "window_size": 1,
+    "max_parent_length": 4000,
+    "rewrite": false,
+    "rerank": false,
+    "router": "OFF",
+    "provider": "local_request_capture"
+  },
+  "budget": {
+    "max_questions": 20,
+    "external_calls": 0,
+    "attempts_per_arm": 1
+  },
+  "stop_conditions": [
+    "source outside scope",
+    "seed lost",
+    "necessary fact or structure lost",
+    "capture mismatch"
+  ],
+  "purpose": "后续 RSI 开始前，将获准输入、来源清单、评分口径和正式候选代码/配置冻结到一份新的 READY 清单；单独保留留出集。",
+  "metrics": [
+    "知识库/文件/成员来源一致",
+    "所有独立种子完整送达",
+    "同题字段、表头和单位同时送达",
+    "最后比较实际请求中上下文字符、UTF-8 字节；缺信息为 UNKNOWN"
+  ],
+  "regressions": [
+    "任何越界来源、缺失独立种子或已知必要事实，保存逐题反例，不晋级",
+    "配对身份不一致、参数变化、环境或来源未核验时不作为有效比较"
+  ],
+  "evaluation_scope": "开发集与独立留出分开报告；本轮不评正式质量、成本收益或晋级。"
+}

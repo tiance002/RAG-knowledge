@@ -74,13 +74,18 @@ async def chat_completions(
                 rerank_top_k=data.rerank_top_k,
                 context_window=data.context_window,
             ):
+                from app.services.metrics import sse_event
+                sse_event(event_type, event_data)
                 # 格式化 SSE 事件
                 yield f"event: {event_type}\n"
                 yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             # 发送错误事件
-            error_data = {"error": str(e)}
+            from app.services.llm import provider_error_payload
+            error_data = provider_error_payload(e, stage="sse")
+            from app.services.metrics import sse_event
+            sse_event("error", error_data)
             yield f"event: error\n"
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
 

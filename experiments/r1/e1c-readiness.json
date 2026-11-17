@@ -1,0 +1,271 @@
+{
+  "experiment_id": "r1-e1c-dev-readiness",
+  "status": "BLOCKED",
+  "execution_status": "NOT_RUN",
+  "evaluation_scope": "DEV_ONLY",
+  "holdout": "NOT_PREPARED",
+  "cases": {
+    "path": null,
+    "sha256": null
+  },
+  "evaluation": {
+    "path": null,
+    "sha256": null
+  },
+  "base_commit": "90d86ce87e8c76c8c45f5f296160ddf53de71d54",
+  "fixed": {
+    "window_size": 1,
+    "max_parent_length": 4000,
+    "rewrite": false,
+    "rerank": false,
+    "router": "OFF",
+    "provider": "local_request_capture"
+  },
+  "candidate": {
+    "candidate_id": "verified-exact-duplicate-v1",
+    "parent_id": "baseline-expanded",
+    "change": "Only omit a non-seed duplicate of the same located source text.",
+    "path": "../../experiments/r0/exact-duplicate.json",
+    "sha256": "a31652781d2f398a9bc62a392ed47ebdb1337736d9ef74b2b0239b2e125de493",
+    "raw_sha256": "92238ae804b6c5295133486f8d82c38163f4a864ed28c11ee7691f26c83a7cc0",
+    "worker_path": "scripts/rsi_delivery_worker.py",
+    "worker_raw_sha256": "a5f793b9f8f6ad7908c78580a670c0cc5c909898dc8e4c36d05fdbc2a330d3da"
+  },
+  "inputs": {
+    "snapshot": {
+      "path": "D:\\RAG knowledge\\var\\e20-20261030\\research-frozen-contexts.json",
+      "raw_sha256": "97bdbef167413476620e8124c7a8f94e91a7451f96d8d6c5c2ebcb59a58f4f3a"
+    },
+    "labels": {
+      "path": "D:\\RAG knowledge\\var\\e2-1\\member-quality-ledger.json",
+      "raw_sha256": "56760e0121ed8f70182e5aa86c11dd9949ef834096b82731f559a794fc007650"
+    },
+    "source_audit": {
+      "path": "D:\\RAG knowledge\\var\\e2-1\\source-tokenizer-audit-ecs.json",
+      "raw_sha256": "c295d698452baf87b76aca0801599f5a5f7b37c26616524e29b8ecc70e656668"
+    },
+    "source_audit_implementation": {
+      "path": "D:\\RAG knowledge\\var\\e2-1\\source-tokenizer-audit-ecs.py",
+      "raw_sha256": "72b9a8393c56bd2c4c3d944358fce956e9c5e7f3bea1deb283e17605a0beed8a"
+    },
+    "label_manifest": {
+      "path": "D:\\RAG knowledge\\var\\e2-1\\stage1-manifest.json",
+      "raw_sha256": "4e4826e4f0b8a3608a1258d3cfe0469f673cbe0e88cb946e150d0c25ad2ad4ec"
+    }
+  },
+  "questions": [
+    {
+      "qid": "office50:001",
+      "candidate_seeds": 20,
+      "member_occurrences": 50,
+      "unique_members": 43,
+      "files_needing_independent_ownership": 8,
+      "verified_ownership_files": 0,
+      "identity_source_hash_aligned": 50,
+      "indexed_location_aligned": 50,
+      "historical_gold_location_crosschecked_occurrences": 1,
+      "historical_gold_location_crosschecked_unique": 1,
+      "location_status": {
+        "UNKNOWN": 47,
+        "GOLD_LOCATION_VERIFIED": 1,
+        "PARTIAL": 2
+      },
+      "label_status": {
+        "AI_PROPOSED": 50
+      },
+      "structure_necessity": {
+        "UNKNOWN": 49,
+        "AI_PROPOSED_NECESSARY_WITHIN_DIRECT_MEMBER": 1
+      },
+      "status": "BLOCKED"
+    },
+    {
+      "qid": "office50:008",
+      "candidate_seeds": 20,
+      "member_occurrences": 53,
+      "unique_members": 40,
+      "files_needing_independent_ownership": 7,
+      "verified_ownership_files": 0,
+      "identity_source_hash_aligned": 53,
+      "indexed_location_aligned": 53,
+      "historical_gold_location_crosschecked_occurrences": 1,
+      "historical_gold_location_crosschecked_unique": 1,
+      "location_status": {
+        "UNKNOWN": 52,
+        "GOLD_LOCATION_VERIFIED": 1
+      },
+      "label_status": {
+        "AI_PROPOSED": 53
+      },
+      "structure_necessity": {
+        "UNKNOWN": 52,
+        "AI_PROPOSED_NECESSARY_WITHIN_DIRECT_MEMBER": 1
+      },
+      "status": "BLOCKED"
+    },
+    {
+      "qid": "office50:010",
+      "candidate_seeds": 20,
+      "member_occurrences": 54,
+      "unique_members": 41,
+      "files_needing_independent_ownership": 7,
+      "verified_ownership_files": 0,
+      "identity_source_hash_aligned": 54,
+      "indexed_location_aligned": 54,
+      "historical_gold_location_crosschecked_occurrences": 1,
+      "historical_gold_location_crosschecked_unique": 1,
+      "location_status": {
+        "UNKNOWN": 53,
+        "GOLD_LOCATION_VERIFIED": 1
+      },
+      "label_status": {
+        "AI_PROPOSED": 54
+      },
+      "structure_necessity": {
+        "UNKNOWN": 53,
+        "AI_PROPOSED_NECESSARY_WITHIN_DIRECT_MEMBER": 1
+      },
+      "status": "BLOCKED"
+    },
+    {
+      "qid": "office50:014",
+      "candidate_seeds": 20,
+      "member_occurrences": 54,
+      "unique_members": 41,
+      "files_needing_independent_ownership": 7,
+      "verified_ownership_files": 0,
+      "identity_source_hash_aligned": 54,
+      "indexed_location_aligned": 54,
+      "historical_gold_location_crosschecked_occurrences": 1,
+      "historical_gold_location_crosschecked_unique": 1,
+      "location_status": {
+        "UNKNOWN": 53,
+        "GOLD_LOCATION_VERIFIED": 1
+      },
+      "label_status": {
+        "AI_PROPOSED": 54
+      },
+      "structure_necessity": {
+        "UNKNOWN": 53,
+        "AI_PROPOSED_NECESSARY_WITHIN_DIRECT_MEMBER": 1
+      },
+      "status": "BLOCKED"
+    },
+    {
+      "qid": "office50:020",
+      "candidate_seeds": 20,
+      "member_occurrences": 53,
+      "unique_members": 40,
+      "files_needing_independent_ownership": 7,
+      "verified_ownership_files": 0,
+      "identity_source_hash_aligned": 53,
+      "indexed_location_aligned": 53,
+      "historical_gold_location_crosschecked_occurrences": 1,
+      "historical_gold_location_crosschecked_unique": 1,
+      "location_status": {
+        "UNKNOWN": 52,
+        "GOLD_LOCATION_VERIFIED": 1
+      },
+      "label_status": {
+        "AI_PROPOSED": 53
+      },
+      "structure_necessity": {
+        "UNKNOWN": 52,
+        "AI_PROPOSED_NECESSARY_WITHIN_DIRECT_MEMBER": 1
+      },
+      "status": "BLOCKED"
+    },
+    {
+      "qid": "office50:031",
+      "candidate_seeds": 7,
+      "member_occurrences": 17,
+      "unique_members": 16,
+      "files_needing_independent_ownership": 2,
+      "verified_ownership_files": 0,
+      "identity_source_hash_aligned": 17,
+      "indexed_location_aligned": 17,
+      "historical_gold_location_crosschecked_occurrences": 2,
+      "historical_gold_location_crosschecked_unique": 1,
+      "location_status": {
+        "PARTIAL": 15,
+        "GOLD_LOCATION_VERIFIED": 2
+      },
+      "label_status": {
+        "AI_PROPOSED": 17
+      },
+      "structure_necessity": {
+        "UNKNOWN": 15,
+        "AI_PROPOSED_NECESSARY_WITHIN_DIRECT_MEMBER": 2
+      },
+      "status": "BLOCKED"
+    }
+  ],
+  "summary": {
+    "questions": 6,
+    "candidate_seeds": 107,
+    "snapshot_chunks": 72,
+    "snapshot_files": 10,
+    "member_occurrences": 281,
+    "independent_ownership_files": 0,
+    "json_files_scanned": 231,
+    "explicit_mapping_candidates": 148,
+    "derived_retrieval_citations": 148,
+    "independent_mapping_candidates": 0,
+    "sql_databases_checked": 55,
+    "sql_with_file_documents": 0,
+    "archives_checked": 71,
+    "archive_sql_members": 0,
+    "scan_errors": 0
+  },
+  "candidate_applicability": {
+    "selection": "exact_duplicate",
+    "new_policy": false,
+    "required_metadata": "PDF filename; page>0; four-number bbox; nonempty parent_id and heading_text; exact file/KB/content/locator match; never remove independent seed",
+    "historical_formats": {
+      ".xlsx": 3,
+      ".docx": 7
+    },
+    "non_null_parent_id": 0,
+    "nonempty_heading_text": 0,
+    "snapshot_source_locator_fields": 0,
+    "eligible_members": 0,
+    "conclusion": "历史 DOCX/XLSX 不满足现有 PDF 去重门槛；仅有跨 ID 同文不构成可删证明。"
+  },
+  "blockers": [
+    {
+      "id": "OWNERSHIP",
+      "missing": "10 个文件均缺少独立、与历史版本绑定的 file→KB 归属记录；检索 citation 的 kb_id 不可补作 FileDocument。",
+      "remedy": "提供已获准的历史隔离 SQL 只读快照或独立文件/KB 导出，记录 DB/导出哈希、file ID、KB ID、文件名、来源文件哈希，并核对 72 个成员内容及索引位置。"
+    },
+    {
+      "id": "EVALUATION",
+      "missing": "281 次成员标注均为 AI_PROPOSED；结构必要性和多数实际位置仍未知，尚无独立冻结评分文件。",
+      "remedy": "逐题审核必要事实、字段/表头/单位及其真实文档位置；以 source hash+locator+exact content hash 对齐后单独冻结 evaluator，保留 UNKNOWN。"
+    },
+    {
+      "id": "APPLICABILITY",
+      "missing": "当前 B 只支持具备严格定位证据的 PDF；72 个历史 Office chunk 无 parent_id/heading_text/source_locator。",
+      "remedy": "保持现有候选身份可做无删减控制；若需 Office 选择规则，另开候选版本并独立评审，不能在本次就绪整理中静默改变 B。"
+    },
+    {
+      "id": "HOLDOUT",
+      "missing": "六题均已开发使用；独立留出集尚未准备。",
+      "remedy": "另选未用于设计/调参的授权数据，开发集和留出集分别报告；当前最多只能 READY_DEV_ONLY。"
+    }
+  ],
+  "additional_review": [],
+  "boundary": {
+    "historical_replays": 0,
+    "external_model_calls": 0,
+    "ecs_access": 0,
+    "production_access": 0,
+    "copies_of_corpus_or_index": 0
+  },
+  "private_evidence": "D:\\RAG-R0\\var\\r1\\e1c-readiness-r2\\alignment-and-inventory.json",
+  "original_plan": {
+    "path": "experiments/r0/e1c-planned.json",
+    "raw_sha256": "61925bf86f231a04c3d96801204425a8eab17c8ee58376085d3559e8739ae819",
+    "status": "NOT_RUN"
+  },
+  "note": "此文件为就绪审计结果，非可执行 READY 清单；未执行历史题回放、质量/收益或晋级判定。"
+}

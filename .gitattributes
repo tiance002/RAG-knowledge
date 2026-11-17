@@ -1,0 +1,8 @@
+# These artifacts are byte-frozen by RSI; preserve their recorded line endings.
+scripts/rsi_candidates.py -text
+scripts/run_rsi_offline.py -text
+scripts/rsi_feedback.py -text
+scripts/rsi_delivery_worker.py -text
+scripts/replay_source_preparation.py -text
+scripts/rsi_fixed_history_worker_v1.py -text
+scripts/rsi_decision.py -text

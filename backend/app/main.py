@@ -13,6 +13,7 @@ import os
 from app.core.config import get_settings, ensure_directories
 from app.core.database import init_db
 from app.api import api_router
+from app.services.metrics import HTTPMetricsMiddleware, render_metrics, enabled as metrics_enabled
 
 settings = get_settings()
 
@@ -33,6 +34,8 @@ async def lifespan(app: FastAPI):
 
     yield
     # 关闭时执行
+    from app.services.observability import flush_observations
+    flush_observations()
     print("应用关闭")
 
 
@@ -43,6 +46,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Pure ASGI metrics middleware observes the final body send (including streaming responses).
+app.add_middleware(HTTPMetricsMiddleware)
 
 # CORS 配置
 app.add_middleware(
@@ -100,6 +106,19 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def health_check():
     """健康检查接口"""
     return {"status": "ok"}
+
+
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics():
+    """Prometheus scrape endpoint; unavailable when the optional extra is absent."""
+    from fastapi.responses import Response
+    if not metrics_enabled():
+        return Response("Prometheus metrics are disabled\n", status_code=404, media_type="text/plain")
+    rendered = render_metrics()
+    if rendered is None:
+        return Response("prometheus_client is unavailable\n", status_code=503, media_type="text/plain")
+    body, content_type = rendered
+    return Response(body, media_type=content_type)
 
 
 # 根路径

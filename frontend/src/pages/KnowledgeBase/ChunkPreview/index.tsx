@@ -42,6 +42,7 @@ const ChunkPreview: React.FC = () => {
   const location = useLocation();
   const { models, setModels } = useAppStore();
   const previewState = location.state as { previewChunks?: ChunkInfo[], parseConfig?: any } | undefined;
+  const requestedChunkId = new URLSearchParams(location.search).get('chunk');
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -78,7 +79,17 @@ const ChunkPreview: React.FC = () => {
         } else {
             // 正常模式或通过 ID 进入的预览模式：加载后端数据
             const chunksRes = await getFileChunks(fileId);
-            setChunks(Array.isArray(chunksRes.data) ? chunksRes.data : []);
+            const loadedChunks: ChunkInfo[] = Array.isArray(chunksRes.data) ? chunksRes.data : [];
+            setChunks(loadedChunks);
+            if (requestedChunkId) {
+                const match = loadedChunks.find(chunk => chunk.id === requestedChunkId);
+                if (match) {
+                    setSelectedChunk(match);
+                    setDetailModalVisible(true);
+                } else {
+                    message.warning('未找到引用的切块，文件内容可能已经变化。');
+                }
+            }
         }
         
         // 设置配置
@@ -93,7 +104,7 @@ const ChunkPreview: React.FC = () => {
       }
     };
     loadData();
-  }, [fileId, kbId, navigate, previewState]);
+  }, [fileId, kbId, navigate, previewState, requestedChunkId]);
 
   // 处理内容编辑
   const handleContentChange = (chunkId: string, content: string) => {
@@ -106,7 +117,11 @@ const ChunkPreview: React.FC = () => {
   // 确认入库 / 提交解析
   const handleConfirm = async () => {
     if (!fileId) return;
-    
+    if (!isPreviewMode && Object.keys(editingChunks).length > 0) {
+      message.warning('请先保存所有修改');
+      return;
+    }
+
     // 如果是预览模式，提交当前 Chunks 入库
     if (isPreviewMode) {
          try {
@@ -119,7 +134,8 @@ const ChunkPreview: React.FC = () => {
               }
               
               return {
-                  content: c.content,
+                  id: c.id,
+                  content: editingChunks[c.id] ?? c.content,
                   page_number: c.pageNumber,
                   image_path: imagePath,
                   content_type: c.contentType,
@@ -138,12 +154,6 @@ const ChunkPreview: React.FC = () => {
     }
 
     // 正常模式
-    // 检查是否有未保存的编辑
-    if (Object.keys(editingChunks).length > 0) {
-      message.warning('请先保存所有修改');
-      return;
-    }
-
     try {
         // 正常模式：触发向量化（如果需要）
         await vectorizeFile(fileId);
@@ -213,7 +223,8 @@ const ChunkPreview: React.FC = () => {
           message.success({ content: '解析完成', key: 'reparsing' });
           setReconfigVisible(false);
       } catch (error) {
-          message.error({ content: '解析失败', key: 'reparsing' });
+          const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+          message.error({ content: typeof detail === 'string' ? detail : '解析失败', key: 'reparsing' });
       } finally {
           setReparsing(false);
       }
@@ -412,7 +423,9 @@ const ChunkPreview: React.FC = () => {
     const isEditing = !isReadOnly && (selectedChunk.id in editingChunks);
     
     // 获取显示内容 (去重叠)
-    const displayContent = getDisplayContent(selectedChunk, chunks.indexOf(selectedChunk));
+    const displayContent = selectedChunk.id === requestedChunkId
+      ? selectedChunk.content
+      : getDisplayContent(selectedChunk, chunks.indexOf(selectedChunk));
     
     // 如果已经在 editingChunks 中，说明用户修改过，直接展示修改后的内容
     // 如果不在，展示 displayContent

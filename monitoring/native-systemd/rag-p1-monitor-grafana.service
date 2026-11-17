@@ -1,0 +1,14 @@
+[Unit]
+Description=Isolated P1 Grafana
+After=network.target
+[Service]
+Type=simple
+WorkingDirectory=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/root/usr/share/grafana
+ExecStart=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/root/usr/share/grafana/bin/grafana-server --homepath=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/root/usr/share/grafana --config=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/config/grafana.ini
+Restart=on-failure
+RestartSec=5
+CPUQuota=35%
+MemoryMax=384M
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+{
+  "old": "    return selected",
+  "new": "    return selected[:]"
+}

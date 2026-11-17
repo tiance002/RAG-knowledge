@@ -7,7 +7,6 @@ import type {
   RewriteRequest,
   RewriteResponse,
   ChatRequest,
-  SSEEventType,
   AgentThoughtData,
   RagResultData,
   AnswerChunkData,
@@ -29,121 +28,92 @@ export interface SSEEventHandlers {
   onError?: (error: Error) => void;
 }
 
-/** 创建 SSE 对话连接 */
+type StreamFailure = 'FAILED' | 'TRUNCATED' | 'UNKNOWN' | 'INTERRUPTED' | 'CANCELLED';
+
+export class ChatStreamError extends Error {
+  constructor(public readonly status: StreamFailure, message: string) {
+    super(message);
+  }
+}
+
+/** Each server response has exactly one terminal outcome, including unexpected EOF. */
 export const createChatStream = (
-  data: ChatRequest,
-  handlers: SSEEventHandlers
+  data: ChatRequest, handlers: SSEEventHandlers
 ): { abort: () => void } => {
   const controller = new AbortController();
+  const started = performance.now();
+  const requestId = globalThis.crypto?.randomUUID?.() ?? `chat-${Date.now()}-${++requestSequence}`;
+  let terminal = false;
+  const finish = (event: 'error' | 'done', status: string) => {
+    terminal = true;
+    console.debug('chat.stream', {requestId, event, status, elapsedMs: Math.round(performance.now() - started)});
+  };
+  const fail = (error: ChatStreamError) => {
+    if (terminal) return;
+    finish('error', error.status);
+    handlers.onError?.(error);
+  };
 
-  console.log('Chat Request Payload:', JSON.stringify(data, null, 2));
-
-  fetch('/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(data),
-    signal: controller.signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        console.error('Fetch failed:', response.status, response.statusText, errorText);
-        throw new Error(`HTTP error! status: ${response.status} ${response.statusText} - ${errorText.slice(0, 100)}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let currentEventType: SSEEventType | null = null;
-      let isDone = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        console.log('Received Chunk:', chunk); // Debug logging
-        buffer += chunk;
-        
+  async function receive() {
+    const response = await fetch('/api/v1/chat/completions', {
+      method: 'POST', headers: {'Content-Type': 'application/json', 'X-Request-ID': requestId},
+      body: JSON.stringify(data), signal: controller.signal,
+    });
+    if (!response.ok) throw new ChatStreamError('FAILED', `请求失败（HTTP ${response.status}）`);
+    const reader = response.body?.getReader();
+    if (!reader) throw new ChatStreamError('INTERRUPTED', '响应没有可读取的数据流。');
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventType = '';
+    try {
+      while (!terminal) {
+        const {done, value} = await reader.read();
+        if (done) throw new ChatStreamError('INTERRUPTED', '连接中断，未收到服务端结束状态。');
+        buffer += decoder.decode(value, {stream: true});
         const lines = buffer.split('\n');
-        // 保留最后一个可能不完整的行在 buffer 中
         buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue; // Skip empty lines
-
-          if (trimmedLine.startsWith('event:')) {
-            currentEventType = trimmedLine.slice(6).trim() as SSEEventType;
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (line.startsWith('event:')) {
+            eventType = line.slice(6).trim();
             continue;
           }
-
-          if (trimmedLine.startsWith('data:')) {
-            const dataStr = trimmedLine.slice(5).trim();
-            if (!dataStr) continue;
-
-            try {
-              const eventData = JSON.parse(dataStr);
-              console.log('Parsed Event:', currentEventType, eventData); // Debug logging
-
-              // 尝试推断事件类型 (如果没有显式 eventType)
-              let inferredType = currentEventType;
-              if (!inferredType) {
-                  if ('step' in eventData) inferredType = 'agent_thought';
-                  else if ('citations' in eventData) inferredType = 'rag_result';
-                  else if ('content' in eventData) inferredType = 'answer_chunk';
-                  else if ('usage' in eventData) inferredType = 'done';
-                  else if ('error' in eventData) inferredType = 'error';
-              }
-
-              // 处理事件
-              if (inferredType === 'agent_thought' || inferredType === 'thought') {
-                handlers.onAgentThought?.(eventData as AgentThoughtData);
-              } else if (inferredType === 'rag_result' || inferredType === 'rag') {
-                handlers.onRagResult?.(eventData as RagResultData);
-              } else if (inferredType === 'answer_chunk' || inferredType === 'answer') {
-                handlers.onAnswerChunk?.(eventData as AnswerChunkData);
-              } else if (inferredType === 'done') {
-                handlers.onDone?.(eventData as DoneData);
-                isDone = true;
-              } else if (inferredType === 'error') {
-                 // 主动抛出业务错误
-                 throw new Error(eventData.error || eventData.message || 'Unknown error');
-              }
-              
-              // 重置 eventType
-              currentEventType = null; 
-            } catch (e: any) {
-              console.error('Failed to parse SSE data:', e, 'Raw:', dataStr);
-              // 如果是业务错误，传递给 onError
-              if (currentEventType === 'error' || (e.message && e.message !== 'Unexpected end of JSON input')) {
-                  handlers.onError?.(e);
-                  // 不要 return，继续处理后续行
-              }
-            }
+          if (!line.startsWith('data:')) continue;
+          const payload = JSON.parse(line.slice(5));
+          if (!payload || typeof payload !== 'object') throw new Error('invalid event');
+          const type = eventType || ('error' in payload ? 'error' : 'step' in payload ? 'agent_thought' :
+            'citations' in payload ? 'rag_result' : 'content' in payload ? 'answer_chunk' : 'usage' in payload ? 'done' : '');
+          eventType = '';
+          if (type === 'error' || type === 'done') {
+            const state = payload.status ?? payload.generation_status;
+            if (state === 'TRUNCATED') throw new ChatStreamError('TRUNCATED', '模型输出达到上限，回答未完成。');
+            if (state === 'UNKNOWN') throw new ChatStreamError('UNKNOWN', '请求结果未知。');
+            if (state === 'CANCELLED') throw new ChatStreamError('CANCELLED', '请求已取消。');
+            if (type === 'error' || state === 'FAILED') throw new ChatStreamError('FAILED', payload.error || '请求失败。');
+            finish('done', 'COMPLETED');
+            handlers.onDone?.(payload);
+            return;
           }
-          // 忽略不以 event: 或 data: 开头的行（可能是注释或 keep-alive）
+          if (type === 'agent_thought' || type === 'thought') handlers.onAgentThought?.(payload);
+          if (type === 'rag_result' || type === 'rag') handlers.onRagResult?.(payload);
+          if (type === 'answer_chunk' || type === 'answer') handlers.onAnswerChunk?.(payload);
         }
       }
-      
-      // 如果流结束但没有收到 done 事件，手动触发 done
-      if (!isDone) {
-        handlers.onDone?.({} as DoneData);
-      }
-    })
-    .catch((error) => {
-      if (error.name !== 'AbortError') {
-        handlers.onError?.(error);
-      }
-    });
+    } finally {
+      void reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+  }
 
+  void receive().catch(error => fail(error instanceof ChatStreamError ? error :
+    new ChatStreamError('INTERRUPTED', '响应读取中断，未确认完成。')));
   return {
-    abort: () => controller.abort(),
+    abort: () => {
+      if (terminal) return;
+      controller.abort();
+      fail(new ChatStreamError('CANCELLED', '请求已取消。'));
+    },
   };
 };
+
+let requestSequence = 0;

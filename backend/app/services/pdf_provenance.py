@@ -17,8 +17,8 @@ def chunk_key(content, page_number, content_type):
     return digest_bytes(json.dumps([content, page_number, content_type], ensure_ascii=False).encode())
 
 
-def write_manifest(root, source_sha256, pages, chunks):
-    payload = {"schema": "pdf-parse-v1", "source_sha256": source_sha256,
+def write_manifest(root, source_sha256, pages, chunks, *, schema="pdf-parse-v1"):
+    payload = {"schema": schema, "source_sha256": source_sha256,
                "pages": pages, "chunks": [
                    {"key": chunk_key(c.content, c.page_number, c.content_type),
                     "metadata": c.metadata or {}} for c in chunks]}
@@ -64,7 +64,7 @@ def source_metadata(path, content, page_number, content_type, *, root=None):
     from app.core.config import get_settings
     root = root or get_settings().PDF_AUDIT_DIR
     source = Path(path)
-    if source.suffix.lower() != '.pdf' or not source.is_file():
+    if source.suffix.lower() not in {'.pdf', '.xlsx', '.csv'} or not source.is_file():
         return {}
     stat = source.stat()
     sha = _source_hash(str(source.resolve()), stat.st_size, stat.st_mtime_ns)
@@ -84,7 +84,10 @@ def source_metadata(path, content, page_number, content_type, *, root=None):
         locator = metadata.get('source_locator')
         if locator and locator not in locators:
             locators.append(locator)
-    return {"source_sha256": sha, "source_locators": locators}
+    result = {"source_sha256": sha, "source_locators": locators}
+    if source.suffix.lower() in {'.xlsx', '.csv'} and len(locators) == 1:
+        result.update(locators[0])
+    return result
 
 
 def index_provenance(path, chunk):

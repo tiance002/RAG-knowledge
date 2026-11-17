@@ -1,0 +1,49 @@
+{
+  "experiment_id": "r0-public-smoke-1",
+  "status": "READY",
+  "base_commit": "90d86ce87e8c76c8c45f5f296160ddf53de71d54",
+  "evaluator_version": "delivered-source-facts-v1",
+  "cases": {
+    "path": "cases.json",
+    "sha256": "905a11866a52e804d1ee83f095ef4ccf0ec28c0474d9b5c087da57949d18cd12"
+  },
+  "evaluation": {
+    "path": "expected.json",
+    "sha256": "b0a8f1d595ab4cf522c9b7d83ddcd1867747cbe1ce227d9ad9a7fc4fd3598a26"
+  },
+  "arms": {
+    "A": {
+      "candidate_id": "baseline-expanded",
+      "parent_id": null,
+      "change": "baseline",
+      "path": "all.json",
+      "sha256": "1b6a7f3472e1525a76f1733a6793c139e736c866a6dd1f3c1aa0f520c59174e4"
+    },
+    "B": {
+      "candidate_id": "verified-exact-duplicate-v1",
+      "parent_id": "baseline-expanded",
+      "change": "Only omit a non-seed duplicate of the same located source text.",
+      "path": "exact-duplicate.json",
+      "sha256": "a31652781d2f398a9bc62a392ed47ebdb1337736d9ef74b2b0239b2e125de493"
+    }
+  },
+  "fixed": {
+    "window_size": 1,
+    "max_parent_length": 4000,
+    "rewrite": false,
+    "rerank": false,
+    "router": "OFF",
+    "provider": "local_request_capture"
+  },
+  "budget": {
+    "max_questions": 3,
+    "external_calls": 0,
+    "attempts_per_arm": 1
+  },
+  "stop_conditions": [
+    "source outside scope",
+    "seed lost",
+    "necessary fact or structure lost",
+    "capture mismatch"
+  ]
+}

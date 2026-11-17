@@ -401,7 +401,7 @@ const Chat: React.FC = () => {
               });
           }
         },
-        onDone: () => {
+        onDone: (data) => {
           if (animationFrameId) {
              cancelAnimationFrame(animationFrameId);
              animationFrameId = 0;
@@ -417,7 +417,8 @@ const Chat: React.FC = () => {
              setter(prev => prev.map(msg => msg.id === assistantMessage.id ? { 
                  ...msg, 
                  content: accumulatedContent,
-                 isStreaming: false 
+                 validationStatus: data.validation_status,
+                 isStreaming: false
              } : msg));
 
              // 清理生成状态
@@ -437,12 +438,12 @@ const Chat: React.FC = () => {
              cancelAnimationFrame(animationFrameId);
              animationFrameId = 0;
           }
-          console.error('Chat Error:', error);
+
           
           const setter = capturedChatMode === 'normal' ? setNormalMessages : setAgentMessages;
           setter(prev => prev.map(msg => msg.id === assistantMessage.id ? { 
              ...msg, 
-             content: `发生错误，请重试: ${error.message || '未知错误'}`,
+             content: accumulatedContent,
              error: error.message,
              isStreaming: false 
           } : msg));
@@ -575,13 +576,16 @@ const Chat: React.FC = () => {
                         color="blue" 
                         style={{ cursor: citation.fileId ? 'pointer' : 'default' }}
                         onClick={() => {
-                            if (citation.fileId && citation.kb_id) {
-                                // 新窗口打开或者跳转
-                                // navigate(`/kb/${citation.kb_id}/preview/${citation.fileId}`);
-                                window.open(`/kb/${citation.kb_id}/preview/${citation.fileId}`, '_blank');
-                            } else if (citation.fileId && currentConfig.kbIds.length === 1) {
-                                // 如果 citation 没有 kb_id 但当前只选了一个知识库，尝试使用当前知识库
-                                window.open(`/kb/${currentConfig.kbIds[0]}/preview/${citation.fileId}`, '_blank');
+                            if (citation.source_type === 'source_native_table_expansion') {
+                                if (citation.sourceUrl?.startsWith('/api/v1/files/')) {
+                                    window.open(citation.sourceUrl, '_blank', 'noopener,noreferrer');
+                                }
+                                return;
+                            }
+                            const kbId = citation.kb_id || (currentConfig.kbIds.length === 1 ? currentConfig.kbIds[0] : undefined);
+                            if (citation.fileId && kbId) {
+                                const query = citation.chunk_id ? `?chunk=${encodeURIComponent(citation.chunk_id)}` : '';
+                                window.open(`/kb/${encodeURIComponent(kbId)}/preview/${encodeURIComponent(citation.fileId)}${query}`, '_blank');
                             }
                         }}
                       >
@@ -589,8 +593,10 @@ const Chat: React.FC = () => {
                       </Tag>
                   </Tooltip>
                   <Tag>{citation.location || '未知位置'}</Tag>
-                  <Tag color="green">相似度: {citation.score.toFixed(3)}</Tag>
-                  {citation.rerank_score !== undefined && citation.rerank_score !== null && (
+                  {citation.source_type === 'source_native_table_expansion'
+                    ? <Tag color="purple">原文件补证</Tag>
+                    : <Tag color="green">相似度: {citation.score.toFixed(3)}</Tag>}
+                  {citation.source_type !== 'source_native_table_expansion' && citation.rerank_score !== undefined && citation.rerank_score !== null && (
                       <Tag color="purple">Rerank: {citation.rerank_score.toFixed(3)}</Tag>
                   )}
                 </div>
@@ -656,7 +662,8 @@ const Chat: React.FC = () => {
               </div>
             ) : msg.error ? (
               <div className={styles.error}>
-                <span>{msg.content}</span>
+                {msg.content && <MarkdownRenderer content={msg.content} />}
+                <span>{msg.error}</span>
                 <Button
                   type="link"
                   size="small"
@@ -673,6 +680,7 @@ const Chat: React.FC = () => {
 
           {!isUser && (
               <>
+                  {msg.validationStatus === 'NOT_RUN' && <span>回答及引用未经逐项核验</span>}
                   {msg.citations && renderCitations(msg.citations, msg.original_citations?.length ? "参考来源 (Rerank)" : "参考来源")}
                   {msg.original_citations && msg.original_citations.length > 0 && renderCitations(msg.original_citations, "初排结果 (Embedding)")}
               </>

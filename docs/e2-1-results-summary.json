@@ -1,0 +1,217 @@
+{
+  "schema_version": "e21-public-summary-v1",
+  "date": "2026-10-30",
+  "stage": "E2.1.1 + E2.1.2 B/C",
+  "baseline_commit": "47433afec1aa2f4d835a8817ca9c61487afdc99c",
+  "status": "PASS_WITH_SCOPED_STRUCTURE_COVERAGE",
+  "scope": "Frozen context construction and equivalent provider-message preparation; no answer generation",
+  "sample_counts": {
+    "questions": 6,
+    "Word_table_field_questions": 5,
+    "Excel_cell_questions": 1,
+    "arms": 2,
+    "rows": 12
+  },
+  "first_stage": {
+    "group_member_occurrences": 281,
+    "question_member_pairs": 221,
+    "physical_chunks": 72,
+    "duplicate_id_group_occurrences": 60,
+    "human_member_labels": 0,
+    "label_status": "AI_PROPOSED"
+  },
+  "pairs": [
+    {
+      "gold_status": "B_AND_C_PRESERVED",
+      "all_target_text_preserved": true,
+      "observed_structure_features": 3,
+      "initial_candidates_preserved": 20,
+      "unknown_proposal_members_preserved": 1,
+      "removed": 20,
+      "chars_saved": 11345,
+      "complete_human_necessary_structure_gold": "UNKNOWN",
+      "case_alias": "W1",
+      "members_B": 43,
+      "members_C": 23
+    },
+    {
+      "gold_status": "B_AND_C_PRESERVED",
+      "all_target_text_preserved": true,
+      "observed_structure_features": 5,
+      "initial_candidates_preserved": 20,
+      "unknown_proposal_members_preserved": 1,
+      "removed": 17,
+      "chars_saved": 1594,
+      "complete_human_necessary_structure_gold": "UNKNOWN",
+      "case_alias": "W2",
+      "members_B": 40,
+      "members_C": 23
+    },
+    {
+      "gold_status": "B_AND_C_PRESERVED",
+      "all_target_text_preserved": true,
+      "observed_structure_features": 5,
+      "initial_candidates_preserved": 20,
+      "unknown_proposal_members_preserved": 1,
+      "removed": 18,
+      "chars_saved": 1625,
+      "complete_human_necessary_structure_gold": "UNKNOWN",
+      "case_alias": "W3",
+      "members_B": 41,
+      "members_C": 23
+    },
+    {
+      "gold_status": "B_AND_C_PRESERVED",
+      "all_target_text_preserved": true,
+      "observed_structure_features": 5,
+      "initial_candidates_preserved": 20,
+      "unknown_proposal_members_preserved": 1,
+      "removed": 18,
+      "chars_saved": 1626,
+      "complete_human_necessary_structure_gold": "UNKNOWN",
+      "case_alias": "W4",
+      "members_B": 41,
+      "members_C": 23
+    },
+    {
+      "gold_status": "B_AND_C_PRESERVED",
+      "all_target_text_preserved": true,
+      "observed_structure_features": 5,
+      "initial_candidates_preserved": 20,
+      "unknown_proposal_members_preserved": 1,
+      "removed": 17,
+      "chars_saved": 1596,
+      "complete_human_necessary_structure_gold": "UNKNOWN",
+      "case_alias": "W5",
+      "members_B": 40,
+      "members_C": 23
+    },
+    {
+      "gold_status": "B_AND_C_PRESERVED",
+      "all_target_text_preserved": true,
+      "observed_structure_features": 34,
+      "initial_candidates_preserved": 7,
+      "unknown_proposal_members_preserved": 0,
+      "removed": 0,
+      "chars_saved": 0,
+      "complete_human_necessary_structure_gold": "UNKNOWN",
+      "case_alias": "X1",
+      "members_B": 16,
+      "members_C": 16
+    }
+  ],
+  "member_totals": {
+    "B": 221,
+    "C": 131
+  },
+  "totals": {
+    "B": {
+      "context_char_count": 337911,
+      "context_bytes": 339247,
+      "provider_message_char_count": 356426,
+      "provider_message_bytes": 361276
+    },
+    "C": {
+      "context_char_count": 320125,
+      "context_bytes": 321295,
+      "provider_message_char_count": 330990,
+      "provider_message_bytes": 334414
+    }
+  },
+  "labels_nonexclusive_AI_PROPOSED": {
+    "B": {
+      "IRRELEVANT": 184,
+      "UNKNOWN": 5,
+      "GOLD_DIRECT": 6,
+      "STRUCTURAL_CONTEXT": 24,
+      "RELATED": 26
+    },
+    "C": {
+      "IRRELEVANT": 94,
+      "UNKNOWN": 5,
+      "GOLD_DIRECT": 6,
+      "STRUCTURAL_CONTEXT": 24,
+      "RELATED": 26
+    }
+  },
+  "coverage": {
+    "Word_gold_fields": {
+      "B": {
+        "numerator": 5,
+        "denominator": 5
+      },
+      "C": {
+        "numerator": 5,
+        "denominator": 5
+      }
+    },
+    "Excel_gold_cells": {
+      "B": {
+        "numerator": 1,
+        "denominator": 1
+      },
+      "C": {
+        "numerator": 1,
+        "denominator": 1
+      }
+    },
+    "initial_candidates_preserved": {
+      "numerator": 107,
+      "denominator": 107
+    },
+    "target_source_entire_members_preserved": {
+      "numerator": 37,
+      "denominator": 37
+    },
+    "observed_target_structure_features_preserved": {
+      "numerator": 57,
+      "denominator": 57
+    },
+    "UNKNOWN_proposal_members_preserved": {
+      "numerator": 5,
+      "denominator": 5
+    },
+    "complete_human_necessary_structure_gold": "UNKNOWN",
+    "retrieval_expansion_recovery": "NOT_APPLICABLE_DENOMINATOR_ZERO"
+  },
+  "validation": {
+    "selector_tests": {
+      "passed": 18,
+      "exit_code": 0
+    },
+    "combined_E20_E21_tests": {
+      "passed": 35,
+      "warnings": 118,
+      "exit_code": 0,
+      "overlaps_selector_tests": true
+    },
+    "independent_review": {
+      "status": "PASS",
+      "exit_code": 0
+    }
+  },
+  "cloud_final": {
+    "cloud_traces": 12,
+    "cloud_observations": 24,
+    "generation_observations": 0,
+    "cloud_scores": 36,
+    "full_metadata_arrays_equal": true,
+    "bounded_privacy_check": "PASS_NOT_UNIVERSAL_PROOF"
+  },
+  "cloud_failures_preserved": [
+    "R1_FIELD_MASKING",
+    "R2_BATCH_EXPORT_TIMEOUT"
+  ],
+  "context_tokens": "UNKNOWN",
+  "money_cost": "UNKNOWN",
+  "answer_quality": "NOT_RUN",
+  "D": "BLOCKED_NOT_RUN",
+  "external_model_calls": 0,
+  "production_changes": 0,
+  "reports": [
+    "e2-1-member-quality-ledger.md",
+    "e2-1-member-cost-analysis.md",
+    "e2-1-bcd-zero-model-ab-report.md"
+  ],
+  "privacy": "Public derived metrics only. Questions, Gold content, document text, raw snapshots, original source paths, credentials and raw evaluation records excluded."
+}

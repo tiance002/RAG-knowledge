@@ -220,7 +220,8 @@ const MultiFilePreview: React.FC = () => {
 
     } catch (error: any) {
       console.error(error);
-      message.error(error.message || '预览解析失败');
+      const detail = error.response?.data?.detail;
+      message.error(typeof detail === 'string' ? detail : error.message || '预览解析失败');
     } finally {
       setLoading(false);
     }

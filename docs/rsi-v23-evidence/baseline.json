@@ -1,0 +1,27 @@
+{
+  "review_commit": "589ddc8c27b09ca5aa84c49ccc309d80bcd39b56",
+  "initial_head": "589ddc8c27b09ca5aa84c49ccc309d80bcd39b56",
+  "initial_remote_head": "589ddc8c27b09ca5aa84c49ccc309d80bcd39b56",
+  "remote_increment_on_pr_branch": [],
+  "protected": {
+    "scripts/rsi_candidates.py": "2f537753f740ce832790f25b2af2de6d3e96563e6b18d50b2d5108d25beb36a4",
+    "scripts/run_rsi_offline.py": "9b58b19149c08768ea865314fc0431d1ec0bbd8f46291ba2099ce18dfbe8c81f",
+    "scripts/rsi_feedback.py": "5e16f1d153ac936cff3a54530f87b1bc8708544cd2481ea3b359a254383942cb",
+    "scripts/rsi_delivery_worker.py": "a5f793b9f8f6ad7908c78580a670c0cc5c909898dc8e4c36d05fdbc2a330d3da",
+    "scripts/replay_source_preparation.py": "484274d899761eb0641a2ccc15886b8ae6b70dd242a0fb53f6f5adef9c49c020",
+    "scripts/rsi_decision.py": "b8f0d28211aca4ffb01b9f0c3bb66bc4ffd4669193430ac49a5acd86a1512fa1"
+  },
+  "preexisting_dirty_file_count": 50,
+  "prior_ci": {
+    "run": 43686198511,
+    "jobs": [
+      132727077304,
+      132727077352,
+      132727077129,
+      132727077266
+    ],
+    "each_passed": 225
+  },
+  "resource_policy": "existing environment/data/index; no real data copy; synthetic controls separate",
+  "no_models_or_deployment": true
+}

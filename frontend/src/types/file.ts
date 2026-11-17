@@ -51,6 +51,10 @@ export interface ChunkInfo {
   vlmDescription?: string;
   tokenCount?: number;
   token_count?: number;
+  parentId?: string | null;
+  headingLevel?: number | null;
+  headingText?: string | null;
+  chunkType?: string;
   metadata?: Record<string, unknown>;
 }
 

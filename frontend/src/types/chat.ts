@@ -16,6 +16,7 @@ export interface ChatMessage {
   timestamp: string;
   isStreaming?: boolean;
   error?: string;
+  validationStatus?: string;
 }
 
 /** 引用信息 */
@@ -30,6 +31,9 @@ export interface Citation {
   chunk_id?: string;
   fileId?: string;
   image_path?: string;
+  source_type?: 'source_native_table_expansion';
+  parent_chunk_id?: string;
+  sourceUrl?: string;
 }
 
 /** Agent 思考步骤类型 */
@@ -105,6 +109,7 @@ export interface AnswerChunkData {
 
 /** SSE 完成事件数据 */
 export interface DoneData {
+  validation_status?: string;
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;

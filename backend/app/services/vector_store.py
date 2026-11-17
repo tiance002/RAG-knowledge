@@ -70,33 +70,38 @@ class VectorStoreService:
         metadatas = [doc.get("metadata", {}) for doc in documents]
 
         try:
-            collection.add(
-                ids=ids,
-                documents=contents,
-                embeddings=embeddings,
-                metadatas=metadatas,
+            collection.add(ids=ids, documents=contents, embeddings=embeddings, metadatas=metadatas)
+        except Exception as exc:
+            if "dimension" in str(exc).lower():
+                raise ValueError("Embedding dimension is incompatible with the existing collection; explicit migration is required") from exc
+            raise
+
+    def validate_dimension(self, kb_id: str, vector: List[float]) -> None:
+        """Check an existing collection without deleting or writing any vectors."""
+        collection = self._existing_collection(kb_id)
+        if collection is not None and collection.count():
+            try:
+                collection.query(query_embeddings=[vector], n_results=1)
+            except Exception as exc:
+                if "dimension" in str(exc).lower():
+                    raise ValueError("Embedding dimension is incompatible with the existing collection; explicit migration is required") from exc
+                raise
+
+    def _existing_collection(self, kb_id: str):
+        try:
+            return self.client.get_collection(name=self._get_collection_name(kb_id))
+        except Exception as exc:
+            # Chroma versions expose different names for an absent collection.
+            missing_types = tuple(
+                cls for cls in (getattr(chromadb.errors, "NotFoundError", None),
+                                getattr(chromadb.errors, "InvalidCollectionException", None))
+                if isinstance(cls, type)
             )
-        except Exception as e:
-            # 捕获维度不匹配错误 (chromadb.errors.InvalidArgumentError)
-            # 错误信息通常包含 "dimension"
-            if "dimension" in str(e).lower():
-                print(f"⚠️ [VectorStore] 检测到维度不匹配错误: {e}")
-                print(f"🔄 [VectorStore] 正在自动重建 Collection {collection_name} 以适应新维度...")
-                
-                # 删除并重新创建
-                self.client.delete_collection(name=collection_name)
-                collection = self.client.create_collection(name=collection_name, metadata={"kb_id": kb_id})
-                
-                # 重试添加
-                collection.add(
-                    ids=ids,
-                    documents=contents,
-                    embeddings=embeddings,
-                    metadatas=metadatas,
-                )
-                print(f"✅ [VectorStore] 自动重建并入库成功")
-            else:
-                raise e
+            if (missing_types and isinstance(exc, missing_types)) or (
+                isinstance(exc, ValueError) and "does not exist" in str(exc).lower()
+            ):
+                return None
+            raise
 
     def query(
         self,
@@ -119,9 +124,8 @@ class VectorStoreService:
         """
         collection_name = self._get_collection_name(kb_id)
 
-        try:
-            collection = self.client.get_collection(name=collection_name)
-        except Exception:
+        collection = self._existing_collection(kb_id)
+        if collection is None:
             return []
 
         results = collection.query(
@@ -149,16 +153,20 @@ class VectorStoreService:
 
         return output
 
+    def delete_ids(self, kb_id: str, ids: List[str]) -> None:
+        """Delete only the explicitly retired vectors; propagate storage failures."""
+        if not ids:
+            return
+        collection = self._existing_collection(kb_id)
+        if collection is None:
+            raise RuntimeError("Collection disappeared while retiring vectors")
+        collection.delete(ids=ids)
+
     def delete_by_file_id(self, kb_id: str, file_id: str) -> None:
         """删除指定文件的所有向量"""
-        collection_name = self._get_collection_name(kb_id)
-
-        try:
-            collection = self.client.get_collection(name=collection_name)
-            # 根据 metadata 中的 file_id 删除
+        collection = self._existing_collection(kb_id)
+        if collection is not None:
             collection.delete(where={"file_id": file_id})
-        except Exception:
-            pass
 
     def get_count(self, kb_id: str) -> int:
         """获取知识库中的向量数量"""

@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: isolated-rag
+    folder: Isolated RAG
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

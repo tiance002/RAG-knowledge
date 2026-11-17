@@ -154,6 +154,8 @@ class RecallResult(BaseModel):
     chunkId: Optional[str] = None
     score: float
     rerank_score: Optional[float] = None
+    rerank_status: Optional[str] = None
+    source_metadata: Optional[dict] = None
     vector_score: Optional[float] = None  # 新增：向量分数
     bm25_score: Optional[float] = None    # 新增：BM25 分数
     content: str
@@ -170,6 +172,8 @@ class RecallTestResponse(BaseModel):
     """召回测试响应"""
     results: List[RecallResult]
     query_time: float
+    retrieval_status: Optional[str] = None
+    expansion_delivery_status: Optional[str] = None
 
 
 # ==================== 对话 ====================

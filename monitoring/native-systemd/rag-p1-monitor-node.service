@@ -1,0 +1,13 @@
+[Unit]
+Description=Isolated P1 node exporter
+After=network.target
+[Service]
+Type=simple
+ExecStart=/opt/amrag/experiments/p1-monitoring-20261028/native-20261029/root/usr/bin/prometheus-node-exporter --web.listen-address=127.0.0.1:19100
+Restart=on-failure
+RestartSec=5
+CPUQuota=15%
+MemoryMax=96M
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target
