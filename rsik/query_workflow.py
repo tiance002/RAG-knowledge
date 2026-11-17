@@ -24,6 +24,7 @@ from .redact import validate_handbook_summaries
 from .role_profiles import LEGACY,profile_manifest,preserves_selection_order,roles_for
 from .state import canonical, digest, StageJournal
 from .workflow import execute_round
+from .observability import observation_for
 from run_rsi_loop import selector
 
 
@@ -264,6 +265,11 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     restrict_directory(directory)
+    observer = observation_for(directory)
+    observer.update_context(round_id=public['round_id'], parent_id=parent['candidate_id'],
+                            role_profile=role_profile, role_profile_hash=digest(profile_manifest(role_profile)), run_id=launch.run_id if launch else 'UNKNOWN')
+    roles.observer = observer
+    advisory_roles.observer = observer
     deadline = deadline if deadline is not None else time.monotonic() + 4500
     fixtures = [Path(f) for f in fixtures]
     if len(fixtures) != 4:
@@ -280,9 +286,14 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         if not compatibility_fingerprint:
             raise ValueError('HANDBOOK_COMPATIBILITY_REQUIRED')
         entries = []
+        from inspect import signature, Parameter
+        parameters = signature(handbook.retrieve).parameters
+        observation_kwargs = {'observer': observer} if ('observer' in parameters or
+            any(p.kind == Parameter.VAR_KEYWORD for p in parameters.values())) else {}
         for section in ('dedup', 'budget', 'order', 'format'):
-            entries.extend(handbook.retrieve(section, format, features or {}, compatibility_fingerprint))
+            entries.extend(handbook.retrieve(section, format, features or {}, compatibility_fingerprint, **observation_kwargs))
         entries = sorted({e['entry_id']: e for e in entries}.values(), key=lambda e: e['entry_id'])[:3]
+        observer.emit('MEMORY_INJECTED', {'entry_ids': [e['entry_id'] for e in entries], 'scope': 'GLOBAL_TOP3', 'returned_count': len(entries)})
         public['handbook_entries'] = entries
         public['handbook_entry_ids'] = [e['entry_id'] for e in entries]
         validate_handbook_summaries(entries, public['handbook_entry_ids'])
@@ -320,6 +331,9 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
 
     def replay(proposal, artifact):
         output, worker = artifact['output'], artifact['worker']
+        instance_id = digest({'round_id': public['round_id'], 'slot': proposal['angle'], 'proposal_id': proposal['proposal_id']})
+        observer.emit('MEMORY_USED', {'proposal_instance_id': instance_id, 'proposal_id': proposal['proposal_id'],
+            'entry_ids': proposal.get('handbook_entry_ids', []), 'used': True, 'scope': 'REPLAY_PERFORMED'})
         guard()
         capsule = capsule_factory(output / 'capsule')
         capsule.launch_context=launch
@@ -360,6 +374,9 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
                     {'parent_id': parent['candidate_id'], 'worker_sha256': bytes_hash(worker), 'evidence': evidence},
                     register, registered)
                 cid = registered_result['candidate_id']
+                observer.emit('PROPOSAL_CANDIDATE_BOUND', {'proposal_instance_id': instance_id,
+                    'proposal_id': proposal['proposal_id'], 'candidate_id': cid, 'slot': proposal['angle'],
+                    'worker_hash': bytes_hash(worker)}, key='candidate-bind:' + instance_id)
                 child = registry.get(cid)
             except (ValueError, OSError) as error:
                 raise StageFailure('REGISTRY_ERROR', 'QUERY_REGISTRY_FAILURE') from error
@@ -427,7 +444,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
             result = roles.propose(slot, context, diagnosis)
             guard()
             return result
-    result = execute_round(public, GuardedRoles(), review, replay, enabled_slots=enabled_slots, deadline=deadline, role_profile=role_profile)
+    result = execute_round(public, GuardedRoles(), review, replay, enabled_slots=enabled_slots, deadline=deadline, role_profile=role_profile, observer=observer)
     evidence_modes = sorted({d.get('evidence_mode', 'UNKNOWN') for a in artifacts.values() for d in a.get('suite_decisions', [])})
     result['evidence_mode'] = evidence_modes[0] if len(evidence_modes) == 1 else 'UNKNOWN' if evidence_modes else 'NOT_EXECUTED'
     result['real_eligible'] = result['evidence_mode'] == 'REAL_REPLAY' and all(d.get('real_eligible') is True for a in artifacts.values() for d in a.get('suite_decisions', []))
@@ -461,6 +478,10 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
                 raise StageFailure('JUDGE_ERROR', 'FAMILY_COORDINATOR_MISMATCH')
         atomic_write(directory / 'family-decision.json', canonical(family), exclusive=True)
         result['family_id'] = family['family_id']
+        for slot, proposal in result.get('proposal_instances', {}).items():
+            observer.emit('PROPOSAL_FAMILY_BOUND', {'family_id': family['family_id'], 'proposal_id': proposal['proposal_id'],
+                'proposal_instance_id': digest({'round_id': public['round_id'], 'slot': slot, 'proposal_id': proposal['proposal_id']}),
+                'slot': slot}, key='family-bind:' + public['round_id'] + ':' + slot)
     if result.get('adopted_candidate_id'):
         slot = next(s for s, a in artifacts.items() if a.get('child', {}).get('candidate_id') == result['adopted_candidate_id'])
         selected = artifacts[slot]

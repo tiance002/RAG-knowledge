@@ -1,0 +1,3 @@
+# Findings
+
+不修改原EventLog信封，payload schema_version=rsi-observation/v1。新日志位于实际运行目录observations.sqlite，复用EventLog而不复制账本事实，通过cost_request_key和cost_source关联。历史缓存没有START事件时不回填新Invocation。

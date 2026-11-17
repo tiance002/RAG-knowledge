@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from .events import EventLog
+from .observability import observation_for
 from .state import digest, canonical
 from .locking import atomic_write
 
@@ -176,23 +177,59 @@ class ParentPool:
             'fixture_path':str(Path(fixture).resolve()) if fixture else None, 'receipt_path':str(Path(receipt_path).resolve()),
             'receipt_hash':hashlib.sha256(data).hexdigest(), 'chars':chars, 'replay_seconds':replay_seconds})
 
-    def select(self, policy, *, exploration=False, seed=0, allow_bootstrap=False):
+    def select(self, policy, *, exploration=False, seed=0, allow_bootstrap=False, round_id=None, observer=None):
+        observer = observer or observation_for(self)
+        attempt = 1 + sum(e['event_type'] == 'PARENT_SELECTION_COMPLETED' for e in observer.log.read())
+        selection_id = digest({'round_id': round_id or 'UNKNOWN', 'seed': seed,
+            'exploration': exploration, 'allow_bootstrap': allow_bootstrap, 'attempt': attempt})
+        common = {'selection_id': selection_id, 'round_id': round_id or 'UNKNOWN', 'attempt': attempt,
+            'policy_version': 'rsi-parent-pareto-seeded/v2.3', 'seed': seed,
+            'exploration': exploration, 'allow_bootstrap': allow_bootstrap, 'evidence_mode': self.evidence_mode}
         candidates = {}
         quarantined={e['payload']['candidate_id'] for e in self.log.read() if e['event_type']=='PARENT_QUARANTINED'}
         for event in self.log.read():
             if event['event_type'] != 'PARENT_ADMITTED': continue
             p=event['payload']
+            payload = {**common, 'candidate_id': p['candidate_id'], 'lineage_id': p['lineage_id'], 'admitted': True}
+            reason = None
             if p.get('evidence_mode')!=self.evidence_mode or p.get('admission_version')!='rsi-parent-admission/v2.3':
-                continue  # Preserve legacy bytes; unknown historical proof is not renewed qualification.
-            allowed = p['kind']=='VERIFIED' or exploration and p['kind']=='EXPLORATION' or allow_bootstrap and p['kind']=='BASELINE_ANCHOR'
-            if not allowed or p['candidate_id'] in quarantined or policy.state(p['lineage_id'])['stop_reason']: continue
-            self._check_candidate(p)
+                reason = 'HISTORICAL_PROOF_UNQUALIFIED'
+            else:
+                allowed = p['kind']=='VERIFIED' or exploration and p['kind']=='EXPLORATION' or allow_bootstrap and p['kind']=='BASELINE_ANCHOR'
+                if not allowed: reason = 'KIND_NOT_ENABLED'
+                elif p['candidate_id'] in quarantined: reason = 'PARENT_QUARANTINED'
+                elif policy.state(p['lineage_id'])['stop_reason']: reason = 'LINEAGE_STOPPED'
+            if reason is not None:
+                observer.emit('PARENT_ELIGIBILITY_CHECKED', {**payload, 'eligible': False})
+                observer.emit('PARENT_REJECTED', {**payload, 'eligible': False, 'reason': reason})
+                continue
+            try:
+                self._check_candidate(p)
+            except (ValueError, RuntimeError, OSError):
+                observer.emit('PARENT_ELIGIBILITY_CHECKED', {**payload, 'eligible': False, 'reason': 'RECEIPT_INVALID'})
+                observer.emit('PARENT_REJECTED', {**payload, 'eligible': False, 'reason': 'RECEIPT_INVALID'})
+                raise
+            observer.emit('PARENT_ELIGIBILITY_CHECKED', {**payload, 'eligible': True})
             candidates[p['candidate_id']]=p
         values=list(candidates.values())
         front=[p for p in values if not any(q['chars']<=p['chars'] and q['replay_seconds']<=p['replay_seconds']
                and (q['chars'],q['replay_seconds'])!=(p['chars'],p['replay_seconds']) for q in values)]
-        if not front: return None
-        return min(front,key=lambda p:digest({'seed':seed,'candidate_id':p['candidate_id']}))
+        ranked = sorted(front,key=lambda p:digest({'seed':seed,'candidate_id':p['candidate_id']}))
+        for p in values:
+            if p not in front:
+                observer.emit('PARENT_REJECTED', {**common, 'candidate_id': p['candidate_id'], 'admitted': True,
+                    'eligible': True, 'reason': 'PARETO_DOMINATED'})
+        for rank, p in enumerate(ranked, 1):
+            observer.emit('PARENT_RANKED', {**common, 'candidate_id': p['candidate_id'], 'admitted': True,
+                'eligible': True, 'rank': rank, 'chars': p['chars'], 'replay_seconds': p['replay_seconds']})
+        if not front:
+            observer.emit('PARENT_SELECTION_COMPLETED', {**common, 'population_count': len(values), 'returned_count': 0})
+            return None
+        selected = min(front,key=lambda p:digest({'seed':seed,'candidate_id':p['candidate_id']}))
+        observer.emit('PARENT_SELECTED', {**common, 'candidate_id': selected['candidate_id'], 'parent_id': selected['candidate_id'],
+            'selected': True, 'admitted': True, 'eligible': True, 'rank': 1})
+        observer.emit('PARENT_SELECTION_COMPLETED', {**common, 'population_count': len(values), 'returned_count': 1})
+        return selected
 
     def require_verified(self, candidate_id, policy):
         if any(e['event_type']=='PARENT_QUARANTINED' and e['payload']['candidate_id']==candidate_id for e in self.log.read()):
