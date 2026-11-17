@@ -1,5 +1,7 @@
 """Version-separated metadata projections; raw model/evidence text never leaves here."""
 from .reader import digest
+from .schemas import GROUP_DIMENSIONS
+from pathlib import Path
 from hashlib import sha256
 
 DIMENSIONS = ('experiment_id', 'epoch', 'role_profile', 'agent_role', 'evidence_mode',
@@ -63,7 +65,7 @@ def _event_kind(kind):
     return 'Experiment'
 
 
-def project_sources(sources, artifacts=()):
+def _project_legacy_sources(sources, artifacts=()):
     artifacts = tuple(artifacts)
     records, unique_sources, seen_events, requests = [], {}, {}, {}
     for source in sources:
@@ -216,3 +218,212 @@ def project_sources(sources, artifacts=()):
             if ref not in record['source_refs']: record['source_refs'].append(ref)
             record['payload']['round_id'] = rid
     return sorted(records, key=lambda r: (r['projection_type'], r['id']))
+
+
+OBSERVATION_SCHEMA = 'rsi-observation/v1'
+# An allowlist of metadata, never prompt, response, patch, or evidence bodies.
+OBSERVATION_SAFE = SAFE | {
+    'schema_version', 'observation_source', 'invocation_id', 'attempt_id', 'attempt',
+    'cost_request_key', 'contract_result', 'outcome', 'failure_origin',
+    'proposal_instance_id', 'patch_sha256', 'patch_hash', 'ast_sha256', 'schema_valid', 'static_pass',
+    'hypothesis_hash', 'expected_impact_hash',
+    'retrieval_id', 'selection_id', 'rank', 'eligible', 'admitted', 'selected',
+    'entry_fingerprint', 'current_fingerprint', 'conflicting', 'equivalence_hash',
+    'stage_attempt_id', 'stage', 'recovery_attempt_id', 'actual_execution_id',
+    'action_id', 'execution_id', 'evidence_contract', 'evidence_complete', 'cost_source',
+    'stage_id', 'run_id', 'recovery_operation_id', 'original_operation_id',
+    'input_hash', 'output_hash', 'checkpoint_id', 'failure_category',
+    'expected_count', 'known_count', 'missing_count', 'terminal_required',
+    'success', 'failed', 'raw_retrieval', 'condition_conflict', 'stale',
+    'policy_version', 'observation_id', 'assessment_id', 'entity_id',
+    'population_count', 'returned_count', 'filtered_count', 'pair_entry_ids'}
+
+
+def _observation_payload(payload):
+    return {k: v for k, v in payload.items() if k in OBSERVATION_SAFE and
+            (v is None or isinstance(v, (str, bool, int, float)) or
+             k in {'reason_codes', 'pair_entry_ids'} and isinstance(v, list) and all(isinstance(x, str) for x in v))}
+
+
+def _observation_dimensions(payload):
+    dims = _dimensions(payload)
+    dims['role_profile_sha256'] = payload.get('role_profile_hash', payload.get('role_profile_sha256', dims['role_profile_sha256']))
+    return dims
+
+
+def _project_observations(items):
+    buckets, singles, seen = {}, [], {}
+    for sid, ref, event in items:
+        p, kind = event['payload'], event['event_type']
+        event_key = (sid, event['event_id'])
+        if event_key in seen:
+            if seen[event_key] != event: raise ValueError('ANALYTICS_EVENT_IDENTITY_CONFLICT')
+            continue
+        seen[event_key] = event
+        if kind.startswith('INVOCATION_') or kind in {'RESPONSE_RECEIVED', 'CONTRACT_VALIDATED'}:
+            typ, identity = 'AgentInvocation', (p.get('invocation_id'), p.get('attempt_id', p.get('attempt', 0)))
+        elif kind.startswith('PROPOSAL_') and kind != 'PROPOSAL_REFERENCED':
+            typ, identity = 'Proposal', p.get('proposal_instance_id')
+        elif kind.startswith('STAGE_'):
+            typ, identity = 'Stage', p.get('stage_attempt_id')
+        elif kind.startswith('RECOVERY_'):
+            typ, identity = 'Recovery', p.get('recovery_attempt_id')
+        elif kind in {'EXECUTION_STARTED', 'EXECUTION_FINISHED', 'EXECUTION_COMPLETED'}:
+            typ, identity = 'Execution', p.get('actual_execution_id', p.get('execution_id'))
+        elif kind == 'PARENT_SELECTED':
+            typ, identity = 'Parent', (p.get('selection_id'), p.get('parent_id'))
+        else:
+            singles.append((sid, ref, event)); continue
+        if not identity or isinstance(identity, tuple) and not identity[0]:
+            raise ValueError('ANALYTICS_OBSERVATION_IDENTITY_MISSING')
+        # An identity is local to a frozen event stream and compatibility cohort.
+        key = (sid, digest({k: _observation_dimensions(p).get(k, 'UNKNOWN') for k in GROUP_DIMENSIONS}), typ, str(identity))
+        buckets.setdefault(key, []).append((ref, event))
+    records = []
+    for (sid, cohort, typ, identity), events in sorted(buckets.items()):
+        events.sort(key=lambda pair: pair[1].get('sequence', 0))
+        merged = {}
+        for ref, event in events:
+            merged.update(_observation_payload(event['payload']))
+        merged['observation_source'] = OBSERVATION_SCHEMA
+        record = _record(typ, sid + ':observation:' + typ + ':' + cohort + ':' + identity, {},
+                         [events[0][0]], [e['event_id'] for _, e in events], _observation_dimensions(events[0][1]['payload']))
+        kinds = {e['event_type'] for _, e in events}
+        if typ == 'AgentInvocation':
+            terminal = [e['payload'] for _, e in events if e['event_type'] == 'INVOCATION_FINISHED']
+            outcomes = {(p.get('outcome'), p.get('contract_result'), p.get('failure_origin')) for p in terminal}
+            end = terminal[-1] if len(outcomes) == 1 else {}
+            outcome, contract = end.get('outcome'), end.get('contract_result')
+            received = bool(kinds & {'INVOCATION_RESPONSE_RECEIVED', 'RESPONSE_RECEIVED'})
+            merged.update(attempted=True if 'INVOCATION_STARTED' in kinds else 'UNKNOWN',
+                received=received if terminal or received else 'UNKNOWN',
+                success=(outcome == 'SUCCESS' and contract == 'VALID') if end else 'UNKNOWN',
+                schema_valid=contract == 'VALID' if contract in {'VALID', 'INVALID'} else 'UNKNOWN',
+                abstained=outcome == 'ABSTAINED' if end else 'UNKNOWN',
+                failed=outcome not in {'SUCCESS', 'ABSTAINED'} or contract == 'INVALID' if end else 'UNKNOWN',
+                failure_origin=end.get('failure_origin', 'UNKNOWN'))
+        elif typ == 'Proposal':
+            for source_field, target in [('patch_hash', 'patch_sha256'), ('hypothesis_hash', 'hypothesis_id'), ('expected_impact_hash', 'expected_impact_id')]:
+                if merged.get(source_field): merged[target] = merged[source_field]
+            if merged.get('contract_result') in {'VALID', 'INVALID'}:
+                merged['schema_valid'] = merged['contract_result'] == 'VALID'
+            if 'PROPOSAL_STATIC_PASSED' in kinds: merged['static_pass'] = True
+            if 'PROPOSAL_STATIC_REJECTED' in kinds: merged['static_pass'] = False
+        elif typ in {'Stage', 'Recovery'}:
+            terminal = [e['payload'] for _, e in events if e['event_type'] in {typ.upper() + '_FINISHED', typ.upper() + '_COMPLETED', typ.upper() + '_FAILED', typ.upper() + '_BLOCKED', typ.upper() + '_CANCELLED'}]
+            end = terminal[-1] if terminal else {}
+            field = 'failed' if typ == 'Stage' else 'success'
+            terminal_states = {e['event_type'] for _, e in events if e['event_type'] in {
+                'STAGE_COMPLETED', 'STAGE_FAILED', 'STAGE_CANCELLED',
+                'RECOVERY_COMPLETED', 'RECOVERY_FAILED', 'RECOVERY_BLOCKED'}}
+            if len(terminal_states) > 1: merged[field] = 'UNKNOWN'
+            elif field in end: merged[field] = end[field]
+            elif typ == 'Stage' and 'STAGE_FAILED' in kinds: merged[field] = True
+            elif typ == 'Stage' and 'STAGE_COMPLETED' in kinds: merged[field] = False
+            elif typ == 'Recovery' and 'RECOVERY_COMPLETED' in kinds: merged[field] = True
+            elif typ == 'Recovery' and kinds & {'RECOVERY_FAILED', 'RECOVERY_BLOCKED'}: merged[field] = False
+            elif typ == 'Stage' and 'STAGE_CANCELLED' in kinds: merged[field] = False
+            else: merged[field] = 'UNKNOWN'
+        elif typ == 'Execution':
+            merged['action_id'] = merged.get('action_id', merged.get('operation_id'))
+        elif typ == 'Parent':
+            merged['selected'] = True
+        if typ in {'AgentInvocation', 'Stage', 'Recovery'}:
+            terminals = {'AgentInvocation': {'INVOCATION_FINISHED'},
+                         'Stage': {'STAGE_COMPLETED', 'STAGE_FAILED', 'STAGE_CANCELLED', 'STAGE_FINISHED'},
+                         'Recovery': {'RECOVERY_COMPLETED', 'RECOVERY_FAILED', 'RECOVERY_BLOCKED', 'RECOVERY_FINISHED'}}[typ]
+            start_kind = {'AgentInvocation': 'INVOCATION_STARTED', 'Stage': 'STAGE_STARTED', 'Recovery': 'RECOVERY_STARTED'}[typ]
+            known = int(start_kind in kinds) + int(bool(kinds & terminals))
+            merged.update(evidence_contract='rsi-observation-completeness/v1:' + typ,
+                          evidence_complete=known == 2, expected_count=2, known_count=known, missing_count=2-known)
+        for _, event in events:
+            for name, value in _observation_dimensions(event['payload']).items():
+                if value != 'UNKNOWN': record['dimensions'][name] = value
+        record['payload'] = merged
+        records.append(record)
+    for sid, ref, event in singles:
+        p, kind = event['payload'], event['event_type']
+        # Ranking is a candidate observation, not an actual retrieval. A completed
+        # retrieval names its returned entries explicitly.
+        entries = p.get('entry_ids') if kind in {'MEMORY_RETRIEVAL_COMPLETED', 'MEMORY_RETRIEVED', 'MEMORY_INJECTED', 'MEMORY_USED', 'PROPOSAL_REFERENCED'} else None
+        bodies = [{**p, 'entry_id': eid} for eid in entries] if isinstance(entries, list) else [p]
+        if not bodies and kind == 'MEMORY_RETRIEVAL_COMPLETED': bodies = [p]
+        for index, body in enumerate(bodies):
+            payload = _observation_payload(body)
+            mapped = {'MEMORY_RETRIEVAL_COMPLETED': 'MEMORY_RETRIEVED', 'MEMORY_USED': 'EXPERIENCE_USED',
+                      'MEMORY_CO_RETRIEVED': 'MEMORY_CO_RETRIEVED_PAIR'}.get(kind, kind)
+            payload.update(event_type=mapped, observation_source=OBSERVATION_SCHEMA)
+            if mapped == 'MEMORY_RETRIEVED':
+                payload['raw_retrieval'] = body.get('entry_id') is not None
+                if not payload['raw_retrieval']: payload['event_type'] = 'MEMORY_RETRIEVAL_COMPLETED'
+            rec = _record(_event_kind(kind), sid + ':' + event['event_id'] + ':' + str(index), {}, [ref], [event['event_id']], _observation_dimensions(body))
+            rec['payload'] = payload
+            if kind.startswith('EVIDENCE_'): rec['projection_type'] = 'EvidenceAssessment'
+            records.append(rec)
+    proposals = {(r['source_refs'][0]['source_id'], r['payload'].get('proposal_instance_id')): r
+                 for r in records if r['projection_type'] == 'Proposal'}
+    for record in records:
+        if record['projection_type'] != 'MemoryEvent': continue
+        proposal = proposals.get((record['source_refs'][0]['source_id'], record['payload'].get('proposal_instance_id')))
+        if proposal:
+            for field in ('candidate_id', 'family_id', 'round_id'):
+                if proposal['payload'].get(field): record['payload'][field] = proposal['payload'][field]
+    return records
+
+
+def project_sources(sources, artifacts=()):
+    """Keep M0 byte-for-byte semantics; opt into semantic joins only for v1 payloads."""
+    sources, artifacts = tuple(sources), tuple(artifacts)
+    legacy, observations = [], []
+    for source in sources:
+        old = []
+        ref = {k: source[k] for k in ('source_id', 'sha256', 'path')}
+        for event in source['events']:
+            if event['payload'].get('schema_version') == OBSERVATION_SCHEMA:
+                observations.append((source['source_id'], ref, event))
+            else: old.append(event)
+        legacy.append({**source, 'events': old})
+    records = _project_legacy_sources(legacy, artifacts)
+    if not observations: return records
+    new = _project_observations(observations)
+    # An archived round slot and an explicit runtime proposal instance describe
+    # one attempt only when their round/slot/proposal identities agree uniquely.
+    for proposal in [r for r in new if r['projection_type'] == 'Proposal']:
+        p = proposal['payload']
+        matches = [r for r in records if r['projection_type'] == 'Proposal' and
+                   all(p.get(k) not in (None, '', 'UNKNOWN') and p.get(k) == r['payload'].get(k)
+                       for k in ('round_id', 'slot', 'proposal_id'))]
+        if len(matches) != 1: continue
+        archive = matches[0]
+        if any(archive['dimensions'].get(k, 'UNKNOWN') not in ('UNKNOWN', v) and v != 'UNKNOWN'
+               for k, v in proposal['dimensions'].items()): continue
+        for name in ('patch_sha256', 'ast_sha256'):
+            left, right = p.get(name, 'UNKNOWN'), archive['payload'].get(name, 'UNKNOWN')
+            if left != 'UNKNOWN' and right != 'UNKNOWN' and left != right:
+                raise ValueError('ANALYTICS_PROPOSAL_BINDING_CONFLICT')
+            if left == 'UNKNOWN': p[name] = right
+        proposal['source_refs'] += [ref for ref in archive['source_refs'] if ref not in proposal['source_refs']]
+        records.remove(archive)
+    # Match exact budget keys, never infer an invocation from a transport event.
+    for invocation in [r for r in new if r['projection_type'] == 'AgentInvocation']:
+        key = invocation['payload'].get('cost_request_key')
+        if not key: continue
+        candidates = [r for r in records if r['projection_type'] == 'AgentInvocation' and r['payload'].get('request_key') == key]
+        cost_source = invocation['payload'].get('cost_source')
+        if cost_source:
+            candidates = [r for r in candidates if any(
+                digest(str(Path(ref['path']).resolve())) == cost_source
+                for ref in r['source_refs'])]
+        if len(candidates) != 1: continue
+        old = candidates[0]
+        # Explicit known compatibility disagreement forbids a cross-source join.
+        if any(old['dimensions'].get(k, 'UNKNOWN') not in ('UNKNOWN', v) and v != 'UNKNOWN'
+               for k, v in invocation['dimensions'].items()): continue
+        invocation['source_refs'] += [ref for ref in old['source_refs'] if ref not in invocation['source_refs']]
+        invocation['event_ids'] = sorted(set(invocation['event_ids'] + old['event_ids']))
+        records.remove(old)
+        for cost in records:
+            if cost['projection_type'] == 'CostEvent' and cost['payload'].get('request_key') == key and cost['source_refs'] == old['source_refs']:
+                cost['dimensions'] = dict(invocation['dimensions'])
+                cost['source_refs'] += [ref for ref in invocation['source_refs'] if ref not in cost['source_refs']]
+    return sorted(records + new, key=lambda r: (r['projection_type'], r['id']))

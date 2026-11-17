@@ -173,6 +173,10 @@ def _group_metrics(records):
     if retrieved:
         output['M1'] = _result('M1', retrieved, len(retrieved), count=True)
         output['M2'] = _result('M2', retrieved+injected, len({use_key(r) for r in injected}), len({use_key(r) for r in retrieved}))
+    if not retrieved and any(event(r) == 'MEMORY_RETRIEVAL_COMPLETED' and r['payload'].get('returned_count') == 0
+                             and r['payload'].get('observation_source') == 'rsi-observation/v1' for r in memory):
+        output['M1'] = _result('M1', memory, 0, count=True)
+        output['M2'] = _result('M2', memory, 0, 0)
     if injected:
         injection_keys = {use_key(r) for r in injected}
         output['M3'] = _result('M3', injected+referenced, len(injection_keys & {use_key(r) for r in referenced}), len(injection_keys))
@@ -275,10 +279,27 @@ def _group_metrics(records):
             if target and target != p.get('rolled_back_candidate_id') and target in historically_promoted[history]:
                 current_by_history[history] = target
     current = set(current_by_history.values())
-    return {'metrics': [output[mid] for mid in METRICS], 'cost_breakdown': summary,
+    result = {'metrics': [output[mid] for mid in METRICS], 'cost_breakdown': summary,
             'current_promoted_candidates': sorted(current),
             'current_promoted_histories': [{'source_id': h[0], 'environment': h[1], 'candidate_id': c}
                 for h, c in sorted(current_by_history.items())], 'portfolio': analyze_portfolio(records)}
+    observed = [r for r in records if r['payload'].get('observation_source') == 'rsi-observation/v1']
+    if observed:
+        result['observation_coverage'] = {
+            'schema_version': 'rsi-observation/v1',
+            'source_record_counts': dict(sorted(Counter(r['payload'].get('observation_source', 'LEGACY_UNINSTRUMENTED') for r in records).items())),
+            'memory_event_counts': dict(sorted(Counter(event(r) for r in memory).items())),
+            'condition_mismatch_count': sum(r['payload'].get('reason') == 'CONDITIONS_MISMATCH' for r in memory),
+            'conflicting_pair_count': sum(r['payload'].get('conflicting') is True for r in pairs),
+            'observed_pair_count': len(pairs),
+            'stale_entry_count': sum(r['payload']['entry_fingerprint'] != r['payload']['current_fingerprint'] for r in scoped),
+            'fingerprint_assessed_count': len(scoped),
+            'completeness_contracts': sorted({r['payload']['evidence_contract'] for r in assessed}),
+            'expected_evidence_count': sum(r['payload'].get('expected_count', 0) for r in assessed),
+            'known_evidence_count': sum(r['payload'].get('known_count', 0) for r in assessed),
+            'missing_evidence_count': sum(r['payload'].get('missing_count', 0) for r in assessed),
+            'interpretation': 'Explicit lifecycle and association observations; no causal or verified credit is inferred.'}
+    return result
 
 
 def compute_metrics(records):

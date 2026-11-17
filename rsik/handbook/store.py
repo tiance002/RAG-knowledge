@@ -10,6 +10,7 @@ from ..contracts import ContractError, object_fields, string_list, text
 from ..events import EventLog, canonical, digest
 from ..locking import atomic_write
 from ..redact import LeakScanner
+from ..observability import observation_for
 from .contracts import conflicting, conditions_match, validate_entry
 from .projection import project
 
@@ -135,6 +136,7 @@ class Handbook:
                 continue
             if conflicting(entry, self.get(other_id)):
                 pair = sorted([entry_id, other_id])
+                observation_for(self).emit('MEMORY_CONFLICT_DETECTED', {'pair_entry_ids': pair, 'reason': 'FINITE_ACTION_CONFLICT'})
                 for target in pair:
                     self.log.append('conflict:' + ':'.join(pair) + ':' + target, 'ENTRY_QUARANTINED',
                                     {'entry_id': target, 'conflicting_entries': pair, 'reason': 'FINITE_ACTION_CONFLICT'})
@@ -157,19 +159,54 @@ class Handbook:
                          'verified_candidate_ids': sorted(verified), 'evidence_refs': entry['support_refs']})
         return True
 
-    def retrieve(self, section, format, features, compatibility_fingerprint, *, limit=3):
+    def retrieve(self, section, format, features, compatibility_fingerprint, *, limit=3, observer=None):
         if not 0 <= limit <= 3:
             raise ValueError('at most three compatible active entries may be injected')
-        result = []
-        for entry_id, state in sorted(self.view()['states'].items()):
+        observer = observer or observation_for(self)
+        attempt = 1 + sum(e['event_type'] == 'MEMORY_RETRIEVAL_COMPLETED' for e in observer.log.read())
+        retrieval_id = digest({'context': observer.context, 'section': section, 'format': format,
+                               'features': features, 'compatibility_fingerprint': compatibility_fingerprint,
+                               'attempt': attempt})
+        common = {'retrieval_id': retrieval_id, 'section': section, 'format': format,
+                  'compatibility_fingerprint': compatibility_fingerprint, 'attempt': attempt}
+        result, retained = [], []
+        states = sorted(self.view()['states'].items())
+        for entry_id, state in states:
+            payload = {**common, 'entry_id': entry_id, 'status': state}
+            observer.emit('MEMORY_CANDIDATE_SCANNED', payload)
             if state != 'ACTIVE':
+                observer.emit('MEMORY_FILTERED', {**payload, 'reason': 'NOT_ACTIVE'})
                 continue
             entry = self.get(entry_id)
-            if entry.get('evidence_mode','REAL_REPLAY')!=self.evidence_mode:continue
-            if (entry['section'] == section and format in entry['applicable_format']
-                    and entry['compatibility_fingerprint'] == compatibility_fingerprint
-                    and conditions_match(entry, {**features, 'format': format})):
-                public = {key: entry[key] for key in ('entry_id', 'section', 'applicable_format', 'conditions',
-                          'action', 'explanation', 'falsification', 'compatibility_fingerprint')}
-                result.append(self.scanner.check(public))
-        return result[:limit]
+            payload.update(entry_fingerprint=entry['compatibility_fingerprint'], current_fingerprint=compatibility_fingerprint)
+            if entry.get('evidence_mode','REAL_REPLAY')!=self.evidence_mode:
+                observer.emit('MEMORY_FILTERED', {**payload, 'reason': 'EVIDENCE_MODE_MISMATCH'})
+                continue
+            if entry['section'] != section:
+                observer.emit('MEMORY_FILTERED', {**payload, 'reason': 'SECTION_MISMATCH'})
+                continue
+            if format not in entry['applicable_format']:
+                observer.emit('MEMORY_FILTERED', {**payload, 'reason': 'FORMAT_MISMATCH'})
+                continue
+            if entry['compatibility_fingerprint'] != compatibility_fingerprint:
+                observer.emit('MEMORY_COMPATIBILITY_REJECTED', {**payload, 'reason': 'COMPATIBILITY_MISMATCH'})
+                continue
+            if not conditions_match(entry, {**features, 'format': format}):
+                observer.emit('MEMORY_FILTERED', {**payload, 'reason': 'CONDITIONS_MISMATCH'})
+                continue
+            public = {key: entry[key] for key in ('entry_id', 'section', 'applicable_format', 'conditions',
+                      'action', 'explanation', 'falsification', 'compatibility_fingerprint')}
+            result.append(self.scanner.check(public))
+            retained.append(entry)
+            observer.emit('MEMORY_RANKED', {**payload, 'rank': len(result), 'selected': len(result) <= limit})
+        selected = result[:limit]
+        from itertools import combinations
+        for left, right in combinations(retained[:limit], 2):
+            pair = [left['entry_id'], right['entry_id']]
+            conflict = conflicting(left, right)
+            observer.emit('MEMORY_CO_RETRIEVED', {**common, 'pair_entry_ids': pair, 'conflicting': conflict})
+            if conflict:
+                observer.emit('MEMORY_CONFLICT_DETECTED', {**common, 'pair_entry_ids': pair, 'reason': 'FINITE_ACTION_CONFLICT'})
+        observer.emit('MEMORY_RETRIEVAL_COMPLETED', {**common, 'entry_ids': [e['entry_id'] for e in selected],
+            'population_count': len(states), 'returned_count': len(selected), 'filtered_count': len(states)-len(result)})
+        return selected

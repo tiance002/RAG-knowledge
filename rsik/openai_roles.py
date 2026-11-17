@@ -11,6 +11,7 @@ import subprocess
 import re
 import sys
 import time
+import threading
 from copy import deepcopy
 
 from .contracts import (ANGLES, ContractError, role_schema, unwrap_response,
@@ -85,7 +86,7 @@ def single_request(body, key_file, timeout, *, response_path=None):
 
 
 class OpenAIRoles:
-    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None, launch=None):
+    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None, launch=None, observer=None):
         self.budget, self.directory = budget, Path(directory)
         self.key_file, self.scanner = Path(key_file), scanner
         self.deadline, self.transport = deadline, transport
@@ -100,6 +101,14 @@ class OpenAIRoles:
         if set(self.models)-set(TASKS) or any(model not in {'gpt-6-luna','gpt-6.1-sol'} for model in self.models.values()):
             raise ValueError('MODEL_NOT_ALLOWED')
         self.directory.mkdir(parents=True, exist_ok=True)
+        from .observability import Observer
+        self.observer = observer if observer is not None else Observer(self.directory / "observations.sqlite")
+        self._observation_local = threading.local()
+
+    @property
+    def observation_invocation(self):
+        """Latest attempt on this thread; never part of model-visible input."""
+        return dict(getattr(self._observation_local, "invocation", {}))
 
     def diagnose(self, public):
         return self.call('diagnose', public)
@@ -108,6 +117,7 @@ class OpenAIRoles:
         return self.call(angle, public, diagnosis)
 
     def call(self, role, public, diagnosis=None):
+        self._observation_local.invocation = {}
         if role=='P3_DEPENDENCY' and self.role_profile!=DEPENDENCY:raise ValueError('ROLE_PROFILE_REQUIRED')
         if role not in TASKS:
             raise ValueError('unsupported role')
@@ -229,68 +239,87 @@ class OpenAIRoles:
             if version_path.exists():
                 if version_path.read_bytes()!=version_data:raise ContractError('REQUEST_STRATEGY_CHANGED')
             else:atomic_write(version_path,version_data,exclusive=True)
-            remaining = 90 if self.deadline is None else min(90, self.deadline - time.monotonic())
-            if remaining <= 0:
-                raise TimeoutError('AGENT_TIMEOUT')
-            if path.exists():
-                starts = [e['payload'] for e in self.budget.log.read() if e['event_type']=='MODEL_REQUEST_STARTED'
-                          and e['payload']['request_key']==key]
-                if (not request_path.is_file() or json.loads(request_path.read_text(encoding='utf-8'))!=body
-                        or len(starts)!=1 or starts[0]['request_hash']!=digest(body)):
-                    raise StageFailure('RECOVERY_ERROR', 'REQUEST_INPUT_CHANGED', global_stop=True)
-                receipt = json.loads(path.read_text(encoding='utf-8'))
-            else:
-                if request_path.exists():
-                    raise StageFailure('RECOVERY_ERROR', 'REQUEST_STATUS_UNKNOWN', global_stop=True)
-                # No fees reserved. Wait for earlier requests near USD5.
-                while True:
+            observation = {'invocation_id': digest({'directory': str(self.directory.resolve()), 'request_key': key}),
+                           'request_key': key, 'cost_request_key': key,
+                           'cost_source': digest(str(self.budget.log.path.resolve())), 'round_id': public['round_id'],
+                           'agent_role': role, 'attempt': attempt, 'model': model,
+                           'prompt_hash': digest(body['input'][0]), 'role_profile': self.role_profile,
+                           'role_profile_hash': digest(profile_manifest(self.role_profile)),
+                           'request_hash': digest(body), 'seam_profile': self.seam_profile}
+            observation['attempt_id'] = observation['invocation_id']
+            self._observation_local.invocation = dict(observation)
+            with self.observer.invocation(observation) as observed:
+                remaining = 90 if self.deadline is None else min(90, self.deadline - time.monotonic())
+                if remaining <= 0:
+                    raise TimeoutError('AGENT_TIMEOUT')
+                if path.exists():
+                    starts = [e['payload'] for e in self.budget.log.read() if e['event_type']=='MODEL_REQUEST_STARTED'
+                              and e['payload']['request_key']==key]
+                    if (not request_path.is_file() or json.loads(request_path.read_text(encoding='utf-8'))!=body
+                            or len(starts)!=1 or starts[0]['request_hash']!=digest(body)):
+                        raise StageFailure('RECOVERY_ERROR', 'REQUEST_INPUT_CHANGED', global_stop=True)
+                    observed.resume()
+                    receipt = json.loads(path.read_text(encoding='utf-8'))
+                else:
+                    if request_path.exists():
+                        raise StageFailure('RECOVERY_ERROR', 'REQUEST_STATUS_UNKNOWN', global_stop=True)
+                    # No fees reserved. Wait for earlier requests near USD5.
+                    while True:
+                        try:
+                            self.budget.start(key, role, body['model'], digest(body))
+                            break
+                        except RuntimeError as error:
+                            if str(error) != 'BUDGET_SERIALIZE_REQUIRED':
+                                if str(error)=='BUDGET_EXHAUSTED':
+                                    raise StageFailure('AGENT_ERROR','BUDGET_EXHAUSTED',global_stop=True) from None
+                                raise StageFailure('AGENT_ERROR', 'BILLING_OR_REQUEST_STATUS_UNKNOWN', global_stop=True) from None
+                            if self.deadline is not None and time.monotonic() >= self.deadline:
+                                raise TimeoutError('AGENT_TIMEOUT')
+                            time.sleep(.05)
+                    observed.start()
+                    atomic_write(request_path, canonical(body), exclusive=True)
                     try:
-                        self.budget.start(key, role, body['model'], digest(body))
-                        break
-                    except RuntimeError as error:
-                        if str(error) != 'BUDGET_SERIALIZE_REQUIRED':
-                            if str(error)=='BUDGET_EXHAUSTED':
-                                raise StageFailure('AGENT_ERROR','BUDGET_EXHAUSTED',global_stop=True) from None
-                            raise StageFailure('AGENT_ERROR', 'BILLING_OR_REQUEST_STATUS_UNKNOWN', global_stop=True) from None
-                        if self.deadline is not None and time.monotonic() >= self.deadline:
-                            raise TimeoutError('AGENT_TIMEOUT')
-                        time.sleep(.05)
-                atomic_write(request_path, canonical(body), exclusive=True)
+                        receipt = (self.transport(body,self.key_file,remaining,response_path=self.directory/(key+'.transport.json'))
+                                   if self.transport is single_request else self.transport(body,self.key_file,remaining))
+                    except TimeoutError:
+                        receipt = {'transport_status': 'UNKNOWN'}
+                        observed.outcome, observed.failure_origin = 'TIMEOUT', 'TRANSPORT'
+                    except Exception:
+                        receipt = {'transport_status': 'UNKNOWN'}
+                    # Persist before billing receipt; recovery can reconcile the
+                    # actual saved usage without sending another request.
+                    atomic_write(path, canonical(receipt), exclusive=True)
+                observed.received(receipt)
+                response = receipt.get('response', {})
+                usage = response.get('usage') if receipt.get('transport_status') == 'RECEIVED' else None
+                state = self.budget.complete(key, usage, status=receipt['transport_status'],
+                                             provider_request_id=receipt.get('provider_request_id'))
+                if self.before_request:self.before_request()
+                if state['unbounded_usage_requests']:
+                    raise StageFailure('AGENT_ERROR', 'BILLING_OR_REQUEST_STATUS_UNKNOWN', global_stop=True)
+                if response.get('model') != model and not str(response.get('model', '')).startswith(model+'-'):
+                    observed.outcome, observed.failure_origin = 'API_ERROR', 'PROVIDER'
+                    raise StageFailure('AGENT_ERROR', 'MODEL_NOT_ALLOWED', global_stop=True)
                 try:
-                    receipt = (self.transport(body,self.key_file,remaining,response_path=self.directory/(key+'.transport.json'))
-                               if self.transport is single_request else self.transport(body,self.key_file,remaining))
-                except Exception:
-                    receipt = {'transport_status': 'UNKNOWN'}
-                # Persist before billing receipt; recovery can reconcile the
-                # actual saved usage without sending another request.
-                atomic_write(path, canonical(receipt), exclusive=True)
-            response = receipt.get('response', {})
-            usage = response.get('usage') if receipt.get('transport_status') == 'RECEIVED' else None
-            state = self.budget.complete(key, usage, status=receipt['transport_status'],
-                                         provider_request_id=receipt.get('provider_request_id'))
-            if self.before_request:self.before_request()
-            if state['unbounded_usage_requests']:
-                raise StageFailure('AGENT_ERROR', 'BILLING_OR_REQUEST_STATUS_UNKNOWN', global_stop=True)
-            if response.get('model') != model and not str(response.get('model', '')).startswith(model+'-'):
-                raise StageFailure('AGENT_ERROR', 'MODEL_NOT_ALLOWED', global_stop=True)
-            try:
-                if response.get('status') != 'completed':
-                    raise ContractError('INCOMPLETE_RESPONSE')
-                messages = response.get('output', [])
-                parts = [part['text'] for message in messages if message.get('type') == 'message'
-                         and message.get('phase') in (None, 'final_answer')
-                         for part in message.get('content', []) if part.get('type') == 'output_text']
-                if len(parts) != 1:
-                    raise ContractError('CONTRACT_ERROR')
-                value = json.loads(parts[0])
-                self.scanner.check(value)
-                result = unwrap_response(value)
-                if result is not None:
-                    if role == 'diagnose': validate_diagnosis(result, public)
-                    elif role in ANGLES: validate_proposal(result, public, role)
-                    else: validate_readonly(result, public, role)
-                return value
-            except (ContractError, ValueError, TypeError, KeyError):
-                if attempt:
-                    return {'status': 'ABSTAIN', 'result': None, 'reason': 'CONTRACT_ERROR_AFTER_ONE_REPAIR'}
+                    if response.get('status') != 'completed':
+                        raise ContractError('INCOMPLETE_RESPONSE')
+                    messages = response.get('output', [])
+                    parts = [part['text'] for message in messages if message.get('type') == 'message'
+                             and message.get('phase') in (None, 'final_answer')
+                             for part in message.get('content', []) if part.get('type') == 'output_text']
+                    if len(parts) != 1:
+                        raise ContractError('CONTRACT_ERROR')
+                    value = json.loads(parts[0])
+                    self.scanner.check(value)
+                    result = unwrap_response(value)
+                    if result is not None:
+                        if role == 'diagnose': validate_diagnosis(result, public)
+                        elif role in ANGLES: validate_proposal(result, public, role)
+                        else: validate_readonly(result, public, role)
+                    observed.validated(True, abstained=value.get('status') == 'ABSTAIN')
+                    return value
+                except (ContractError, ValueError, TypeError, KeyError):
+                    observed.validated(False)
+                    if attempt:
+                        return {'status': 'ABSTAIN', 'result': None, 'reason': 'CONTRACT_ERROR_AFTER_ONE_REPAIR'}
         raise AssertionError('unreachable')

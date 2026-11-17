@@ -1,0 +1,53 @@
+{
+  "run_id": 44110587071,
+  "url": "https://github.com/tiance002/RAG-knowledge/actions/runs/44110587071",
+  "code_head": "854eaf0f93d6be6a198d16cb922c9064dd8dff34",
+  "jobs": [
+    {
+      "job_id": 134134763966,
+      "name": "portable-tests (ubuntu-latest, 3.11)",
+      "collected": 618,
+      "passed": 618,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "basis": "GitHub pytest step success under default fail-on-nonzero shell; full item logs checked",
+      "log_sha256": "5e6a1d115556168fd4de0b96298f7ed4034a34764c52a334d505f95ee46e4951"
+    },
+    {
+      "job_id": 134134764179,
+      "name": "portable-tests (ubuntu-latest, 3.13)",
+      "collected": 618,
+      "passed": 618,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "basis": "GitHub pytest step success under default fail-on-nonzero shell; full item logs checked",
+      "log_sha256": "2db6de107b9b1b03b1af25bf36fb8e7b4562c718da9ee43d7eb51180a1d988c0"
+    },
+    {
+      "job_id": 134134764431,
+      "name": "portable-tests (windows-latest, 3.11)",
+      "collected": 618,
+      "passed": 618,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "basis": "GitHub pytest step success under default fail-on-nonzero shell; full item logs checked",
+      "log_sha256": "92cb17e01f2c4c172ec5a0c05b908e690bd9a501ac82edd3702eaaa8a73d4247"
+    },
+    {
+      "job_id": 134134764454,
+      "name": "portable-tests (windows-latest, 3.13)",
+      "collected": 618,
+      "passed": 618,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "basis": "GitHub pytest step success under default fail-on-nonzero shell; full item logs checked",
+      "log_sha256": "a22978d45420185362fb12cd5befb8d1f60c2c81dd6634bacbab8a2413457c45"
+    }
+  ],
+  "unique_tests": 618,
+  "all_success": true
+}

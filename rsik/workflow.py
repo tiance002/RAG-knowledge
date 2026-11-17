@@ -6,8 +6,10 @@ materialization and replay. Callers own persistent locks/checkpoints and budgets
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import time
+import hashlib
 
-from .role_profiles import LEGACY, roles_for
+from .role_profiles import LEGACY, roles_for, profile_manifest
+from .events import digest
 from .adjudicate import SLOTS, adjudicate_round
 from .contracts import ContractError, unwrap_response, validate_diagnosis, validate_proposal
 from .errors import StageFailure, normalized_error
@@ -21,13 +23,33 @@ def placeholder(angle, proposal_id, reason, *, verdict='INCONCLUSIVE'):
             'sign_p_adjusted': None, 'per_question': [], 'delta_total': None}
 
 
-def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadline=None, role_profile=LEGACY):
+def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadline=None, role_profile=LEGACY, observer=None):
     """Every statically qualified instance reaches replay, including duplicates.
 
     A confirmed global integrity failure stops further side effects and forbids
     a winner. A local replay failure leaves the other candidates eligible.
     """
+    observer = observer or getattr(roles, 'observer', None)
     mapping=roles_for(role_profile)
+    def observe(kind, slot, proposal=None, **fields):
+        if observer is None:
+            return
+        proposal = proposal if isinstance(proposal, dict) else {}
+        instance_id = digest({'round_id': public['round_id'], 'slot': slot,
+                              'proposal_id': proposal.get('proposal_id', 'UNKNOWN')})
+        payload = {'proposal_instance_id': instance_id, 'proposal_id': proposal.get('proposal_id', 'UNKNOWN'),
+                   'round_id': public['round_id'], 'slot': slot, 'agent_role': mapping[slot],
+                   'role_profile': role_profile, 'role_profile_hash': digest(profile_manifest(role_profile)),
+                   'parent_id': public.get('parent_id', getattr(observer, 'context', {}).get('parent_id', 'UNKNOWN')),
+                   'attempt': 1, **fields}
+        invocation = getattr(roles, 'observation_invocation', {})
+        if kind in {'PROPOSAL_GENERATED', 'PROPOSAL_CONTRACT_VALIDATED', 'PROPOSAL_REFERENCED'}:
+            payload.update({k: invocation[k] for k in ('invocation_id', 'request_key', 'cost_request_key', 'attempt') if k in invocation})
+        for name, target in [('hypothesis','hypothesis_hash'), ('expected_impact','expected_impact_hash'), ('worker_patch','patch_hash')]:
+            if name in proposal:
+                payload[target] = digest(proposal[name])
+        observer.emit(kind, payload, key=kind + ':' + instance_id)
+
     record = {'role_profile':role_profile,'proposal_roles':mapping,'raw_role_proposals':{},'round_id': public['round_id'], 'errors': [], 'proposal_instances': {},
               'execution_state': 'RUNNING', 'agent_call_results': {}, 'qualified': [], 'attempted_replays': []}
     if deadline is not None and time.monotonic() >= deadline:
@@ -72,7 +94,16 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
             raw = roles.propose(actual_role, deepcopy(public), deepcopy(diagnosis))
             proposal = unwrap_response(raw)
             if proposal is not None:
-                validate_proposal(proposal, public, actual_role)
+                # Observe the instance before validation; never merge identical patch bytes.
+                observe('PROPOSAL_GENERATED', slot, proposal)
+                try:
+                    validate_proposal(proposal, public, actual_role)
+                except ContractError as error:
+                    observe('PROPOSAL_CONTRACT_VALIDATED', slot, proposal, contract_result='INVALID', reason=error.code)
+                    raise
+                observe('PROPOSAL_CONTRACT_VALIDATED', slot, proposal, contract_result='VALID')
+                if proposal['handbook_entry_ids']:
+                    observe('PROPOSAL_REFERENCED', slot, proposal, entry_ids=proposal['handbook_entry_ids'])
                 record['raw_role_proposals'][slot]=deepcopy(proposal)
                 proposal=deepcopy(proposal)
                 proposal['angle']=slot
@@ -109,6 +140,7 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
         try:
             artifact = review(proposal)
         except StageFailure as error:
+            observe('PROPOSAL_STATIC_REJECTED', slot, proposal, reason=error.reason_code, static_pass=False)
             failure('STATIC_REVIEW', error.category, error.reason_code)
             verdict = 'REJECTED' if error.category in {'PATCH_ERROR','SEAM_ERROR','CONTRACT_ERROR'} else 'INCONCLUSIVE'
             decisions.append(placeholder(slot, proposal['proposal_id'], error.reason_code, verdict=verdict))
@@ -117,6 +149,7 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
                               adopted_proposal_id=None, adopted_candidate_id=None, candidate_decisions=decisions)
                 return record
             continue
+        observe('PROPOSAL_STATIC_PASSED', slot, proposal, static_pass=True, worker_hash=hashlib.sha256(artifact['worker']).hexdigest() if isinstance(artifact, dict) and isinstance(artifact.get('worker'), bytes) else 'UNKNOWN')
         artifacts[slot] = artifact
         record['qualified'].append(slot)
     for slot in SLOTS:
@@ -127,9 +160,13 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
             record.update(execution_state='FAILED', verdict='ROUND_ABORTED', stop_reason='ROUND_DEADLINE',
                           adopted_proposal_id=None, adopted_candidate_id=None, candidate_decisions=decisions)
             return record
+        observe('PROPOSAL_REPLAY_ENTERED', slot, proposal, used=True)
         record['attempted_replays'].append(slot)
         try:
-            decisions.append(replay(proposal, artifacts[slot]))
+            decision = replay(proposal, artifacts[slot])
+            decisions.append(decision)
+            if decision.get('candidate_id'):
+                observe('PROPOSAL_CANDIDATE_BOUND', slot, proposal, candidate_id=decision['candidate_id'])
         except StageFailure as error:
             failure('REPLAY', error.category, error.reason_code)
             decisions.append(placeholder(slot, proposal['proposal_id'], error.reason_code))

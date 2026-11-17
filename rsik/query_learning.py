@@ -172,19 +172,58 @@ class ExperienceSession:
                 'operation_path':path.name,'operation_hash':bytes_hash(data)}
         atomic_write(self.directory/'learning-intent.json',canonical(intent),exclusive=True)
         self.checkpoint('intent')
-        return self.recover()
+        return self.recover(_initial=True)
 
     def _blocked(self,reason):
         atomic_write(self.directory/'recovery-status.json',canonical({'status':'RECOVERY_BLOCKED','reason':reason}))
         raise ValueError('RECOVERY_BLOCKED_'+reason)
 
-    def recover(self):
-        try:return self._recover()
+    def recover(self, *, _initial=False):
+        from .observability import observation_for
+        from .state import observation_failure
+        import time
+        observer = observation_for(self)
+        intent_path = self.directory / 'learning-intent.json'
+        operation_id = 'UNKNOWN'
+        if intent_path.exists():
+            try: operation_id = load(intent_path).get('evidence_id', 'UNKNOWN')
+            except (ValueError, OSError, TypeError): pass
+        attempt = 1 + sum(e['event_type'] == ('STAGE_STARTED' if _initial else 'RECOVERY_STARTED')
+            and e['payload'].get('original_operation_id') == operation_id for e in observer.log.read())
+        identity = digest({'session': str(self.directory.resolve()), 'operation_id': operation_id,
+                           'initial': _initial, 'attempt': attempt})
+        base = {'run_id': digest(str(self.directory.resolve())), 'attempt': attempt,
+                'recovery_attempt_id': identity, 'recovery_operation_id': operation_id,
+                'original_operation_id': operation_id, 'operation_id': operation_id,
+                'stage_id': 'LEARNING_COMMIT', 'stage_attempt_id': identity,
+                'input_hash': bytes_hash(intent_path.read_bytes()) if intent_path.exists() else None,
+                'output_hash': None, 'checkpoint_id': None, 'failure_category': 'NONE',
+                'evidence_mode': self.handbook.evidence_mode}
+        observer.emit('STAGE_STARTED' if _initial else 'RECOVERY_STARTED', base, key=identity + ':start')
+        clock = time.monotonic()
+        try:
+            result = self._recover()
         except (ValueError,RuntimeError,OSError,KeyError,TypeError) as error:
             reason=str(error)
             if reason.startswith('RECOVERY_BLOCKED_'):reason=reason[len('RECOVERY_BLOCKED_'):]
             elif reason not in {'LEARNING_TRANSACTION_RECONCILIATION_REQUIRED'}:reason='EVIDENCE_OR_EVENT_VALIDATION_FAILED'
+            category, recoverable = observation_failure(error)
+            observer.emit('STAGE_FAILED' if _initial else 'RECOVERY_BLOCKED',
+                {**base, 'failure_category': category, 'recoverable': recoverable,
+                 'outcome': 'BLOCKED', 'error_type': type(error).__name__,
+                 'duration_ms': (time.monotonic() - clock) * 1000}, key=identity + ':terminal')
             return self._blocked(reason)
+        except BaseException as error:
+            category, recoverable = observation_failure(error)
+            observer.emit('STAGE_CANCELLED' if _initial else 'RECOVERY_FAILED',
+                {**base, 'failure_category': category, 'recoverable': recoverable,
+                 'outcome': 'CANCELLED', 'error_type': type(error).__name__,
+                 'duration_ms': (time.monotonic() - clock) * 1000}, key=identity + ':terminal')
+            raise
+        observer.emit('STAGE_COMPLETED' if _initial else 'RECOVERY_COMPLETED',
+            {**base, 'output_hash': digest(result), 'outcome': 'COMPLETED',
+             'duration_ms': (time.monotonic() - clock) * 1000}, key=identity + ':terminal')
+        return result
 
     def _recover(self):
         """Reconcile a trusted event prefix without external calls or blind redo."""
