@@ -1,0 +1,64 @@
+{
+  "schema": "rsi-m0-ci-audit/v1",
+  "run_id": 44092688174,
+  "url": "https://github.com/tiance002/RAG-knowledge/actions/runs/44092688174",
+  "code_head": "7b4fc22db8c352674900a707d52b68b842b10d98",
+  "jobs": [
+    {
+      "job_id": 134071628262,
+      "name": "portable-tests (ubuntu-latest, 3.11)",
+      "conclusion": "success",
+      "collected": 579,
+      "passed": 579,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "exit_basis": "pytest step success under default fail-on-nonzero shell; raw item and summary checks",
+      "log_sha256": "29db0e69822e8fc60e5539e0b6518635eac07051571481e409ec02e69b37a087",
+      "log_format": "GitHub decoded log, BOM removed, CRLF normalized to LF"
+    },
+    {
+      "job_id": 134071628429,
+      "name": "portable-tests (windows-latest, 3.11)",
+      "conclusion": "success",
+      "collected": 579,
+      "passed": 579,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "exit_basis": "pytest step success under default fail-on-nonzero shell; raw item and summary checks",
+      "log_sha256": "072e5651fd714ae247d5c34ec3115cc9a30bdfff682dd857e9a4be60724c73f1",
+      "log_format": "GitHub decoded log, BOM removed, CRLF normalized to LF"
+    },
+    {
+      "job_id": 134071628523,
+      "name": "portable-tests (windows-latest, 3.13)",
+      "conclusion": "success",
+      "collected": 579,
+      "passed": 579,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "exit_basis": "pytest step success under default fail-on-nonzero shell; raw item and summary checks",
+      "log_sha256": "5adc87805316b0b216cd6a3d1a8888725fc546244cd8d394ee94b0db50b1afdf",
+      "log_format": "GitHub decoded log, BOM removed, CRLF normalized to LF"
+    },
+    {
+      "job_id": 134071628569,
+      "name": "portable-tests (ubuntu-latest, 3.13)",
+      "conclusion": "success",
+      "collected": 579,
+      "passed": 579,
+      "failed": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "exit_basis": "pytest step success under default fail-on-nonzero shell; raw item and summary checks",
+      "log_sha256": "303ae7a9881eb38f5e3848e5e13aafbab2052a4f6c424d7791fd0c37eedbcd23",
+      "log_format": "GitHub decoded log, BOM removed, CRLF normalized to LF"
+    }
+  ],
+  "all_success": true,
+  "unique_tests": 579,
+  "matrix_executions": 4,
+  "note": "同579项四次运行，不是2316项独立测试"
+}

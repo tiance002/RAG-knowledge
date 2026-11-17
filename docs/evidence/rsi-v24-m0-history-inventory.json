@@ -1,0 +1,328 @@
+{
+  "schema": "rsi-m0-history-source-inventory/v1",
+  "inventory_date": "2026-11-17",
+  "source_root": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var",
+  "code_basis": "E:\\rsi-v24-m0\\rsik\\events.py EventLog rsi-event/v2.2 canonical JSON SHA-256 format",
+  "query_mode": "SQLite URI mode=ro; PRAGMA query_only=ON",
+  "event_schema": [
+    "sequence",
+    "idempotency_key",
+    "request_hash",
+    "event_json",
+    "event_hash"
+  ],
+  "chain_validation": "FULL_VALID means all present rows verified from genesis using current events.py format; it does not detect unanchored tail deletion or prove third-party provenance.",
+  "content_policy": "Only filenames, byte sizes, SQLite schema, row counts, and event_type counts are reported. No Gold, closed holdout, question, answer, or evidence file bodies were read in the final explicit inventory.",
+  "sources": [
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\task-model-budget.sqlite",
+      "bytes": 1449984,
+      "event_count": 668,
+      "event_types": {
+        "MODEL_PRICING_POLICY_DECLARED": 1,
+        "MODEL_REQUEST_COMPLETED": 264,
+        "MODEL_REQUEST_EXPLICIT_RETRY_PROVENANCE": 1,
+        "MODEL_REQUEST_FULL_CONTEXT_CONTRACT": 72,
+        "MODEL_REQUEST_GLM40_CONTRACT": 61,
+        "MODEL_REQUEST_POSTHOC_COST_BOUND": 5,
+        "MODEL_REQUEST_STARTED": 264
+      },
+      "chain_status": "FULL_VALID",
+      "scope_note": "Original task budget ledger candidate; aggregate includes multiple roles and is not RSI-only. Provider invoice remains UNKNOWN.",
+      "sha256_at_delivery": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\a1\\events.sqlite",
+      "bytes": 69632,
+      "event_count": 29,
+      "event_types": {
+        "AUTONOMY_ROUND_FINISHED": 27,
+        "AUTONOMY_TEST_ENDED": 1,
+        "AUTONOMY_TEST_STARTED": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "64abe3738c2b6eec811d9cfe583ddb4793f9ea08e953ddbe0bb298df03da2bce"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\seed-only-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\seed-only-r2\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\seed-only-r3\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 1,
+      "event_types": {
+        "CANDIDATE_ADOPTED": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "14c6a9d8b5d94e1a91082c3c851bed1baf00d6027594908762b73fea3d6d68cf"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\substantial-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\substantial-r2\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\substantial-r3\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\substantial-sol-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 1,
+      "event_types": {
+        "CANDIDATE_ADOPTED": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "d12d05e9977161f3f0df9841ab1f255697f9ea4e55ac5e196e943a1ade1a86f2"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\three-quarter-sol-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 1,
+      "event_types": {
+        "CANDIDATE_ADOPTED": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "4f27ccc0a412482e22a1891d99c91ec46f74eab81fedb2ca9b0821e49b94a702"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\live-parallel-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\live-parallel-r2\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\live-parallel-r3\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\live-single-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\live-single-r2\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\parent-verified-20261115\\nine-tenths-luna-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\parent-verified-20261115\\safety-restore-r1\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\query-aware-v1\\registry\\policy.sqlite",
+      "bytes": 16384,
+      "event_count": 1,
+      "event_types": {
+        "QUERY_CANDIDATE_QUARANTINED": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "42619a96e891af75a069c8d15aa4cf184f5e09c292a9ee99cf01c6652792bbbe"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\query-aware-v1\\registry\\sealed.sqlite",
+      "bytes": 16384,
+      "event_count": 2,
+      "event_types": {
+        "QUERY_SEALED_BUNDLE_FINISHED": 1,
+        "QUERY_SEALED_BUNDLE_STARTED": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "2d05f7257823a83262bbd751735bbd96004fe0cc0ff295cd5b2dc5f45362a499"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\registry\\handbook\\events.sqlite",
+      "bytes": 32768,
+      "event_count": 12,
+      "event_types": {
+        "CANDIDATE_ADOPTED": 3,
+        "CANDIDATE_NOT_SELECTED": 1,
+        "ENTRY_ACTIVATED": 1,
+        "ENTRY_CREATED": 1,
+        "ENTRY_EVIDENCE_BOUND": 1,
+        "ENTRY_QUARANTINED": 1,
+        "HANDBOOK_MATCHED": 1,
+        "HOLDOUT_PASSED": 1,
+        "OUTCOME_INVALIDATED": 1,
+        "PROPOSAL_REFERENCED": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "9c660333124d502a0c7f30b5acf52fc99aca55b4c51ee97bee04d9aaf0aa991a"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\registry\\policy\\lineage.sqlite",
+      "bytes": 53248,
+      "event_count": 34,
+      "event_types": {
+        "HOLDOUT_PASSED": 1,
+        "HOLDOUT_STARTED": 1,
+        "OWNER_POLICY_UPDATED": 1,
+        "REQUIRED_ROBUSTNESS_FIXTURE": 3,
+        "ROUND_FINISHED": 14,
+        "ROUND_STARTED": 14
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "f13ccd7b8ee3f3aa02268c194d777ae3adb017a4425e24bf8221edc680149b32"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\registry\\policy\\parents.sqlite",
+      "bytes": 24576,
+      "event_count": 6,
+      "event_types": {
+        "PARENT_ADMITTED": 4,
+        "PARENT_QUARANTINED": 2
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "f809d199fa01dd9bc592576ab48a968e78dffa0f3a3b70749a28f93f534d64c3"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-20261115\\feedback-promotion-counterexamples\\baseline-sandbox\\events.sqlite",
+      "bytes": 24576,
+      "event_count": 4,
+      "event_types": {
+        "PROMOTED": 1,
+        "PROMOTION_INTENT": 1,
+        "ROLLBACK_INTENT": 1,
+        "ROLLED_BACK": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "677086b3758ad75e2bd1fe9db9e6fd8df047cd36f3cdc5682d4b6b771612a694"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-s21-s7-20261115\\shadow-control\\promotion\\events.sqlite",
+      "bytes": 24576,
+      "event_count": 4,
+      "event_types": {
+        "PROMOTED": 1,
+        "PROMOTION_INTENT": 1,
+        "ROLLBACK_INTENT": 1,
+        "ROLLED_BACK": 1
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "4b3799e675f5d67c57b0d47b1a8649690165cd8601db552241e10cc5523509be"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-s21-s7-20261115\\source-ledger\\exposure-events.sqlite",
+      "bytes": 380928,
+      "event_count": 198,
+      "event_types": {
+        "SOURCE_EXPOSED": 177,
+        "SOURCE_REGISTERED": 21
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "caf11560d621021fd26edf36cbcb0b051e899d6c0e1a2fab47bab8969a1f4aa9"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-s21-s7-20261115\\source-ledger-v2\\exposure-events.sqlite",
+      "bytes": 2912256,
+      "event_count": 1876,
+      "event_types": {
+        "SOURCE_EXPOSED": 1775,
+        "SOURCE_REGISTERED": 101
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "b78b74074dbffcdb4dc609b5c943270380ea7400ca2de49d28e75384c0c1b5d5"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-s3-completion-20261115\\collection-launch\\exposure-events.sqlite",
+      "bytes": 3043328,
+      "event_count": 1878,
+      "event_types": {
+        "HISTORICAL_IMPORT_ANCHOR": 1,
+        "SOURCE_EXPOSED": 1776,
+        "SOURCE_REGISTERED": 101
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "ad93675961ff7c5bb175fe37627803ddf62ed698137de4282b39a1e9f1d850ac"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-s3-completion-20261115\\collection-launch\\handbook\\events.sqlite",
+      "bytes": 16384,
+      "event_count": 0,
+      "event_types": {},
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "179522e157db38efd72a81aac16d666ae7ad9f769a614079fce2fbebbbdafecb"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-s3-followup-20261116\\source-ledger-v1\\exposure-events.sqlite",
+      "bytes": 8441856,
+      "event_count": 3769,
+      "event_types": {
+        "HISTORICAL_EVENT_PRESERVED": 1876,
+        "HISTORICAL_IMPORT_ANCHOR": 1,
+        "SOURCE_EXPOSED": 1775,
+        "SOURCE_REGISTERED": 117
+      },
+      "chain_status": "FULL_VALID",
+      "sha256_at_delivery": "7bcb75333e68c682539bc481037f03bfbb5582db2ec79bafa9ead8690c581b10"
+    }
+  ],
+  "scan_limitation": "An intermediate recursive scan used an incorrect pytest directory-pruning condition. It queried SQLite schema, event types, and event_json for chain recomputation in pytest fixtures inside selected v22/v23 roots; payload JSON was parsed in memory, not emitted or manually inspected. That output was discarded. The final 29-source list contains only explicit non-test history sources; QA300/QA500 closed holdout roots were not opened.",
+  "excluded_sources": [
+    "var/rsi-v23-qa300-selected-20261116",
+    "var/rsi-qa500-selected-dev-20261116",
+    "pytest-* fixtures",
+    "GLM40 isolated pipeline"
+  ],
+  "files_modified_by_inventory": []
+}

@@ -1,0 +1,43 @@
+{
+  "sources": [
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\task-model-budget.sqlite",
+      "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\a1\\events.sqlite",
+      "sha256": "64abe3738c2b6eec811d9cfe583ddb4793f9ea08e953ddbe0bb298df03da2bce"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\registry\\handbook\\events.sqlite",
+      "sha256": "9c660333124d502a0c7f30b5acf52fc99aca55b4c51ee97bee04d9aaf0aa991a"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\registry\\policy\\lineage.sqlite",
+      "sha256": "f13ccd7b8ee3f3aa02268c194d777ae3adb017a4425e24bf8221edc680149b32"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\registry\\policy\\parents.sqlite",
+      "sha256": "f809d199fa01dd9bc592576ab48a968e78dffa0f3a3b70749a28f93f534d64c3"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\query-aware-v1\\registry\\policy.sqlite",
+      "sha256": "42619a96e891af75a069c8d15aa4cf184f5e09c292a9ee99cf01c6652792bbbe"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\query-aware-v1\\registry\\sealed.sqlite",
+      "sha256": "2d05f7257823a83262bbd751735bbd96004fe0cc0ff295cd5b2dc5f45362a499"
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-s21-s7-20261115\\shadow-control\\promotion\\events.sqlite",
+      "sha256": "4b3799e675f5d67c57b0d47b1a8649690165cd8601db552241e10cc5523509be"
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "round",
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\continuation-20261115\\seed-only-r3\\round.json",
+      "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+    }
+  ]
+}

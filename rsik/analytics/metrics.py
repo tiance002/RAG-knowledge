@@ -1,0 +1,315 @@
+"""Read-only deterministic metrics over already validated projections."""
+from collections import Counter, defaultdict
+from decimal import Decimal
+import json
+
+from .schemas import GROUP_DIMENSIONS, METRICS
+from .portfolio import analyze_portfolio
+
+
+def _kind(record):
+    return record.get('kind', record.get('projection_type', record.get('type')))
+
+
+def _refs(records):
+    refs = []
+    for record in records:
+        value = record.get('evidence_refs', record.get('source_refs', []))
+        if not value:
+            value = record.get('event_ids') or [record.get('event_id') or record.get('record_id') or record.get('id')]
+        if not isinstance(value, list):
+            value = [value]
+        refs.extend(item for item in value if item is not None)
+    return [json.loads(value) for value in sorted({json.dumps(item, sort_keys=True, ensure_ascii=False) for item in refs})]
+
+
+def _result(mid, records, numerator=None, denominator=None, *, reason=None, status=None, count=False):
+    if status is None:
+        status = 'UNKNOWN' if numerator is None or (denominator is None and not count) else 'N/A' if denominator == 0 and not count else 'OK'
+    value = None
+    if status == 'OK':
+        value = numerator if count else float(Decimal(str(numerator)) / Decimal(str(denominator)))
+    return {'metric_id': mid, 'status': status, 'numerator': numerator,
+            'denominator': denominator, 'value': value, 'unit': METRICS[mid]['unit'],
+            'evidence_refs': _refs(records), 'reason': reason or ('observed denominator is empty' if status == 'N/A' else 'missing required observations' if status == 'UNKNOWN' else 'explicit observed evidence')}
+
+
+def _flag_rate(mid, records, numerator, eligible=None):
+    eligible = records if eligible is None else eligible
+    if not records:
+        return _result(mid, records)
+    values = [numerator(record['payload']) for record in eligible]
+    return _result(mid, records, sum(value is True for value in values) if all(type(value) is bool for value in values) else None, len(eligible))
+
+
+def _unique(records, field):
+    result = {}
+    for record in records:
+        key = record['payload'].get(field)
+        if key is not None:
+            if _kind(record) == 'CostEvent':
+                refs = record.get('source_refs', [])
+                source = record.get('history_source_id') or record['payload'].get('history_source_id')
+                if source is None and refs:
+                    source = refs[0].get('source_id') if isinstance(refs[0], dict) else None
+                # Without a log identity, do not assume equal local keys denote
+                # the same request. Projection identities are already scoped.
+                source = source or record.get('id') or record.get('record_id')
+                key = (source, key)
+            if _kind(record) == 'CostEvent' and key in result and result[key]['payload'] != record['payload']:
+                raise ValueError('CONFLICTING_COST_REQUEST_IDENTITY')
+            result[key] = record
+    return list(result.values())
+
+
+def _group_metrics(records):
+    kinds = defaultdict(list)
+    for record in records:
+        kinds[_kind(record)].append(record)
+    output = {mid: _result(mid, []) for mid in METRICS}
+    agents = kinds['AgentInvocation']
+    attempts = [record for record in agents if record['payload'].get('attempted') is True]
+    output['A1'] = _flag_rate('A1', agents, lambda p: p.get('success'), attempts)
+    received = [record for record in agents if record['payload'].get('received') is True]
+    if agents and all(type(record['payload'].get('received')) is bool for record in agents):
+        output['A2'] = _flag_rate('A2', agents, lambda p: p.get('schema_valid'), received)
+    output['A3'] = _flag_rate('A3', agents, lambda p: p.get('abstained'), attempts)
+    output['A4'] = _flag_rate('A4', agents, lambda p: p.get('failed'), attempts)
+    if agents and any(record['payload'].get('attempted') is not True for record in agents):
+        for mid in ('A1', 'A3', 'A4'):
+            output[mid] = _result(mid, agents, reason='attempt eligibility unknown')
+    output['R4'] = _flag_rate('R4', agents, lambda p: p.get('failure_origin') == 'INFRASTRUCTURE' if p.get('failure_origin') not in (None, 'UNKNOWN') else None, attempts)
+    if agents and any(type(record['payload'].get('attempted')) is not bool for record in agents):
+        output['R4'] = _result('R4', agents, reason='attempt eligibility unknown')
+
+    proposals = kinds['Proposal']
+    output['P1'] = _flag_rate('P1', proposals, lambda p: p.get('schema_valid'))
+    valid = [record for record in proposals if record['payload'].get('schema_valid') is True]
+    if proposals and all(type(record['payload'].get('schema_valid')) is bool for record in proposals):
+        output['P2'] = _flag_rate('P2', proposals, lambda p: p.get('static_pass'), valid)
+    qualified = [record for record in valid if record['payload'].get('static_pass') is True]
+    portfolio = analyze_portfolio(qualified)
+    hashes = [item['ast_hash'] for item in portfolio['instances']]
+    if proposals and all(type(r['payload'].get('static_pass')) is bool for r in valid) and all(type(r['payload'].get('schema_valid')) is bool for r in proposals):
+        if all(hashes):
+            output['P3'] = _result('P3', qualified, len(set(hashes)), len(hashes))
+            output['P4'] = _result('P4', qualified, len(hashes)-len(set(hashes)), len(hashes))
+
+    families = kinds['FamilyDecision']
+    complete_rounds = set()
+    adjudicated = set()
+    adopted = set()
+    for record in families:
+        p = record['payload']
+        decisions = p.get('candidate_decisions', p.get('decisions', []))
+        slots = [item.get('angle', item.get('slot')) for item in decisions if isinstance(item, dict)]
+        enabled = p.get('enabled_slots')
+        enabled_valid = enabled is None or (isinstance(enabled, list) and len(enabled) == len(set(enabled))
+            and set(enabled) <= {'P1_DEDUP', 'P2_BUDGET', 'P3_ORDER'})
+        complete = (p.get('complete') is True and p.get('family_size') == 3 and len(decisions) == 3
+            and len(slots) == 3 and set(slots) == {'P1_DEDUP', 'P2_BUDGET', 'P3_ORDER'}
+            and enabled_valid and p.get('round_id') not in (None, '', 'UNKNOWN', 'N/A')
+            and p.get('verdict') != 'ROUND_ABORTED')
+        if not complete:
+            continue
+        complete_rounds.add(p.get('round_id'))
+        for decision in decisions:
+            cid = decision.get('candidate_id')
+            infra = decision.get('failure_origin') == 'INFRASTRUCTURE' or bool(set(decision.get('reason_codes') or []) & {'INFRA_FAILURE', 'PARTIAL_REPLAY', 'QUERY_REPLAY_FAILURE', 'EXECUTION_EVIDENCE_MISSING', 'EXECUTION_EVIDENCE_INVALID'})
+            if cid and not infra and decision.get('verdict') not in (None, 'UNKNOWN', 'INCONCLUSIVE'):
+                adjudicated.add(cid)
+        if p.get('adopted_candidate_id'):
+            adopted.add(p['adopted_candidate_id'])
+    replays = _unique([record for record in kinds['Replay'] if record['payload'].get('round_id') in complete_rounds], 'candidate_id')
+    entered = [record for record in replays if record['payload'].get('entered') is True]
+    completed = [record for record in entered if record['payload'].get('completed') is True and record['payload'].get('paired') is True]
+    if complete_rounds:
+        entered_observed = all(type(record['payload'].get('entered')) is bool for record in replays)
+        replay_observed = all(type(record['payload'].get('completed')) is bool and type(record['payload'].get('paired')) is bool for record in entered)
+        output['P5'] = _result('P5', replays + families,
+            len(completed) if entered_observed and replay_observed else None,
+            len(entered) if entered_observed else None)
+        output['S1'] = _result('S1', families, len(adopted & adjudicated), len(adjudicated))
+
+    holdout_records = [record for record in kinds['Holdout'] if record['payload'].get('completed') is True and record['payload'].get('independent') is True]
+    holdout_verdicts = defaultdict(set)
+    for record in holdout_records:
+        holdout_verdicts[record['payload'].get('candidate_id')].add(record['payload'].get('verdict'))
+    ambiguous_holdout = any(key is None or len(values) != 1 or None in values for key, values in holdout_verdicts.items())
+    holdouts = _unique([record for record in holdout_records if len(holdout_verdicts[record['payload'].get('candidate_id')]) == 1], 'candidate_id')
+    verified = {record['payload']['candidate_id'] for record in holdouts if record['payload'].get('verdict') == 'VERIFIED'}
+    verified_improvements = {record['payload']['candidate_id'] for record in holdouts if record['payload'].get('verdict') == 'VERIFIED' and record['payload'].get('improvement') is True}
+    improvement_unknown = any(record['payload'].get('verdict') == 'VERIFIED'
+        and type(record['payload'].get('improvement')) is not bool for record in holdouts)
+    output['S2'] = _result('S2', kinds['Holdout'], len(verified), len(holdouts), status='OK' if holdouts else 'N/A', reason='only independent completed verification; training adoption is excluded')
+    if ambiguous_holdout:
+        output['S2'] = _result('S2', holdout_records, reason='conflicting or incomplete candidate verification identity')
+        verified.clear()
+        verified_improvements.clear()
+
+    selections = [record for record in kinds['Parent'] if record['payload'].get('selected') is True]
+    if selections:
+        counts = Counter(record['payload'].get('parent_id') for record in selections)
+        if None not in counts:
+            output['S3'] = _result('S3', selections, len(counts), len(selections))
+            output['S6'] = _result('S6', selections, sum(n*n for n in counts.values()), len(selections)**2)
+    branches = [record for record in kinds['Parent'] if record['payload'].get('predeclared_window') is True and record['payload'].get('eligible_at_start') is True]
+    if branches:
+        output['S4'] = _flag_rate('S4', branches, lambda p: p.get('eligible_at_end'))
+    depths = [record for record in kinds['Candidate'] if record['payload'].get('lineage_complete') is True and record['payload'].get('lineage_valid') is True]
+    if depths and all(type(record['payload'].get('generation')) is int for record in depths):
+        output['S5'] = _result('S5', depths, max(record['payload']['generation'] for record in depths), count=True)
+
+    memory = kinds['MemoryEvent']
+    def event(record):
+        p = record['payload']
+        return p.get('event_type', p.get('kind', record.get('event_type')))
+    retrieved = [record for record in memory if event(record) in ('MEMORY_RETRIEVED', 'EXPERIENCE_RETRIEVED') and record['payload'].get('raw_retrieval') is True]
+    injected = [record for record in memory if event(record) in ('MEMORY_INJECTED', 'EXPERIENCE_INJECTED', 'EXPERIENCE_MATCHED', 'HANDBOOK_MATCHED')]
+    referenced = [record for record in memory if event(record) == 'PROPOSAL_REFERENCED']
+    used = [record for record in memory if event(record) == 'EXPERIENCE_USED']
+    def use_key(record):
+        p = record['payload']; return (p.get('round_id'), p.get('entry_id'))
+    if retrieved:
+        output['M1'] = _result('M1', retrieved, len(retrieved), count=True)
+        output['M2'] = _result('M2', retrieved+injected, len({use_key(r) for r in injected}), len({use_key(r) for r in retrieved}))
+    if injected:
+        injection_keys = {use_key(r) for r in injected}
+        output['M3'] = _result('M3', injected+referenced, len(injection_keys & {use_key(r) for r in referenced}), len(injection_keys))
+    completed_ids = {record['payload']['candidate_id'] for record in holdouts}
+    checked_uses = {(r['payload'].get('round_id'), r['payload'].get('equivalence_hash'), r['payload'].get('entry_id'), r['payload'].get('candidate_id')) for r in used if r['payload'].get('candidate_id') in completed_ids}
+    if used:
+        output['M4'] = _result('M4', used+holdouts, sum(key[-1] in verified for key in checked_uses), len(checked_uses))
+    pairs = [record for record in memory if event(record) == 'MEMORY_CO_RETRIEVED_PAIR']
+    if pairs:
+        output['M5'] = _flag_rate('M5', pairs, lambda p: p.get('conflicting'))
+    scoped = [record for record in memory if record['payload'].get('entry_fingerprint') and record['payload'].get('current_fingerprint')]
+    if scoped:
+        output['M6'] = _result('M6', scoped, sum(r['payload']['entry_fingerprint'] != r['payload']['current_fingerprint'] for r in scoped), len(scoped))
+
+    costs = _unique(kinds['CostEvent'], 'request_key')
+    summary = {'requests': len(costs) if costs else None, 'observed_request_lower_bound': len(costs),
+               'actual_usage': {'input_tokens': None, 'output_tokens': None, 'cached_tokens': None},
+               'provider_invoiced_nano': None, 'ledger_upper_nano': None, 'unknown_usage_requests': [],
+               'pending_requests': [], 'failed_request_upper_nano': None, 'status': 'UNKNOWN'}
+    if costs:
+        def sum_known(field, selected=costs):
+            values = [record['payload'].get(field) for record in selected]
+            return sum(values) if values and all(type(value) is int and value >= 0 for value in values) else None
+        for field in summary['actual_usage']:
+            summary['actual_usage'][field] = sum_known(field)
+        summary['known_usage_subtotal'] = {
+            field: {'reported_requests': len(values), 'tokens': sum(values) if values else None}
+            for field in summary['actual_usage']
+            for values in [[r['payload'][field] for r in costs
+                            if type(r['payload'].get(field)) is int and r['payload'][field] >= 0]]}
+        summary['known_usage_request_count'] = sum(
+            type(r['payload'].get('input_tokens')) is int and type(r['payload'].get('output_tokens')) is int for r in costs)
+        summary['ledger_upper_nano'] = sum_known('cost_nano_upper')
+        summary['known_ledger_upper_nano'] = sum(r['payload']['cost_nano_upper'] for r in costs if type(r['payload'].get('cost_nano_upper')) is int)
+        summary['provider_invoiced_nano'] = sum_known('provider_invoiced_nano')
+        summary['unknown_usage_requests'] = sorted(r['payload']['request_key'] for r in costs if r['payload'].get('usage_status') != 'KNOWN')
+        unknown_usage = [r for r in costs if r['payload'].get('usage_status') != 'KNOWN']
+        summary['unknown_usage_upper_nano'] = sum_known('cost_nano_upper', unknown_usage) if unknown_usage else 0
+        summary['pending_requests'] = sorted(r['payload']['request_key'] for r in costs if r['payload'].get('pending') is True)
+        failed = [r for r in costs if r['payload'].get('transport_status', r['payload'].get('status'))
+            in {'HTTP_ERROR', 'CREDENTIAL_UNAVAILABLE', 'LOCAL_FAILURE', 'TIMEOUT'}
+            and r['payload'].get('pending') is not True]
+        uncertain = [r for r in costs if r['payload'].get('pending') is True or
+            r['payload'].get('transport_status', r['payload'].get('status')) not in
+            {'RECEIVED', 'HTTP_ERROR', 'CREDENTIAL_UNAVAILABLE', 'LOCAL_FAILURE', 'TIMEOUT'}]
+        summary['failed_request_upper_nano'] = sum_known('cost_nano_upper', failed) if failed else 0
+        summary['failed_request_count'] = len(failed)
+        summary['failure_count_scope'] = 'CONFIRMED_TRANSPORT_FAILURES_ONLY; uncertain outcomes excluded and separately retained'
+        summary['total_failure_count_status'] = 'UNKNOWN' if uncertain else 'KNOWN'
+        summary['uncertain_request_keys'] = sorted(r['payload']['request_key'] for r in uncertain)
+        summary['uncertain_request_upper_nano'] = sum_known('cost_nano_upper', uncertain) if uncertain else 0
+        invoice = summary['provider_invoiced_nano']
+        summary['status'] = 'INVOICED' if invoice is not None else 'UNKNOWN' if summary['ledger_upper_nano'] is None else 'BOUNDED_USAGE_ESTIMATE' if summary['unknown_usage_requests'] else 'USAGE_ESTIMATED'
+        if invoice is not None:
+            output['C1'] = _result('C1', costs, invoice, count=True)
+            output['C1']['value'] = str(Decimal(invoice) / Decimal(1_000_000_000))
+        valid_denominator = len(valid) if proposals and all(type(r['payload'].get('schema_valid')) is bool for r in proposals) else None
+        improvement_denominator = None if improvement_unknown or ambiguous_holdout else len(verified_improvements)
+        for mid, denominator in [('C2', valid_denominator), ('C3', output['P5']['numerator'] if complete_rounds else None), ('C4', improvement_denominator)]:
+            output[mid] = _result(mid, costs, invoice, denominator,
+                status='N/A' if mid == 'C4' and denominator == 0 else None,
+                reason='provider invoice required; ledger upper is not actual charge')
+            if output[mid]['status'] == 'OK':
+                output[mid]['value'] = str(Decimal(invoice) / Decimal(1_000_000_000) / Decimal(denominator))
+    else:
+        if improvement_unknown or ambiguous_holdout:
+            output['C4'] = _result('C4', holdout_records, reason='verified improvement eligibility unknown')
+        elif verified_improvements:
+            output['C4'] = _result('C4', holdout_records, denominator=len(verified_improvements), reason='provider invoice required')
+        else:
+            output['C4'] = _result('C4', [], denominator=0, status='N/A', reason='no independently verified improvement')
+
+    stages = kinds['Stage']
+    output['R1'] = _flag_rate('R1', stages, lambda p: p.get('failed'))
+    recoveries = kinds['Recovery']
+    output['R2'] = _flag_rate('R2', recoveries, lambda p: p.get('success'))
+    executions = kinds['Execution']
+    if executions and all(r['payload'].get('action_id') for r in executions):
+        output['R3'] = _result('R3', executions, len(executions)-len({r['payload']['action_id'] for r in executions}), len(executions))
+    switches = kinds['Promotion']
+    promotions = {r['payload'].get('operation_id') for r in switches if r['payload'].get('status') == 'PROMOTED' and r['payload'].get('operation_id')}
+    rollbacks = {r['payload'].get('operation_id') for r in switches if r['payload'].get('status') == 'ROLLED_BACK' and r['payload'].get('operation_id')}
+    if switches and all(r['payload'].get('operation_id') for r in switches if r['payload'].get('status') in ('PROMOTED', 'ROLLED_BACK')) and (promotions or rollbacks):
+        output['R5'] = _result('R5', switches, len(rollbacks), len(promotions))
+    assessed = [r for r in records if r['payload'].get('evidence_contract') and type(r['payload'].get('evidence_complete')) is bool]
+    output['R6'] = _flag_rate('R6', assessed, lambda p: not p['evidence_complete'])
+    # Current promotion status follows historical terminals, never a registry tip.
+    current_by_history = {}
+    historically_promoted = defaultdict(set)
+    for record in sorted(switches, key=lambda r: (r.get('sequence', r['payload'].get('sequence', 0)), r.get('record_id', r.get('id', '')))):
+        p = record['payload']
+        # Sequence is meaningful within one history, never across sandboxes.
+        history = (p.get('history_source_id', 'UNSPECIFIED'), p.get('history_environment', 'UNSPECIFIED'))
+        if p.get('status') == 'PROMOTED' and p.get('candidate_id'):
+            historically_promoted[history].add(p['candidate_id'])
+            current_by_history[history] = p['candidate_id']
+        elif p.get('status') == 'ROLLED_BACK':
+            current_by_history.pop(history, None)
+            target = p.get('candidate_id')
+            if target and target != p.get('rolled_back_candidate_id') and target in historically_promoted[history]:
+                current_by_history[history] = target
+    current = set(current_by_history.values())
+    return {'metrics': [output[mid] for mid in METRICS], 'cost_breakdown': summary,
+            'current_promoted_candidates': sorted(current),
+            'current_promoted_histories': [{'source_id': h[0], 'environment': h[1], 'candidate_id': c}
+                for h, c in sorted(current_by_history.items())], 'portfolio': analyze_portfolio(records)}
+
+
+def compute_metrics(records):
+    """Partition by all compatibility axes; missing dimensions remain UNKNOWN."""
+    records = tuple(records)
+    groups = defaultdict(list)
+    seen = {}
+    for record in records:
+        identity = record.get('record_id') or record.get('id') or record.get('event_id')
+        key = str(_kind(record)) + ':' + str(identity) if identity is not None else None
+        if key is not None:
+            serialized = json.dumps(record, sort_keys=True, ensure_ascii=False)
+            if key in seen:
+                if seen[key] != serialized:
+                    raise ValueError('CONFLICTING_PROJECTION_IDENTITY')
+                continue
+            seen[key] = serialized
+        dimensions = record.get('dimensions', {})
+        partition = tuple(json.dumps(dimensions.get(name, 'UNKNOWN'), sort_keys=True, ensure_ascii=False) for name in GROUP_DIMENSIONS)
+        groups[partition].append(record)
+    result = []
+    for partition in sorted(groups):
+        observations = groups[partition]
+        group = {'dimensions': dict(zip(GROUP_DIMENSIONS, map(json.loads, partition))), **_group_metrics(observations)}
+        group['compatibility_status'] = 'UNKNOWN' if any(value in ('UNKNOWN', None) for value in group['dimensions'].values() if isinstance(value, (str, type(None)))) else 'KNOWN'
+        role_groups = defaultdict(list)
+        for record in observations:
+            if _kind(record) == 'AgentInvocation':
+                role_groups[str(record.get('dimensions', {}).get('agent_role', 'UNKNOWN'))].append(record)
+        group['agent_roles'] = [{'agent_role': role, 'metrics': [metric for metric in _group_metrics(role_groups[role])['metrics'] if metric['metric_id'].startswith('A')]} for role in sorted(role_groups)]
+        result.append(group)
+    return {'groups': result, 'portfolio': {'status': 'PARTITIONED',
+            'reason': 'portfolio comparisons are restricted to compatibility groups',
+            'groups': [{'dimensions': group['dimensions'], 'portfolio': group['portfolio']} for group in result]}}
