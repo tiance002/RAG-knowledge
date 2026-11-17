@@ -13,6 +13,8 @@ import re
 
 def terms(text: str) -> set[str]:
     words = set(re.findall(r"[a-z0-9][a-z0-9_./-]*", text.lower()))
+    # Keep original tokens and add a conservative plural alias for entity matches.
+    words.update(w[:-1] for w in list(words) if len(w) > 4 and w.isalpha() and w.endswith("s") and not w.endswith("ss"))
     for run in re.findall(r"[\u4e00-\u9fff]+", text):
         words.update(run[i:i + 2] for i in range(len(run) - 1))
     return words - {"the", "and", "what", "for", "was", "with", "from", "this", "that", "its", "are", "how", "does", "were", "which", "when", "have", "has", "our", "your", "can", "into", "including"}
@@ -54,7 +56,7 @@ def _spans(text: str):
                 yield list(dict.fromkeys(([heading] if heading else []) + [h for h in headers if h != row] + [row]))
             i = end + 1
             continue
-        while i + 1 < len(lines) and lines[i + 1].strip() and not lines[i + 1].lstrip().startswith("#") and "\t" not in lines[i + 1]:
+        while i + 1 < len(lines) and lines[i + 1].strip() and not lines[i + 1].lstrip().startswith("#") and "\t" not in lines[i + 1] and lines[i + 1].count("|") < 2:
             i += 1
         end = offsets[i] + len(lines[i])
         context = [heading] if heading and heading[0] < offsets[start] else []
@@ -79,7 +81,9 @@ def complete_context(*, question: str, messages: list[dict], documents: list[dic
     """
     original = copy.deepcopy(messages)
     total = sum(len(str(m.get("content", ""))) for m in original)
-    budget = min(6000, total // 10)
+    # A short follow-up still needs room for one complete source evidence unit.
+    # This local character heuristic is separate from aggregate token/latency gates.
+    budget = min(6000, max(2048, total // 10))
     if max_extra_chars is not None:
         budget = min(budget, max(0, max_extra_chars))
     query = terms(question)
@@ -88,7 +92,7 @@ def complete_context(*, question: str, messages: list[dict], documents: list[dic
     # Pronoun follow-ups can use recent user turns, never previous assistant claims.
     if len(query) < 4 or re.search(r"\b(its|previous|same|it)\b|同一|上述", question, re.I):
         prior = [m.get("content", "") for m in original if m.get("role") == "user"]
-        query |= terms(" ".join(prior[-3:]))
+        query |= terms(" ".join(prior[-2:]))
     existing = "\n".join(str(m.get("content", "")) for m in original if m.get("role") == "system")
     candidates = []
     corpus_text = "\n".join(d.get("text", "").lower() for d in documents)

@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import statistics
 import sys
 import time
 import zipfile
@@ -79,7 +80,7 @@ def catalog_records(catalog):
 def resolve_documents(*, question, messages, citations, catalog, cache):
     authorized = {}
     unresolved = []
-    runtime_text = question + "\n" + "\n".join(str(m.get("content", "")) for m in messages)
+    runtime_text = question + "\n" + "\n".join(str(m.get("content", "")) for m in messages if m.get("role") == "user")
     for number, citation in enumerate(citations, 1):
         metadata = citation.get("source_metadata") or {}
         anchor_hash = metadata.get("source_sha256")
@@ -102,7 +103,8 @@ def resolve_documents(*, question, messages, citations, catalog, cache):
     if not authorized:
         # A genuine runtime retrieval fallback: rare lexical matches in raw corpus,
         # driven by prior USER questions for pronoun follow-ups, not answer history.
-        user_text = " ".join(str(m.get("content", "")) for m in messages if m.get("role") == "user")
+        user_turns = [str(m.get("content", "")) for m in messages if m.get("role") == "user"]
+        user_text = " ".join(user_turns[-2:])
         query = terms(question + " " + user_text) - {"previous", "above", "data", "question", "preparation", "factor", "yield", "table", "answer", "please"}
         corpus = []
         for r in catalog:
@@ -170,6 +172,8 @@ def main():
     if out.resolve().drive.upper() != "E:":
         raise ValueError("candidate artifacts must be written to the authorized E: task root")
     out.mkdir(parents=True, exist_ok=True)
+    if (out / "manifest.json").exists():
+        raise ValueError("output already contains a candidate manifest; use a new versioned directory")
     (out / "requests").mkdir(exist_ok=True)
     # Filtering by identifier occurs before accessing any request/citation/question body.
     manifest = [e for e in load(root / "requests-manifest.json") if e.get("item_id") in allowed and e.get("item_id") not in excluded]
@@ -181,6 +185,8 @@ def main():
         started = time.perf_counter()
         raw = (root / entry["request_path"]).read_bytes()
         request = json.loads(raw)
+        original_messages = request["messages"]
+        original_parameters = {k: v for k, v in request.items() if k != "messages"}
         canonical_hash = sha(json.dumps(request, ensure_ascii=False, sort_keys=True).encode())
         if canonical_hash != entry["request_sha256"]:
             raise ValueError("frozen request hash mismatch: " + entry["item_id"])
@@ -189,16 +195,45 @@ def main():
         result = complete_context(question=entry["question"], messages=request["messages"], documents=docs)
         request["messages"] = result.pop("messages")
         result["unresolved"].extend(unresolved)
+        # Validate this exact generation while its source cache is still available.
+        messages = request["messages"]
+        insertion = next((i for i, m in enumerate(original_messages) if m.get("role") != "system"), len(original_messages))
+        if result["added_chars"]:
+            supplement = messages[insertion]
+            assert supplement["role"] == "system"
+            assert len(supplement["content"]) == result["added_chars"] <= result["budget_chars"]
+            assert messages[:insertion] + messages[insertion + 1:] == original_messages
+        else:
+            assert messages == original_messages
+        assert {k: v for k, v in request.items() if k != "messages"} == original_parameters
+        for selected in result["selected"]:
+            text, _, digest = cache[selected["source"]]
+            assert digest == selected["source_sha256"]
+            for span in selected["spans"]:
+                native = text[span["start"]:span["end"]]
+                assert sha(native.encode()) == span["span_sha256"]
+                assert native in supplement["content"]
         dest = out / "requests" / f"{index:03d}.json"
         payload = json.dumps(request, ensure_ascii=False, indent=2).encode()
         dest.write_bytes(payload)
+        assert sha(dest.read_bytes()) == sha(payload)
         results.append(dict(item_id=entry["item_id"], request_path=str(dest), request_sha256=sha(payload), baseline_request_sha256=canonical_hash, baseline_file_sha256=sha(raw),
                             preparation_seconds=time.perf_counter() - started, resolved_documents=len(docs), original_citations=citations, **result))
     report = dict(schema="glm40-new-context/v1", arm="NEW_CONTEXT", identical_baseline_input=False,
                   runtime_gold_access=False, source_selection="runtime anchors / explicit references; zero-anchor rare question+prior-user lexical fallback; no item-id mapping",
                   count=len(results), resolved_documents=sum(r["resolved_documents"] for r in results), unique_sources_read=len(cache),
                   cases_with_supplement=sum(bool(r["added_chars"]) for r in results), added_chars=sum(r["added_chars"] for r in results), cases=results)
-    (out / "manifest.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest_path = out / "manifest.json"
+    manifest_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    validation = dict(validated_cases=len(results), manifest_sha256=sha(manifest_path.read_bytes()),
+                      history_and_original_system_unchanged=True, request_parameters_unchanged=True,
+                      request_hashes_verified=True, native_source_span_hashes_verified=True,
+                      all_budgets_respected=True, excluded_intersection=sorted(allowed & excluded),
+                      evidence_budget_rule="min(6000, max(2048, original_message_chars // 10)); not an aggregate token gate",
+                      preparation_seconds_total=sum(r["preparation_seconds"] for r in results),
+                      preparation_seconds_median=statistics.median(r["preparation_seconds"] for r in results),
+                      cases=[{k: r[k] for k in ("item_id", "request_sha256", "baseline_request_sha256", "preparation_seconds", "resolved_documents", "added_chars", "budget_chars", "unresolved")} for r in results])
+    (out / "validation.json").write_text(json.dumps(validation, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({k:v for k,v in report.items() if k != "cases"}, ensure_ascii=False))
 
 
