@@ -8,17 +8,17 @@
 **Status:** complete
 - PR3head45e77f2；隔离新分支E:/rsi-v24-m1a，保护/原始日志/账本/M0报告哈希快照。
 ### Phase 2: 实际运行接缝观测
-**Status:** in_progress
+**Status:** complete
 - Invocation、Proposal、Memory、Parent、Stage/Recovery；既有EventLog信封承载版本化metadata侧车，不修改旧事件和前沿。
 ### Phase 3: 分析适配与负控制
-**Status:** in_progress
+**Status:** complete
 - 新旧兼容，缺终态UNKNOWN，新分母仅来自新事件，18类合成负控制。
 ### Phase 4: 历史回归与完整测试
-**Status:** pending
+**Status:** complete
 - M0历史只读重放，报告字节/指标比对、输入SHA和完整回归。
 ### Phase 5: 交付与停止
-**Status:** pending
+**Status:** complete
 - 契约/样例/验收/M1-B方案，提交DraftPR，核对CI原始日志，停止等待人工审查。
 
 ## Next Step
-完成实际Stage/Recovery接缝与三路实现整合。
+M1-A完成；停止等待人工审查，不进入M1-B。
