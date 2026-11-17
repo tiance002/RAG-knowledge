@@ -380,3 +380,87 @@ def test_sealed_failure_learning_never_calls_curator_and_internal_quarantine_kee
     learning=q.load(output/'learning-summary.json')
     assert learning['harmful_credit'] is False
     assert learning['status']==('HOLDOUT_FAILED' if outcome=='regression' else 'HOLDOUT_INCONCLUSIVE')
+
+def test_query_round_single_observation_database(monkeypatch, tmp_path):
+    import json
+    from rsik.budgets import Budget
+    from rsik.handbook.store import Handbook
+    from rsik.lineage import LineagePolicy, ParentPool
+    from rsik.observability import Observer
+    from rsik.openai_roles import OpenAIRoles, TASKS
+    from rsik.query_learning import ExperienceSession
+    from rsik.state import StageJournal
+    from rsik.tests.test_invocation_observability import receipt
+
+    kwargs, replays, _ = setup(monkeypatch, tmp_path)
+    fake = FakeRoles(same_patch=True)
+    def transport(body, *_):
+        role = next(k for k, task in TASKS.items() if body['input'][0]['content'].endswith(task))
+        context = json.loads(body['input'][1]['content'])
+        if role == 'diagnose':
+            answer = fake.diagnose(context['public'])
+        elif role in SLOTS:
+            answer = fake.propose(role, context['public'], context['diagnosis'])
+        else:
+            answer = {'status': 'ABSTAIN', 'result': None, 'reason': 'SYNTHETIC'}
+        return receipt(answer)
+
+    budget = Budget(tmp_path / 'test-budget.sqlite')
+    observer = Observer(tmp_path / 'run-observations' / 'observations.sqlite')
+    book = Handbook(tmp_path / 'book')
+    session = ExperienceSession(tmp_path / 'learning', book)
+    for key in ('roles', 'advisory_roles'):
+        kwargs[key] = OpenAIRoles(budget, tmp_path / key, tmp_path / 'unused.env',
+                                  kwargs['scanner'], transport=transport)
+    kwargs.update(handbook=book, experience_session=session, compatibility_fingerprint='a' * 64,
+                  observer=observer)
+    # This coordinator consumes an already chosen parent. Exercise the separate
+    # selection entrypoint with the same run observer, including its empty return.
+    pool = ParentPool(tmp_path / 'pool', evidence_mode='SYNTHETIC_CONTROL')
+    assert pool.select(LineagePolicy(tmp_path / 'policy'), observer=observer,
+                       round_id=kwargs['public']['round_id']) is None
+    journal_calls = []
+    execute = StageJournal.execute
+    def capture(journal, stage, inputs, action, reconcile, **options):
+        journal_calls.append((journal, stage, inputs, reconcile))
+        return execute(journal, stage, inputs, action, reconcile, **options)
+    monkeypatch.setattr(StageJournal, 'execute', capture)
+    result = q.run_query_round(**kwargs)
+    assert result['family_size'] == 3 and len(replays) == 12
+    events = observer.log.read()
+    assert sum(e['event_type'] == 'INVOCATION_FINISHED' for e in events) == 6
+    assert budget.snapshot()['completed'] == budget.snapshot()['attempts'] == 6
+    kinds = {e['event_type'] for e in events}
+    assert {'PARENT_SELECTION_COMPLETED', 'PROPOSAL_STATIC_PASSED',
+            'MEMORY_RETRIEVAL_COMPLETED', 'STAGE_STARTED', 'STAGE_COMPLETED',
+            'EXECUTION_STARTED'} <= kinds
+    assert sum(e['event_type'] == 'STAGE_COMPLETED' and
+               e['payload']['stage_id'] == 'LEARNING_COMMIT' for e in events) == 1
+    assert not any(kind.startswith('MODEL_REQUEST_') for kind in kinds)
+    assert list(tmp_path.rglob('observations.sqlite')) == [observer.path]
+    # Reconcile an existing stage through the same journal and checkpoint.
+    journal, stage, inputs, reconcile = journal_calls[0]
+    assert journal.directory == kwargs['directory'] / 'stages'
+    assert journal._path(stage, 'checkpoint').is_file()
+    # The synthetic registry uses slot aliases instead of production candidate IDs.
+    # Its original reconciliation callback therefore refuses that identity.
+    no_action = lambda _: pytest.fail('duplicate action')
+    with pytest.raises(RuntimeError, match='committed side effect no longer matches'):
+        execute(journal, stage, inputs, no_action, reconcile)
+    failed = observer.log.read()[len(events):]
+    assert failed[-1]['event_type'] == 'RECOVERY_BLOCKED'
+    assert all(e['event_type'] != 'EXECUTION_STARTED' for e in failed)
+    # Independently look up the registered child in this fixture by its slot.
+    slot = stage.removeprefix('registry-')
+    child = kwargs['registry'].children[slot]
+    existing = {'candidate_id': child['candidate_id']}
+    events = observer.log.read()
+    _, recovered = execute(journal, stage, inputs, no_action,
+                           lambda _: {'status': 'MATCHED', 'output': existing})
+    assert recovered
+    tail = observer.log.read()[len(events):]
+    assert [e['event_type'] for e in tail] == [
+        'STAGE_STARTED', 'RECOVERY_STARTED', 'STAGE_COMPLETED', 'RECOVERY_COMPLETED']
+    assert {e['payload']['attempt'] for e in tail} == {3}
+    assert len({e['payload']['operation_id'] for e in tail}) == 1
+    assert list(tmp_path.rglob('observations.sqlite')) == [observer.path]

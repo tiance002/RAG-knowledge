@@ -46,12 +46,20 @@ def analyze_portfolio(records):
                     parse_status = 'UNPARSABLE'
             else:
                 parse_status = 'SOURCE_SCOPE_UNKNOWN'
+        full_identity = 'normalized_ast_sha256' in payload
+        if full_identity:
+            ast_hash = payload['normalized_ast_sha256']
+            if not ast_hash or ast_hash == 'UNKNOWN':
+                ast_hash = None
+            parse_status = 'FULL_WORKER' if ast_hash else 'UNKNOWN'
         instances.append({
             'proposal_id': payload.get('proposal_id', identity),
             'slot': payload.get('slot', payload.get('angle')),
             'agent_role': record.get('dimensions', {}).get('agent_role', payload.get('agent_role', 'UNKNOWN')),
             'round_id': payload.get('round_id'), 'schema_valid': payload.get('schema_valid'),
             'static_pass': payload.get('static_pass'), 'patch_byte_hash': byte_hash,
+            **({'worker_sha256': payload.get('worker_sha256'),
+                'normalized_ast_sha256': ast_hash} if full_identity else {}),
             'ast_hash': ast_hash, 'ast_scope': parse_status,
             'hypothesis_identity': payload.get('hypothesis_id'),
             'expected_impact_identity': payload.get('expected_impact_id'),

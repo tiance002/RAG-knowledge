@@ -106,7 +106,7 @@ class ExperienceSession:
         intent.unlink()
         return result
 
-    def learn_round(self, *, record_path, public_path, compatibility_fingerprint):
+    def learn_round(self, *, record_path, public_path, compatibility_fingerprint, observer=None):
         record_path,public_path=Path(record_path),Path(public_path)
         record,public=load(record_path),load(public_path)
         class Recorder:
@@ -118,7 +118,7 @@ class ExperienceSession:
             'bindings':file_bindings([record_path,public_path]),
             'record_path':str(record_path.resolve()),'public_path':str(public_path.resolve()),
             'compatibility_fingerprint':compatibility_fingerprint}
-        return self._start(digest(record),descriptor)
+        return self._start(digest(record),descriptor,observer=observer)
 
     def learn_delta(self, evidence_id, *, response_path, public_path, context_path,
                     prefix_events=(), result=None, result_path=None, verification=None, request_proof=None):
@@ -142,7 +142,7 @@ class ExperienceSession:
             'verification':verification,'request_proof':request_proof,'prefix_events':list(deepcopy(prefix_events))}
         return self._start(evidence_id,descriptor)
 
-    def _start(self,evidence_id,descriptor):
+    def _start(self,evidence_id,descriptor,*,observer=None):
         self.verify()
         if not isinstance(evidence_id,str) or not evidence_id or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.' for c in evidence_id):
             raise ValueError('INVALID_LEARNING_ID')
@@ -172,17 +172,17 @@ class ExperienceSession:
                 'operation_path':path.name,'operation_hash':bytes_hash(data)}
         atomic_write(self.directory/'learning-intent.json',canonical(intent),exclusive=True)
         self.checkpoint('intent')
-        return self.recover(_initial=True)
+        return self.recover(_initial=True, observer=observer)
 
     def _blocked(self,reason):
         atomic_write(self.directory/'recovery-status.json',canonical({'status':'RECOVERY_BLOCKED','reason':reason}))
         raise ValueError('RECOVERY_BLOCKED_'+reason)
 
-    def recover(self, *, _initial=False):
+    def recover(self, *, _initial=False, observer=None):
         from .observability import observation_for
         from .state import observation_failure
         import time
-        observer = observation_for(self)
+        observer = observer if observer is not None else observation_for(self)
         intent_path = self.directory / 'learning-intent.json'
         operation_id = 'UNKNOWN'
         if intent_path.exists():

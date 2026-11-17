@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+import sqlite3
 import re
 import sys
 import time
@@ -101,9 +102,24 @@ class OpenAIRoles:
         if set(self.models)-set(TASKS) or any(model not in {'gpt-6-luna','gpt-6.1-sol'} for model in self.models.values()):
             raise ValueError('MODEL_NOT_ALLOWED')
         self.directory.mkdir(parents=True, exist_ok=True)
-        from .observability import Observer
-        self.observer = observer if observer is not None else Observer(self.directory / "observations.sqlite")
+        self._observer = observer
+        self._observer_lock = threading.RLock()
         self._observation_local = threading.local()
+
+    @property
+    def observer(self):
+        # Workflows attach their shared observer after constructing role clients.
+        # Delay private storage until a standalone client actually needs it.
+        with self._observer_lock:
+            if self._observer is None:
+                from .observability import Observer
+                self._observer = Observer(self.directory / "observations.sqlite")
+            return self._observer
+
+    @observer.setter
+    def observer(self, value):
+        with self._observer_lock:
+            self._observer = value
 
     @property
     def observation_invocation(self):
@@ -117,6 +133,14 @@ class OpenAIRoles:
         return self.call(angle, public, diagnosis)
 
     def call(self, role, public, diagnosis=None):
+        try:
+            return self._call(role, public, diagnosis)
+        except TimeoutError:
+            raise
+        except (OSError, sqlite3.Error) as error:
+            raise StageFailure('STORAGE_ERROR', 'MODEL_EVIDENCE_STORAGE_UNAVAILABLE') from error
+
+    def _call(self, role, public, diagnosis=None):
         self._observation_local.invocation = {}
         if role=='P3_DEPENDENCY' and self.role_profile!=DEPENDENCY:raise ValueError('ROLE_PROFILE_REQUIRED')
         if role not in TASKS:
@@ -258,11 +282,14 @@ class OpenAIRoles:
                     if (not request_path.is_file() or json.loads(request_path.read_text(encoding='utf-8'))!=body
                             or len(starts)!=1 or starts[0]['request_hash']!=digest(body)):
                         raise StageFailure('RECOVERY_ERROR', 'REQUEST_INPUT_CHANGED', global_stop=True)
-                    observed.resume()
                     receipt = json.loads(path.read_text(encoding='utf-8'))
+                    observed.resume(receipt)
                 else:
                     if request_path.exists():
                         raise StageFailure('RECOVERY_ERROR', 'REQUEST_STATUS_UNKNOWN', global_stop=True)
+                    # Require durable invocation evidence before any ledger start
+                    # or dispatch. A failed START must not create a paid attempt.
+                    observed.start()
                     # No fees reserved. Wait for earlier requests near USD5.
                     while True:
                         try:
@@ -276,11 +303,12 @@ class OpenAIRoles:
                             if self.deadline is not None and time.monotonic() >= self.deadline:
                                 raise TimeoutError('AGENT_TIMEOUT')
                             time.sleep(.05)
-                    observed.start()
                     atomic_write(request_path, canonical(body), exclusive=True)
                     try:
                         receipt = (self.transport(body,self.key_file,remaining,response_path=self.directory/(key+'.transport.json'))
                                    if self.transport is single_request else self.transport(body,self.key_file,remaining))
+                    except StageFailure:
+                        raise
                     except TimeoutError:
                         receipt = {'transport_status': 'UNKNOWN'}
                         observed.outcome, observed.failure_origin = 'TIMEOUT', 'TRANSPORT'
@@ -289,11 +317,14 @@ class OpenAIRoles:
                     # Persist before billing receipt; recovery can reconcile the
                     # actual saved usage without sending another request.
                     atomic_write(path, canonical(receipt), exclusive=True)
-                observed.received(receipt)
                 response = receipt.get('response', {})
                 usage = response.get('usage') if receipt.get('transport_status') == 'RECEIVED' else None
                 state = self.budget.complete(key, usage, status=receipt['transport_status'],
                                              provider_request_id=receipt.get('provider_request_id'))
+                # Record actual usage before optional downstream processing can
+                # fail. Telemetry failure must not turn a saved response into
+                # unknown/free usage or trigger another network request.
+                observed.received(receipt)
                 if self.before_request:self.before_request()
                 if state['unbounded_usage_requests']:
                     raise StageFailure('AGENT_ERROR', 'BILLING_OR_REQUEST_STATUS_UNKNOWN', global_stop=True)

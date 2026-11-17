@@ -223,9 +223,9 @@ def _project_legacy_sources(sources, artifacts=()):
 OBSERVATION_SCHEMA = 'rsi-observation/v1'
 # An allowlist of metadata, never prompt, response, patch, or evidence bodies.
 OBSERVATION_SAFE = SAFE | {
-    'schema_version', 'observation_source', 'invocation_id', 'attempt_id', 'attempt',
+    'schema_version', 'metric_contract_version', 'observation_source', 'invocation_id', 'attempt_id', 'attempt',
     'cost_request_key', 'contract_result', 'outcome', 'failure_origin',
-    'proposal_instance_id', 'patch_sha256', 'patch_hash', 'ast_sha256', 'schema_valid', 'static_pass',
+    'proposal_instance_id', 'patch_sha256', 'patch_hash', 'ast_sha256', 'normalized_ast_sha256', 'worker_sha256', 'schema_valid', 'static_pass',
     'hypothesis_hash', 'expected_impact_hash',
     'retrieval_id', 'selection_id', 'rank', 'eligible', 'admitted', 'selected',
     'entry_fingerprint', 'current_fingerprint', 'conflicting', 'equivalence_hash',
@@ -270,6 +270,8 @@ def _project_observations(items):
             typ, identity = 'Recovery', p.get('recovery_attempt_id')
         elif kind in {'EXECUTION_STARTED', 'EXECUTION_FINISHED', 'EXECUTION_COMPLETED'}:
             typ, identity = 'Execution', p.get('actual_execution_id', p.get('execution_id'))
+        elif kind in {'PARENT_SELECTION_STARTED', 'PARENT_SELECTION_COMPLETED'} and p.get('metric_contract_version') == 'rsi-metrics/m1a1':
+            typ, identity = 'Selection', p.get('selection_id')
         elif kind == 'PARENT_SELECTED':
             typ, identity = 'Parent', (p.get('selection_id'), p.get('parent_id'))
         else:
@@ -277,7 +279,9 @@ def _project_observations(items):
         if not identity or isinstance(identity, tuple) and not identity[0]:
             raise ValueError('ANALYTICS_OBSERVATION_IDENTITY_MISSING')
         # An identity is local to a frozen event stream and compatibility cohort.
-        key = (sid, digest({k: _observation_dimensions(p).get(k, 'UNKNOWN') for k in GROUP_DIMENSIONS}), typ, str(identity))
+        cohort = {k: _observation_dimensions(p).get(k, 'UNKNOWN') for k in GROUP_DIMENSIONS}
+        if p.get('metric_contract_version'): cohort['metric_contract_version'] = p['metric_contract_version']
+        key = (sid, digest(cohort), typ, str(identity))
         buckets.setdefault(key, []).append((ref, event))
     records = []
     for (sid, cohort, typ, identity), events in sorted(buckets.items()):
@@ -326,6 +330,9 @@ def _project_observations(items):
             else: merged[field] = 'UNKNOWN'
         elif typ == 'Execution':
             merged['action_id'] = merged.get('action_id', merged.get('operation_id'))
+        elif typ == 'Selection':
+            merged.update(started='PARENT_SELECTION_STARTED' in kinds, completed='UNKNOWN',
+                          valid='UNKNOWN', selected_parent_id=None)
         elif typ == 'Parent':
             merged['selected'] = True
         if typ in {'AgentInvocation', 'Stage', 'Recovery'}:
@@ -360,6 +367,43 @@ def _project_observations(items):
             rec['payload'] = payload
             if kind.startswith('EVIDENCE_'): rec['projection_type'] = 'EvidenceAssessment'
             records.append(rec)
+    # A selected event is evidence of a returned parent only after its own
+    # operation completes consistently. Ranking/rejection never supply a parent.
+    for selection in [r for r in records if r['projection_type'] == 'Selection']:
+        sid = selection['source_refs'][0]['source_id']
+        selection_id = selection['payload']['selection_id']
+        lifecycle = [e for source, _, e in items if source == sid and
+                     e['payload'].get('selection_id') == selection_id and
+                     e['payload'].get('metric_contract_version') == selection['payload'].get('metric_contract_version') and
+                     e['event_type'] in {'PARENT_SELECTION_STARTED', 'PARENT_SELECTION_COMPLETED', 'PARENT_SELECTED'} and
+                     all(_observation_dimensions(e['payload']).get(k) == selection['dimensions'].get(k)
+                         for k in GROUP_DIMENSIONS)]
+        starts = {digest(e['payload']) for e in lifecycle if e['event_type'] == 'PARENT_SELECTION_STARTED'}
+        ends = {digest(e['payload']): e['payload'] for e in lifecycle if e['event_type'] == 'PARENT_SELECTION_COMPLETED'}
+        selected = {digest(e['payload']): e['payload'] for e in lifecycle if e['event_type'] == 'PARENT_SELECTED'}
+        end = next(iter(ends.values())) if len(ends) == 1 else {}
+        chosen = next(iter(selected.values())) if len(selected) == 1 else {}
+        returned = end.get('returned_count')
+        consistent_context = all(len({digest(e['payload'][field]) for e in lifecycle if field in e['payload']}) <= 1
+            for field in ('round_id', 'attempt', 'policy_version', 'seed', 'exploration', 'allow_bootstrap'))
+        order = {kind: min(e.get('sequence', 0) for e in lifecycle if e['event_type'] == kind)
+                 for kind in {e['event_type'] for e in lifecycle}}
+        ordered = (order.get('PARENT_SELECTION_STARTED', float('inf')) <
+                   order.get('PARENT_SELECTION_COMPLETED', float('-inf')) and
+                   (not selected or order.get('PARENT_SELECTION_STARTED', float('inf')) <
+                    order.get('PARENT_SELECTED', float('-inf')) < order.get('PARENT_SELECTION_COMPLETED', float('-inf'))))
+        valid = (ordered and len(starts) == 1 and len(ends) == 1 and consistent_context and
+                 type(returned) is int and returned in (0, 1) and len(selected) == returned and
+                 (returned == 0 or chosen.get('parent_id') not in (None, '', 'UNKNOWN') and
+                  chosen.get('candidate_id', chosen.get('parent_id')) == chosen.get('parent_id')))
+        expected_count = 2 + int(type(returned) is int and returned == 1)
+        known_count = int(bool(starts)) + int(bool(ends)) + int(bool(selected) and expected_count == 3)
+        selection['payload'].update(completed=True if valid else 'UNKNOWN', valid=True if valid else 'UNKNOWN',
+            selected_parent_id=chosen.get('parent_id') if valid and returned else None,
+            evidence_contract='rsi-observation-completeness/v1:Selection', evidence_complete=valid,
+            expected_count=expected_count, known_count=known_count,
+            missing_count=expected_count-known_count)
+        selection['event_ids'] = sorted({e['event_id'] for e in lifecycle})
     proposals = {(r['source_refs'][0]['source_id'], r['payload'].get('proposal_instance_id')): r
                  for r in records if r['projection_type'] == 'Proposal'}
     for record in records:
@@ -367,6 +411,8 @@ def _project_observations(items):
         proposal = proposals.get((record['source_refs'][0]['source_id'], record['payload'].get('proposal_instance_id')))
         if proposal:
             for field in ('candidate_id', 'family_id', 'round_id'):
+                if field == 'round_id' and record['payload'].get('metric_contract_version') == 'rsi-metrics/m1a1':
+                    continue
                 if proposal['payload'].get(field): record['payload'][field] = proposal['payload'][field]
     return records
 

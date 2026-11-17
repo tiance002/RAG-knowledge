@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import time
 import hashlib
+import ast
 
 from .role_profiles import LEGACY, roles_for, profile_manifest
 from .events import digest
@@ -21,6 +22,21 @@ def placeholder(angle, proposal_id, reason, *, verdict='INCONCLUSIVE'):
             'reason_codes': [reason], 'gates_passed': False, 'round_stop': False,
             'sign_p_raw': {'numerator': 1, 'denominator': 1, 'value': 1.0},
             'sign_p_adjusted': None, 'per_question': [], 'delta_total': None}
+
+
+def full_worker_identity(artifact):
+    """Identify the materialized source independently of the proposed edit."""
+    worker = artifact.get('worker') if isinstance(artifact, dict) else None
+    identity = {'worker_sha256': 'UNKNOWN', 'normalized_ast_sha256': 'UNKNOWN'}
+    if isinstance(worker, bytes):
+        identity['worker_sha256'] = hashlib.sha256(worker).hexdigest()
+        try:
+            tree = ast.dump(ast.parse(worker), include_attributes=False)
+        except (SyntaxError, ValueError, RecursionError):
+            pass
+        else:
+            identity['normalized_ast_sha256'] = hashlib.sha256(tree.encode('utf-8')).hexdigest()
+    return identity
 
 
 def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadline=None, role_profile=LEGACY, observer=None):
@@ -69,7 +85,8 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
         validate_diagnosis(diagnosis, public)
     except (ContractError, StageFailure, TimeoutError) as error:
         reason = error.code if isinstance(error, ContractError) else error.reason_code if isinstance(error, StageFailure) else 'AGENT_TIMEOUT'
-        failure('DIAGNOSIS', 'AGENT_ERROR', reason, 'AGENT')
+        failure('DIAGNOSIS', error.category if isinstance(error, StageFailure) else 'AGENT_ERROR',
+                reason, 'SYSTEM' if isinstance(error, StageFailure) and error.global_stop else 'AGENT')
         critical = isinstance(error, StageFailure) and error.global_stop
         record.update(execution_state='FAILED' if critical else 'COMPLETED',
                       verdict='ROUND_ABORTED' if critical else 'NO_ADOPTION', stop_reason=reason,
@@ -134,7 +151,7 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
             record['agent_call_results'][slot] = reason
             decisions.append(placeholder(slot, 'abstain-' + slot, reason))
             if error:
-                failure('PROPOSAL', 'AGENT_ERROR', reason, 'AGENT')
+                failure('PROPOSAL', error['category'], reason, 'AGENT')
             continue
         record['proposal_instances'][slot] = proposal
         try:
@@ -149,7 +166,10 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
                               adopted_proposal_id=None, adopted_candidate_id=None, candidate_decisions=decisions)
                 return record
             continue
-        observe('PROPOSAL_STATIC_PASSED', slot, proposal, static_pass=True, worker_hash=hashlib.sha256(artifact['worker']).hexdigest() if isinstance(artifact, dict) and isinstance(artifact.get('worker'), bytes) else 'UNKNOWN')
+        if observer is not None:
+            identity = full_worker_identity(artifact)
+            observe('PROPOSAL_STATIC_PASSED', slot, proposal, static_pass=True,
+                    worker_hash=identity['worker_sha256'], **identity)
         artifacts[slot] = artifact
         record['qualified'].append(slot)
     for slot in SLOTS:

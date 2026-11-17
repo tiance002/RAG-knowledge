@@ -50,3 +50,21 @@ METRICS = {key: {
 # Separate versioned observation protocol; M0 metric IDs/definitions stay frozen.
 OBSERVATION_SCHEMA = 'rsi-observation/v1'
 COMPLETENESS_SCHEMA = 'rsi-observation-completeness/v1'
+
+METRIC_CONTRACT_VERSION = 'rsi-metrics/m1a1'
+MEMORY_METRIC_DEFINITIONS = {
+    'M1': {'numerator': 'unique explicit retrieval_id operations including empty results',
+           'denominator': 'not applicable'},
+    'M2': {'numerator': 'distinct explicit injected retrieval_id and entry_id pairs present in retrieval results',
+           'denominator': 'distinct explicit retrieved retrieval_id and entry_id pairs'},
+    'M3': {'numerator': 'distinct injected round_id and entry_id pairs explicitly referenced',
+           'denominator': 'distinct explicit injected round_id and entry_id pairs'},
+}
+
+# v1 operation denominator semantics; frozen M0 definitions above remain intact.
+SELECTION_METRIC_DEFINITIONS = {
+    'S3': {'numerator': 'distinct actual parents from completed valid selection operations',
+           'denominator': 'completed valid selection operations including empty results'},
+    'S6': {'numerator': 'sum of squared actual parent counts',
+           'denominator': 'square of completed valid selection operations including empty results'},
+}

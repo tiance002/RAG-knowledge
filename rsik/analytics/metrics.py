@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 from decimal import Decimal
 import json
 
-from .schemas import GROUP_DIMENSIONS, METRICS
+from .schemas import GROUP_DIMENSIONS, METRICS, MEMORY_METRIC_DEFINITIONS, SELECTION_METRIC_DEFINITIONS
 from .portfolio import analyze_portfolio
 
 
@@ -147,12 +147,29 @@ def _group_metrics(records):
         verified.clear()
         verified_improvements.clear()
 
-    selections = [record for record in kinds['Parent'] if record['payload'].get('selected') is True]
-    if selections:
-        counts = Counter(record['payload'].get('parent_id') for record in selections)
-        if None not in counts:
-            output['S3'] = _result('S3', selections, len(counts), len(selections))
-            output['S6'] = _result('S6', selections, sum(n*n for n in counts.values()), len(selections)**2)
+    operations = [r for r in kinds['Selection'] if r['payload'].get('metric_contract_version') == 'rsi-metrics/m1a1']
+    if operations:
+        complete = [r for r in operations if r['payload'].get('completed') is True
+                    and r['payload'].get('valid') is True]
+        counts = Counter(r['payload']['selected_parent_id'] for r in complete
+                         if r['payload'].get('selected_parent_id') is not None)
+        for mid, numerator, denominator in (
+                ('S3', len(counts), len(complete)),
+                ('S6', sum(n*n for n in counts.values()), len(complete)**2)):
+            output[mid] = _result(mid, operations, numerator if complete else None, denominator if complete else None,
+                reason='completed valid selection operations including empty results; incomplete operations excluded')
+            output[mid].update(completed_operations=len(complete),
+                               unknown_operations=len(operations)-len(complete))
+    else:
+        # Frozen M0 report semantics; v1 selected-only fragments cannot be
+        # upgraded into completed operations by this compatibility branch.
+        selections = [r for r in kinds['Parent'] if r['payload'].get('selected') is True
+                      and r['payload'].get('metric_contract_version') != 'rsi-metrics/m1a1']
+        if selections:
+            counts = Counter(record['payload'].get('parent_id') for record in selections)
+            if None not in counts:
+                output['S3'] = _result('S3', selections, len(counts), len(selections))
+                output['S6'] = _result('S6', selections, sum(n*n for n in counts.values()), len(selections)**2)
     branches = [record for record in kinds['Parent'] if record['payload'].get('predeclared_window') is True and record['payload'].get('eligible_at_start') is True]
     if branches:
         output['S4'] = _flag_rate('S4', branches, lambda p: p.get('eligible_at_end'))
@@ -170,14 +187,42 @@ def _group_metrics(records):
     used = [record for record in memory if event(record) == 'EXPERIENCE_USED']
     def use_key(record):
         p = record['payload']; return (p.get('round_id'), p.get('entry_id'))
-    if retrieved:
+    current_memory = any(r['payload'].get('metric_contract_version') == 'rsi-metrics/m1a1' for r in memory)
+    if current_memory:
+        operations = [r for r in memory if event(r) in {'MEMORY_RETRIEVAL_STARTED', 'MEMORY_RETRIEVAL_COMPLETED', 'MEMORY_RETRIEVED', 'EXPERIENCE_RETRIEVED'}]
+        explicit_injected = [r for r in injected if event(r) in {'MEMORY_INJECTED', 'EXPERIENCE_INJECTED'}]
+        def explicit_key(record, axis):
+            p = record['payload']
+            values = (p.get(axis), p.get('entry_id'))
+            return values if all(isinstance(v, str) and v and v != 'UNKNOWN' for v in values) else None
+        retrieval_ids = {r['payload']['retrieval_id'] for r in operations if isinstance(r['payload'].get('retrieval_id'), str) and r['payload']['retrieval_id'] not in {'', 'UNKNOWN'}}
+        retrieved_keys = {key for r in retrieved if (key := explicit_key(r, 'retrieval_id')) is not None}
+        injected_keys = {key for r in explicit_injected if (key := explicit_key(r, 'retrieval_id')) is not None}
+        if retrieval_ids:
+            identified = all(r['payload'].get('retrieval_id') in retrieval_ids for r in operations)
+            output['M1'] = _result('M1', operations, len(retrieval_ids) if identified else None, count=True)
+            completed_ids = {r['payload'].get('retrieval_id') for r in operations if event(r) != 'MEMORY_RETRIEVAL_STARTED'}
+            unbound = any(explicit_key(r, 'retrieval_id') is None for r in explicit_injected)
+            results_known = all(explicit_key(r, 'retrieval_id') is not None or r['payload'].get('returned_count') == 0
+                                for r in operations if event(r) != 'MEMORY_RETRIEVAL_STARTED')
+            if identified and retrieval_ids <= completed_ids and not unbound and results_known:
+                output['M2'] = _result('M2', operations+explicit_injected, len(retrieved_keys & injected_keys), len(retrieved_keys))
+            else:
+                output['M2'] = _result('M2', operations+explicit_injected,
+                    reason='incomplete retrieval result or injection missing explicit operation identity')
+        if explicit_injected:
+            injection_keys = {key for r in explicit_injected if (key := explicit_key(r, 'round_id')) is not None}
+            reference_keys = {key for r in referenced if (key := explicit_key(r, 'round_id')) is not None}
+            if all(explicit_key(r, 'round_id') is not None for r in explicit_injected+referenced):
+                output['M3'] = _result('M3', explicit_injected+referenced, len(injection_keys & reference_keys), len(injection_keys))
+    if retrieved and not current_memory:
         output['M1'] = _result('M1', retrieved, len(retrieved), count=True)
         output['M2'] = _result('M2', retrieved+injected, len({use_key(r) for r in injected}), len({use_key(r) for r in retrieved}))
-    if not retrieved and any(event(r) == 'MEMORY_RETRIEVAL_COMPLETED' and r['payload'].get('returned_count') == 0
+    if not current_memory and not retrieved and any(event(r) == 'MEMORY_RETRIEVAL_COMPLETED' and r['payload'].get('returned_count') == 0
                              and r['payload'].get('observation_source') == 'rsi-observation/v1' for r in memory):
         output['M1'] = _result('M1', memory, 0, count=True)
         output['M2'] = _result('M2', memory, 0, 0)
-    if injected:
+    if injected and not current_memory:
         injection_keys = {use_key(r) for r in injected}
         output['M3'] = _result('M3', injected+referenced, len(injection_keys & {use_key(r) for r in referenced}), len(injection_keys))
     completed_ids = {record['payload']['candidate_id'] for record in holdouts}
@@ -319,11 +364,16 @@ def compute_metrics(records):
             seen[key] = serialized
         dimensions = record.get('dimensions', {})
         partition = tuple(json.dumps(dimensions.get(name, 'UNKNOWN'), sort_keys=True, ensure_ascii=False) for name in GROUP_DIMENSIONS)
+        partition += (json.dumps(record['payload'].get('metric_contract_version', 'LEGACY')),)
         groups[partition].append(record)
     result = []
     for partition in sorted(groups):
         observations = groups[partition]
-        group = {'dimensions': dict(zip(GROUP_DIMENSIONS, map(json.loads, partition))), **_group_metrics(observations)}
+        group = {'dimensions': dict(zip(GROUP_DIMENSIONS, map(json.loads, partition[:-1]))), **_group_metrics(observations)}
+        contract = json.loads(partition[-1])
+        if contract != 'LEGACY':
+            group['metric_contract_version'] = contract
+            group['metric_definitions'] = {**MEMORY_METRIC_DEFINITIONS, **SELECTION_METRIC_DEFINITIONS}
         group['compatibility_status'] = 'UNKNOWN' if any(value in ('UNKNOWN', None) for value in group['dimensions'].values() if isinstance(value, (str, type(None)))) else 'KNOWN'
         role_groups = defaultdict(list)
         for record in observations:
@@ -333,4 +383,5 @@ def compute_metrics(records):
         result.append(group)
     return {'groups': result, 'portfolio': {'status': 'PARTITIONED',
             'reason': 'portfolio comparisons are restricted to compatibility groups',
-            'groups': [{'dimensions': group['dimensions'], 'portfolio': group['portfolio']} for group in result]}}
+            'groups': [{'dimensions': group['dimensions'], 'portfolio': group['portfolio'],
+                        **({'metric_contract_version': group['metric_contract_version']} if group.get('metric_contract_version') else {})} for group in result]}}
