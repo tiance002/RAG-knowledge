@@ -1,0 +1,57 @@
+{
+  "base": "7b7ae2251b2443d4c2571ef866ef2fa2b97d9e72",
+  "inputs": [
+    {
+      "source": "var/rsi-v22-20261115/task-model-budget.sqlite",
+      "sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52"
+    },
+    {
+      "source": "rsi-v22-20261115/a1/events.sqlite",
+      "sha256": "64abe3738c2b6eec811d9cfe583ddb4793f9ea08e953ddbe0bb298df03da2bce"
+    },
+    {
+      "source": "registry/handbook/events.sqlite",
+      "sha256": "9c660333124d502a0c7f30b5acf52fc99aca55b4c51ee97bee04d9aaf0aa991a"
+    },
+    {
+      "source": "registry/policy/lineage.sqlite",
+      "sha256": "f13ccd7b8ee3f3aa02268c194d777ae3adb017a4425e24bf8221edc680149b32"
+    },
+    {
+      "source": "registry/policy/parents.sqlite",
+      "sha256": "f809d199fa01dd9bc592576ab48a968e78dffa0f3a3b70749a28f93f534d64c3"
+    },
+    {
+      "source": "query-aware-v1/registry/policy.sqlite",
+      "sha256": "42619a96e891af75a069c8d15aa4cf184f5e09c292a9ee99cf01c6652792bbbe"
+    },
+    {
+      "source": "query-aware-v1/registry/sealed.sqlite",
+      "sha256": "2d05f7257823a83262bbd751735bbd96004fe0cc0ff295cd5b2dc5f45362a499"
+    },
+    {
+      "source": "shadow-control/promotion/events.sqlite",
+      "sha256": "4b3799e675f5d67c57b0d47b1a8649690165cd8601db552241e10cc5523509be"
+    },
+    {
+      "source": "continuation-20261115/seed-only-r3/round.json",
+      "sha256": "e0c95f4e09ece8fcc4806f5ded8f1f052a0d331b3f3e8b724ddbb7bb32af182c"
+    }
+  ],
+  "protected": {
+    "scripts/rsi_candidates.py": "2f537753f740ce832790f25b2af2de6d3e96563e6b18d50b2d5108d25beb36a4",
+    "scripts/run_rsi_offline.py": "9b58b19149c08768ea865314fc0431d1ec0bbd8f46291ba2099ce18dfbe8c81f",
+    "scripts/rsi_feedback.py": "5e16f1d153ac936cff3a54530f87b1bc8708544cd2481ea3b359a254383942cb",
+    "scripts/rsi_delivery_worker.py": "a5f793b9f8f6ad7908c78580a670c0cc5c909898dc8e4c36d05fdbc2a330d3da",
+    "scripts/replay_source_preparation.py": "484274d899761eb0641a2ccc15886b8ae6b70dd242a0fb53f6f5adef9c49c020",
+    "scripts/rsi_decision.py": "b8f0d28211aca4ffb01b9f0c3bb66bc4ffd4669193430ac49a5acd86a1512fa1"
+  },
+  "budget_sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+  "m0_reports": {
+    "metrics-schema.json": "cf75d0da810f99425be78a377e86434edfb29915c884f12d664a535259024521",
+    "report.json": "401581b5335a468df057a4209410922f9dc7e3ab2119a6ce6eec997ecbce6d04",
+    "report.zh.md": "3bb50f3cd2ba5f4a30e35e5a5b96e477a46818f95562a216b28d4f371628e0a5"
+  },
+  "historical_projections": 757,
+  "paid_model_requests": 0
+}

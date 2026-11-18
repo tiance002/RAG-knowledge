@@ -8,6 +8,7 @@ from .reader import canonical, digest, read_artifact, read_event_log
 from .projections import DIMENSIONS, project_sources
 from .metrics import compute_metrics
 from .schemas import GROUP_DIMENSIONS, METRICS
+from .selection import SELECTION_CONTRACT_VERSION, SELECTION_DEFINITIONS
 
 
 CAPABILITIES = [
@@ -45,14 +46,14 @@ def filter_records(records, filters=None):
                                     for k, v in filters.items() if v is not None)]
 
 
-def build_report(paths, artifact_specs=(), filters=None, expected_hashes=None):
+def build_report(paths, artifact_specs=(), filters=None, expected_hashes=None, *, selection_contract_version=None):
     """Validate all input chains before filtering and retain source provenance."""
     expected_hashes = expected_hashes or {}
     sources = [read_event_log(p, expected_hashes.get(str(Path(p).resolve()))) for p in paths]
     artifacts = [read_artifact(s['path'], s['sha256'], s['kind']) for s in artifact_specs]
     projected = project_sources(sources, artifacts)
     records = filter_records(projected, filters)
-    statistics = compute_metrics(records)
+    statistics = compute_metrics(records, selection_contract_version=selection_contract_version)
     # Verify sources again after projection, detecting concurrent external changes.
     for source in sources:
         read_event_log(source['path'], source['sha256'])
@@ -95,6 +96,8 @@ def build_report(paths, artifact_specs=(), filters=None, expected_hashes=None):
     if contracts:
         report['metric_contract_versions'] = contracts
         report['metrics_schema'] = contracts[0] if len(contracts) == 1 and all(g.get('metric_contract_version') for g in statistics['groups']) else 'PARTITIONED'
+    if selection_contract_version:
+        report['selection_metrics_schema'] = selection_contract_version
     return report
 
 
@@ -114,6 +117,9 @@ def render_markdown(report):
         for m in group['metrics']:
             show = lambda x: 'UNKNOWN' if x is None else str(x)
             lines.append('| ' + ' | '.join([m['metric_id'], m['status'], show(m['numerator']), show(m['denominator']), show(m['value']), m['unit']]) + ' |')
+        if 'selection_metrics' in group:
+            lines += ['', '独立选择指标（已完成有效操作；未知操作另列）：', '',
+                      '```json', json.dumps(group['selection_metrics'], ensure_ascii=False, sort_keys=True, indent=2), '```', '']
         lines += ['', '六角色/其他已记录角色的调用指标：', '', '```json', json.dumps(group.get('agent_roles', []), ensure_ascii=False, sort_keys=True, indent=2), '```', '',
                   '费用分布（usage、供应商账单、账本上界与未知分别保留）：', '', '```json', json.dumps(group['cost_breakdown'], ensure_ascii=False, sort_keys=True, indent=2), '```', '',
                   'Proposal Portfolio：', '', '```json', json.dumps(group['portfolio'], ensure_ascii=False, sort_keys=True, indent=2), '```', '']
@@ -137,6 +143,7 @@ def main(argv=None):
     parser.add_argument('--source-manifest', help='Explicit paths and expected SHA256 values; never discovers closed files.')
     parser.add_argument('--artifact-manifest', help='Explicit {kind,path,sha256} entries; public metadata only.')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--selection-contract-version', choices=[SELECTION_CONTRACT_VERSION])
     for field in ('experiment_id', 'epoch', 'role_profile', 'agent_role', 'evidence_mode', 'parent_id', 'candidate_id', 'compatibility_fingerprint'):
         parser.add_argument('--' + field.replace('_', '-'))
     args = parser.parse_args(argv)
@@ -165,12 +172,16 @@ def main(argv=None):
         raise ValueError('ANALYTICS_EXPLICIT_SOURCES_REQUIRED')
     artifacts = json.loads(Path(args.artifact_manifest).read_text(encoding='utf-8-sig'))['artifacts'] if args.artifact_manifest else []
     filters = {name: getattr(args, name) for name in DIMENSIONS if hasattr(args, name) and getattr(args, name) is not None}
-    report = build_report(sorted(set(paths)), artifacts, filters, expected)
+    report = build_report(sorted(set(paths)), artifacts, filters, expected,
+                          selection_contract_version=args.selection_contract_version)
     args.output.mkdir(parents=True, exist_ok=False)
     (args.output / 'report.json').write_bytes(canonical(report))
     (args.output / 'report.zh.md').write_text(render_markdown(report), encoding='utf-8')
     contracts = {g['metric_contract_version']: g['metric_definitions'] for g in report['statistics']['groups'] if g.get('metric_contract_version')}
     schema = {'legacy': METRICS, 'contracts': contracts} if contracts else METRICS
+    if args.selection_contract_version:
+        schema = {'base': schema, 'selection_contract': {
+            'schema': SELECTION_CONTRACT_VERSION, 'definitions': SELECTION_DEFINITIONS}}
     (args.output / 'metrics-schema.json').write_bytes(canonical(schema))
     print(json.dumps({'output': str(args.output), 'source_fingerprint': report['source_fingerprint'],
                       'projection_count': report['projection_count'], 'model_calls': 0, 'source_writes': 0}))

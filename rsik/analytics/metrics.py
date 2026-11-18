@@ -5,6 +5,7 @@ import json
 
 from .schemas import GROUP_DIMENSIONS, METRICS, MEMORY_METRIC_DEFINITIONS, SELECTION_METRIC_DEFINITIONS
 from .portfolio import analyze_portfolio
+from .selection import analyze_selection, SELECTION_CONTRACT_VERSION
 
 
 def _kind(record):
@@ -347,8 +348,10 @@ def _group_metrics(records):
     return result
 
 
-def compute_metrics(records):
+def compute_metrics(records, *, selection_contract_version=None):
     """Partition by all compatibility axes; missing dimensions remain UNKNOWN."""
+    if selection_contract_version not in (None, SELECTION_CONTRACT_VERSION):
+        raise ValueError('ANALYTICS_UNKNOWN_SELECTION_CONTRACT')
     records = tuple(records)
     groups = defaultdict(list)
     seen = {}
@@ -370,6 +373,8 @@ def compute_metrics(records):
     for partition in sorted(groups):
         observations = groups[partition]
         group = {'dimensions': dict(zip(GROUP_DIMENSIONS, map(json.loads, partition[:-1]))), **_group_metrics(observations)}
+        if selection_contract_version:
+            group['selection_metrics'] = analyze_selection(observations)
         contract = json.loads(partition[-1])
         if contract != 'LEGACY':
             group['metric_contract_version'] = contract

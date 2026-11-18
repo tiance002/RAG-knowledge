@@ -177,7 +177,12 @@ def resume_query_round(*, directory, registry, fixtures, evidence=None):
 
 
 def strategy_input_binding(public, freezes, role_profile, compatibility_fingerprint, frontier, *, proposal_protocol_profile, models):
-    return {'schema': 'rsi-query-strategy-input/v1',
+    from .role_profiles import M1_PROFILES
+    runtime = {}
+    if role_profile in M1_PROFILES:
+        from .openai_roles import runtime_profile_identity
+        runtime['runtime_profile_identity'] = runtime_profile_identity(role_profile, models, proposal_protocol_profile)
+    return {**runtime, 'schema': 'rsi-query-strategy-input/v1',
             'fixture_freezes_sha256': digest(freezes),
             'evaluator_hashes': next(iter(freezes.values()), {}).get('protected', {}),
             'seam_profile': PROFILE, 'role_profile': profile_manifest(role_profile),
@@ -235,10 +240,10 @@ def assert_order_angle(run):
 def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry,
                     directory, capsule_factory, scanner, handbook=None,
                     compatibility_fingerprint=None, features=None, format='OTHER',
-                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None, launch=None, evidence=None, observer=None):
+                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None, launch=None, evidence=None, observer=None, runtime_identity=None):
     """Run Diagnosis/P1/P2/P3, ordinary four-suite replay, then Curator/Meta.
 
-    advisory_roles must use the legacy read-only profile, sharing the same Budget.
+    M1 advisory roles share the M1 profile/seam; legacy profiles retain their read-only client.
     The selected_training_directory uses the existing query verification format.
     It is training adoption only; fresh sealed verification remains mandatory.
     """
@@ -246,10 +251,21 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     from .execution_evidence import ExecutionEvidence
     expected_models={r:getattr(roles,'models',{}).get(r,'gpt-6-luna') for r in ('diagnose',)+tuple(roles_for(role_profile).values())}
     expected_models.update({r:getattr(advisory_roles,'models',{}).get(r,'gpt-6-luna') for r in ('curator','meta')})
+    from .role_profiles import M1_PROFILES
+    if role_profile in M1_PROFILES:
+        from .openai_roles import validate_runtime_profile_identity, runtime_profile_identity
+        seam = getattr(roles, 'seam_profile', 'UNKNOWN')
+        if (getattr(advisory_roles, 'role_profile', None) != role_profile
+                or getattr(advisory_roles, 'seam_profile', None) != seam):
+            raise ValueError('M1_ADVISORY_PROFILE_MISMATCH')
+        if runtime_identity is not None:
+            validate_runtime_profile_identity(runtime_identity, role_profile, expected_models, seam)
+        else:
+            runtime_identity = runtime_profile_identity(role_profile, expected_models, seam)
     if evidence is None:
-        validate_launch(launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile)
+        validate_launch(launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile,runtime_identity=runtime_identity)
     else:
-        guard_real(evidence,launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile)
+        guard_real(evidence,launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile,runtime_identity=runtime_identity)
     if hasattr(roles,'launch'):roles.launch=launch
     if hasattr(advisory_roles,'launch'):advisory_roles.launch=launch
     original_guard = guard
@@ -267,7 +283,8 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     restrict_directory(directory)
     observer = observer if observer is not None else observation_for(directory)
     observer.update_context(round_id=public['round_id'], parent_id=parent['candidate_id'],
-                            role_profile=role_profile, role_profile_hash=digest(profile_manifest(role_profile)), run_id=launch.run_id if launch else digest(str(directory.resolve())),
+                            role_profile=role_profile, role_profile_hash=(runtime_identity['sha256'] if runtime_identity
+                                else digest(profile_manifest(role_profile))), run_id=launch.run_id if launch else digest(str(directory.resolve())),
                             evidence_mode=evidence.mode if evidence is not None else 'REAL_REPLAY',
                             profile=getattr(roles, 'seam_profile', 'UNKNOWN'),
                             compatibility_fingerprint=compatibility_fingerprint or 'UNKNOWN')
@@ -318,6 +335,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     frontier = experience_session.verify() if experience_session is not None else None
     models = {r: getattr(roles, 'models', {}).get(r, 'gpt-6-luna')
               for r in ('diagnose',) + tuple(roles_for(role_profile).values())}
+    if role_profile in M1_PROFILES: models = expected_models
     binding = strategy_input_binding(public, freezes, role_profile, compatibility_fingerprint, frontier,
         proposal_protocol_profile=getattr(roles, 'seam_profile', 'SYNTHETIC'),models=models)
     atomic_write(directory / 'public-context.json', canonical(public), exclusive=True)
@@ -522,7 +540,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
             experience_session.learn_round(record_path=directory/'round.json',public_path=directory/'public-context.json',compatibility_fingerprint=compatibility_fingerprint, observer=observer)
         else:
             record_learning()
-    # Separate role profile: completed_projection is intentionally legacy-shaped.
+    # Read-only completed projection keeps its existing shape for all profiles.
     advisory_failures = []
     class IndependentAdvisory:
         scanner = advisory_roles.scanner
