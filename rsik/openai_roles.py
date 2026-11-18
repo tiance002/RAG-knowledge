@@ -59,6 +59,10 @@ TASKS['curator'] += ' completed_candidate, when present, is a trusted workflow a
 
 from .role_profiles import LEGACY, DEPENDENCY, DEPENDENCY_TASK, roles_for, profile_manifest
 TASKS['P3_DEPENDENCY'] = DEPENDENCY_TASK
+from .role_profiles import M1_PROFILES, M1_SAFETY_POLICY, m1_tasks
+for _profile in M1_PROFILES:
+    for _role, _task in m1_tasks(_profile).items():
+        if _role not in TASKS: TASKS[_role] = _task
 TASKS['curator'] += ' A trusted completed_candidate may attest REUSE_VERIFIED_SELECTOR with code_sha256. This is an association scoped to that exact selector and compatible evidence, never proof of a causal or general algorithmic rule.'
 
 def single_request(body, key_file, timeout, *, response_path=None):
@@ -87,7 +91,7 @@ def single_request(body, key_file, timeout, *, response_path=None):
 
 
 class OpenAIRoles:
-    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None, launch=None, observer=None):
+    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None, launch=None, observer=None, runtime_identity=None):
         self.budget, self.directory = budget, Path(directory)
         self.key_file, self.scanner = Path(key_file), scanner
         self.deadline, self.transport = deadline, transport
@@ -101,6 +105,11 @@ class OpenAIRoles:
         self.models = dict(models or {})
         if set(self.models)-set(TASKS) or any(model not in {'gpt-6-luna','gpt-6.1-sol'} for model in self.models.values()):
             raise ValueError('MODEL_NOT_ALLOWED')
+        self.runtime_identity = None
+        if role_profile in M1_PROFILES:
+            self.runtime_identity = (runtime_profile_identity(role_profile, self.models, seam_profile)
+                                     if runtime_identity is None else deepcopy(runtime_identity))
+            validate_runtime_profile_identity(self.runtime_identity, role_profile, self.models, seam_profile)
         self.directory.mkdir(parents=True, exist_ok=True)
         self._observer = observer
         self._observer_lock = threading.RLock()
@@ -142,7 +151,13 @@ class OpenAIRoles:
 
     def _call(self, role, public, diagnosis=None):
         self._observation_local.invocation = {}
-        if role=='P3_DEPENDENCY' and self.role_profile!=DEPENDENCY:raise ValueError('ROLE_PROFILE_REQUIRED')
+        if self.role_profile in M1_PROFILES:
+            validate_runtime_profile_identity(self.runtime_identity, self.role_profile, self.models, self.seam_profile)
+        if (self.role_profile in M1_PROFILES or role.endswith('_GENERALIST')) and role not in (
+                'diagnose', 'curator', 'meta', *roles_for(self.role_profile).values()):
+            raise ValueError('ROLE_PROFILE_REQUIRED')
+        if role == 'P3_DEPENDENCY' and self.role_profile not in (DEPENDENCY, *M1_PROFILES):
+            raise ValueError('ROLE_PROFILE_REQUIRED')
         if role not in TASKS:
             raise ValueError('unsupported role')
         allowed = {'round_id', 'parent_alias', 'observations', 'observation_refs', 'evidence_quotes',
@@ -155,7 +170,7 @@ class OpenAIRoles:
             raise ContractError('QUERY_PROFILE_REQUIRED')
         if self.seam_profile in {'query-aware-v1','query-autonomous-v1'}:
             from .query_aware import interface_contract
-        if self.seam_profile=='query-autonomous-v1':
+        if self.seam_profile=='query-autonomous-v1' and not (self.role_profile in M1_PROFILES and role in {'curator','meta'}):
             from .query_aware import autonomy_interface_contract as interface_contract
             from .autonomy_contract import validate_history,validate_search_memory
             if public.get('experiment_intent')!='STRUCTURAL_POLICY_SEARCH':raise ContractError('PRESELECTED_STRATEGY_FORBIDDEN_IN_AUTONOMY_TEST')
@@ -194,7 +209,9 @@ class OpenAIRoles:
         for attempt in range(2):
             if self.transport is single_request:
                 from .launch import validate_launch
-                validate_launch(self.launch,boundary="MODEL_REQUEST")
+                options = ({'role_profile': self.role_profile, 'runtime_identity': self.runtime_identity}
+                           if self.role_profile in M1_PROFILES else {})
+                validate_launch(self.launch, boundary="MODEL_REQUEST", **options)
             if self.before_request:self.before_request()
             context = {'public': deepcopy(public), 'diagnosis': diagnosis}
             if attempt:
@@ -217,6 +234,8 @@ class OpenAIRoles:
                 policy+='\nIndependent owner-authorized query-aware seam: keep SIX arguments (members, chunks, files, seed_ids, selection, query). query is the actual runtime question string; never supplied in this proposal context. Patch only this six-argument function body; original five-argument registry is unchanged. QUERY_OVERLAP_ABLATION tests retaining all seeds and a nonseed when any two-character substring query[j:j+2] occurs in its content. Use range(max(0,len(query)-1)). Mandatory short-query guard after the no-seeds guard: if len(query) < 2: return list(range(len(members))). Use this literal comparison, not an algebraic substitute; a one-character question must retain all members. QUERY_OVERLAP_CONSERVATIVE additionally retains neighbors whose content length is <=200 or >= longest seed length, plus query matches and seeds. This is an unproven lexical hypothesis that may lose evidence; deterministic source facts must reject any loss. Do not assume lexical match proves factual sufficiency.\n'
                 policy+=' For QUERY_OVERLAP_ZERO_MATCH_FALLBACK, retain seeds plus two-character query-overlap members as in the ablation, BUT if no member at all (including seeds) contains any two-character substring of query, retain ALL members. This explicit uncertainty fallback tests the hypothesis that lexical evidence is unavailable, rather than treating absence of a lexical match as proof of irrelevance. Compute a fresh private list of boolean matches, test not any(matches), then return all indices or the seed/match indices. Keep the mandatory len(query)<2 fallback. This new intent is an adaptive training hypothesis; no guaranteed safety claim.'
                 policy+=' For QUERY_SEED_MATCH_FALLBACK, retain all when no SEED member contains a query bigram; otherwise seeds plus matching members. For QUERY_NONSEED_MATCH_FALLBACK, retain all when no NONSEED member contains a query bigram; otherwise seeds plus matching members. For QUERY_TRIGRAM_ZERO_MATCH_FALLBACK use three-character substrings, keep all if len(query)<3 or no member matches any trigram, otherwise seeds plus matching members. For QUERY_BIGRAM_RATIO count distinct query bigrams per member, retain all if every score is zero, otherwise seeds plus members whose score added to itself is at least the highest seed score AND whose score is positive. Always keep all seeds, all members for len(query)<2, and original order. These are separate diagnostic hypotheses, not combinations unless the named intent says so.'
+            if self.role_profile in M1_PROFILES:
+                policy, task = effective_role_prompt(self.role_profile, role, self.seam_profile)
             body = {'model': model, 'store': False, 'reasoning': {'effort': 'none' if model=='gpt-6-luna' else 'low'},
                     'max_output_tokens': 1024 if role == 'diagnose' else 3072 if role in ANGLES else 2048,
                     'input': [{'role': 'system', 'content': policy + '\n' + task},
@@ -224,6 +243,8 @@ class OpenAIRoles:
                     'text': {'format': {'type': 'json_schema', 'name': 'rsi_role',
                                        'strict': True, 'schema': role_schema(role)}}}
             if model == 'gpt-6-luna': body['temperature'] = 0
+            if self.role_profile in M1_PROFILES:
+                body.update(decode_settings(role, model))
             projection=None
             if self.seam_profile=='query-autonomous-v1':
                 visible=context['public']
@@ -268,7 +289,8 @@ class OpenAIRoles:
                            'cost_source': digest(str(self.budget.log.path.resolve())), 'round_id': public['round_id'],
                            'agent_role': role, 'attempt': attempt, 'model': model,
                            'prompt_hash': digest(body['input'][0]), 'role_profile': self.role_profile,
-                           'role_profile_hash': digest(profile_manifest(self.role_profile)),
+                           'role_profile_hash': (self.runtime_identity['sha256'] if self.runtime_identity
+                                                 else digest(profile_manifest(self.role_profile))),
                            'request_hash': digest(body), 'seam_profile': self.seam_profile}
             observation['attempt_id'] = observation['invocation_id']
             self._observation_local.invocation = dict(observation)
@@ -354,3 +376,49 @@ class OpenAIRoles:
                     if attempt:
                         return {'status': 'ABSTAIN', 'result': None, 'reason': 'CONTRACT_ERROR_AFTER_ONE_REPAIR'}
         raise AssertionError('unreachable')
+
+
+def effective_role_prompt(profile, role, seam_profile):
+    """Exact M1 system prompt components used at the request boundary."""
+    if seam_profile not in {'legacy','query-aware-v1','query-autonomous-v1'}:
+        raise ValueError('UNKNOWN_SEAM_PROFILE')
+    tasks = m1_tasks(profile)
+    if role not in tasks: raise ValueError('ROLE_PROFILE_REQUIRED')
+    return M1_SAFETY_POLICY, tasks[role]
+
+
+def decode_settings(role, model):
+    value = {'reasoning': {'effort': 'none' if model == 'gpt-6-luna' else 'low'},
+             'max_output_tokens': 1024 if role == 'diagnose' else 3072 if role in ANGLES else 2048}
+    if model == 'gpt-6-luna': value['temperature'] = 0
+    return value
+
+
+def runtime_profile_identity(profile, models, seam_profile):
+    """Freeze effective prompts/tasks/decode/schema/models/seam/implementation for M1.
+
+    Suitable for launch and paired-run locks; no private context or credentials.
+    """
+    from .query_workflow import implementation_hashes
+    roles = ('diagnose',) + tuple(roles_for(profile).values()) + ('curator', 'meta')
+    if profile not in M1_PROFILES: raise ValueError('M1_ROLE_PROFILE_REQUIRED')
+    actual_models = {r:models.get(r, 'gpt-6-luna') for r in roles}
+    if set(models) - set(roles) or any(m not in {'gpt-6-luna','gpt-6.1-sol'} for m in actual_models.values()):
+        raise ValueError('MODEL_NOT_ALLOWED')
+    specs = {}
+    for role in roles:
+        policy, task = effective_role_prompt(profile, role, seam_profile)
+        specs[role] = {'policy':policy, 'task':task, 'system_prompt':policy + '\n' + task,
+                       'prompt_sha256': digest(policy + '\n' + task), 'task_sha256': digest(task),
+                       'model':actual_models[role], 'decode':decode_settings(role,actual_models[role]),
+                       'response_schema':role_schema(role)}
+    binding = {'schema':'rsi-m1-runtime-profile/v1', 'role_profile':profile_manifest(profile),
+               'seam_profile':seam_profile, 'models':actual_models, 'roles':specs,
+               'implementation':implementation_hashes()}
+    return {**binding, 'sha256':digest(binding)}
+
+
+def validate_runtime_profile_identity(binding, profile, models, seam_profile):
+    expected = runtime_profile_identity(profile, models, seam_profile)
+    if binding != expected: raise ValueError('M1_RUNTIME_PROFILE_IDENTITY_CHANGED')
+    return expected

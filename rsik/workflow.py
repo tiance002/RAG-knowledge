@@ -55,7 +55,8 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
                               'proposal_id': proposal.get('proposal_id', 'UNKNOWN')})
         payload = {'proposal_instance_id': instance_id, 'proposal_id': proposal.get('proposal_id', 'UNKNOWN'),
                    'round_id': public['round_id'], 'slot': slot, 'agent_role': mapping[slot],
-                   'role_profile': role_profile, 'role_profile_hash': digest(profile_manifest(role_profile)),
+                   'role_profile': role_profile, 'role_profile_hash': getattr(observer, 'context', {}).get(
+                       'role_profile_hash', digest(profile_manifest(role_profile))),
                    'parent_id': public.get('parent_id', getattr(observer, 'context', {}).get('parent_id', 'UNKNOWN')),
                    'attempt': 1, **fields}
         invocation = getattr(roles, 'observation_invocation', {})

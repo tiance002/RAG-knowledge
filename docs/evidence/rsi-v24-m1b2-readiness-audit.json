@@ -1,0 +1,63 @@
+{
+  "schema": "rsi-m1b2-readiness-audit/v1",
+  "audit_date": "2026-11-18",
+  "evidence_mode": "READ_ONLY_METADATA_AUDIT",
+  "ready_for_real_run": false,
+  "s3_status": "BLOCKED_DATA",
+  "real_parent_qualification": "NOT_RUN",
+  "real_replay": "NOT_RUN",
+  "real_recovery": "NOT_RUN",
+  "real_launch_freeze": "NOT_FROZEN",
+  "budget": {
+    "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v22-20261115\\task-model-budget.sqlite",
+    "sha256_before": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+    "sha256_after": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+    "events": 668,
+    "frontier_event_hash": "3d728882322973a22567ece837141396041c69167d209bd68f3f12160b1630ca",
+    "starts": 264,
+    "completed": 264,
+    "bounded_unknown_usage_count": 5,
+    "unbounded_usage_count": 0,
+    "pending_count": 0,
+    "limit_usd": "5",
+    "recorded_usd_upper": "1.370204365",
+    "remaining_usd_upper_basis": "3.629795635",
+    "reservation_usd": "0",
+    "count_limit": null,
+    "provider_invoice": "UNKNOWN",
+    "scope": "Original cumulative task ledger, not RSI-only",
+    "chain_status": "FULL_VALID_PRESENT_ROWS",
+    "chain_limit": "Unanchored historical tail completeness and provider provenance remain UNKNOWN"
+  },
+  "resources": {
+    "reused": [
+      "original task ledger read-only",
+      "historical metadata receipts",
+      "existing Python interpreter"
+    ],
+    "new": [
+      "this sanitized metadata receipt",
+      "readiness document"
+    ],
+    "deleted": [],
+    "disk_before": {
+      "E": {
+        "used": 432312102912,
+        "free": 55781146624,
+        "total": 488093249536
+      }
+    },
+    "retained_reason": "Preserve original evidence and UNKNOWN; no database/index/container copies created",
+    "disk_after": {
+      "E": {
+        "used": 432315392000,
+        "free": 55777857536,
+        "total": 488093249536
+      }
+    },
+    "disk_delta_note": "Whole-volume measurement includes concurrent work; no task-owned copies or deletions."
+  },
+  "paid_calls": 0,
+  "original_database_writes": 0,
+  "gold_bodies_read": false
+}

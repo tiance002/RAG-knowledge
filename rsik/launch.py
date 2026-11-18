@@ -58,7 +58,7 @@ def _review(record, object_hash):
 
 
 def validate_launch(context, *, phase=None, candidate=None, fixtures=None, models=None,
-                    evidence=None, directory=None, role_profile=None, boundary=None):
+                    evidence=None, directory=None, role_profile=None, boundary=None, runtime_identity=None):
     """No model/capsule effects. Unknown identity stops, never authorizes by flag.
 
     The expected plan hash comes from the caller's frozen run configuration.
@@ -137,6 +137,14 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
         from .role_profiles import profile_manifest
         if plan.get('role_profile')!=profile_manifest(role_profile):raise ValueError('LAUNCH_ROLE_PROFILE_MISMATCH')
     configured = plan.get('models',{})
+    from .role_profiles import M1_PROFILES
+    planned_profile = plan.get('role_profile',{}).get('version')
+    if planned_profile in M1_PROFILES:
+        from .openai_roles import validate_runtime_profile_identity
+        frozen_runtime = validate_runtime_profile_identity(plan.get('runtime_profile_identity'),
+            planned_profile, configured, plan.get('seam_profile'))
+        if runtime_identity is not None and runtime_identity != frozen_runtime:
+            raise ValueError('M1_RUNTIME_PROFILE_IDENTITY_CHANGED')
     if (not configured or any(any(name in str(v).lower() for name in ('astra','terra')) for v in configured.values())
             or models is not None and configured != models
             or not set(configured.values()) <= set(price.get('prices',{}))):

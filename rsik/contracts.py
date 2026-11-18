@@ -8,7 +8,7 @@ import unicodedata
 
 
 VERSION = 'rsi-v2.2'
-ANGLES = ('P1_DEDUP', 'P2_BUDGET', 'P3_ORDER', 'P3_DEPENDENCY')
+ANGLES = ('P1_DEDUP', 'P2_BUDGET', 'P3_ORDER', 'P3_DEPENDENCY', 'P1_GENERALIST', 'P2_GENERALIST', 'P3_GENERALIST')
 
 
 class ContractError(ValueError):
