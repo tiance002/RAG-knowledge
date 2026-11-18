@@ -10,7 +10,6 @@ import hashlib
 import heapq
 import json
 import importlib.metadata
-import math
 import threading
 import time
 
@@ -104,13 +103,6 @@ class _CollectionOperation:
         if collection is None:
             raise RuntimeError('Collection disappeared while verifying vectors')
         return self._service._get_documents_from_collection(collection, ids, include)
-
-    def verify_documents(self, kb_id, documents, embeddings, ids):
-        collection = self._resolve(kb_id)
-        if collection is None:
-            raise RuntimeError('Collection disappeared while verifying vectors')
-        return self._service._verify_documents_in_collection(collection, documents, embeddings, ids)
-
 
 class VectorStoreService:
     """向量存储服务"""
@@ -216,50 +208,6 @@ class VectorStoreService:
         if collection is None:
             raise RuntimeError('Collection disappeared while verifying vectors')
         return self._get_documents_from_collection(collection, ids, include)
-
-    def verify_documents(self, kb_id, documents, embeddings, ids):
-        """Read and verify every expected field without retaining all responses."""
-        collection = self._existing_collection(kb_id)
-        if collection is None:
-            raise RuntimeError('Collection disappeared while verifying vectors')
-        return self._verify_documents_in_collection(collection, documents, embeddings, ids)
-
-    def _verify_documents_in_collection(self, collection, documents, embeddings, ids):
-        # Check the complete manifest first; each expected document is then read
-        # once, even when the manifest order differs from the document order.
-        expected_ids = {doc['id'] for doc in documents}
-        if (len(documents) != len(embeddings) or len(ids) != len(documents) or
-                len(expected_ids) != len(documents) or set(ids) != expected_ids):
-            raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
-        del expected_ids
-        size = self._batch_size()
-        for start in range(0, len(documents), size):
-            batch = documents[start:start + size]
-            page = self._ingest_get(collection, ids=[doc['id'] for doc in batch],
-                                    include=['documents', 'metadatas', 'embeddings'])
-            self._verify_document_batch(page, batch, embeddings[start:start + size])
-            # Chroma returns materialized embeddings. Release this response
-            # before requesting the next batch, rather than aggregating them.
-            del page
-
-    @staticmethod
-    def _verify_document_batch(actual, documents, embeddings):
-        try:
-            if any(actual.get(key) is None or len(actual[key]) != len(documents)
-                   for key in ('ids', 'documents', 'metadatas', 'embeddings')):
-                raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
-            observed = {key: (content, metadata, vector) for key, content, metadata, vector in zip(
-                actual['ids'], actual['documents'], actual['metadatas'], actual['embeddings'])}
-            if len(observed) != len(documents) or any(
-                d['id'] not in observed or observed[d['id']][0] != d['content'] or
-                observed[d['id']][1] != d['metadata'] or
-                len(observed[d['id']][2]) != len(vector) or
-                any(not math.isclose(float(a), float(b), rel_tol=1e-6, abs_tol=1e-7)
-                    for a, b in zip(observed[d['id']][2], vector))
-                for d, vector in zip(documents, embeddings)):
-                raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
-        except (KeyError, TypeError, ValueError, IndexError) as exc:
-            raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED') from exc
 
     def _get_documents_from_collection(self, collection, ids, include=None):
         include = include or ['documents', 'metadatas']

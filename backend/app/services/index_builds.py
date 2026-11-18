@@ -120,12 +120,13 @@ def _write_verified_vectors(service, kb_id, documents, embeddings, vector_ids):
             write_service.validate_dimension(kb_id, embeddings[0])
             write_service.add_documents(kb_id, documents, embeddings)
         with _publication_phase('index_build_vector_verify', vector_count=len(embeddings)):
-            verify = getattr(write_service, 'verify_documents', None)
-            if callable(verify):
-                verify(kb_id, documents, embeddings, vector_ids)
-                return
-            # Legacy service substitutes retain the complete readback contract.
             actual = write_service.get_documents(kb_id, vector_ids, include=['documents', 'metadatas', 'embeddings'])
+            expected_ids = {document['id'] for document in documents}
+            if (len(documents) != len(embeddings) or len(vector_ids) != len(documents) or
+                    len(expected_ids) != len(documents) or set(vector_ids) != expected_ids or
+                    any(actual.get(key) is None or len(actual[key]) != len(documents)
+                        for key in ('ids', 'documents', 'metadatas', 'embeddings'))):
+                raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
             observed = {key: (content, metadata, vector) for key, content, metadata, vector in zip(
                 actual['ids'], actual['documents'], actual['metadatas'], actual['embeddings'])}
             if len(observed) != len(documents) or any(

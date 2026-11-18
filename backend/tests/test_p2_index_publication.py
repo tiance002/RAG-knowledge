@@ -105,9 +105,13 @@ class VectorSubstitute:
     def add_documents(self, kb, documents, embeddings):
         self.documents, self.embeddings = documents, embeddings
 
-    def verify_documents(self, kb, documents, embeddings, ids):
-        assert documents == self.documents and embeddings == self.embeddings
-        assert ids == [row['id'] for row in documents]
+    def get_documents(self, kb, ids, include=None):
+        assert ids == [row['id'] for row in self.documents]
+        assert include == ['documents', 'metadatas', 'embeddings']
+        return {'ids': ids,
+                'documents': [row['content'] for row in self.documents],
+                'metadatas': [row.get('metadata', {}) for row in self.documents],
+                'embeddings': self.embeddings}
 
 
 @pytest.mark.parametrize('complete', [True, False])
