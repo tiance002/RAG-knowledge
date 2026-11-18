@@ -30,7 +30,7 @@ def db(monkeypatch, tmp_path):
 
 
 def hit(cid, file='f', **extra):
-    return dict(id=cid, file_id=file, file_name=file+'.txt', kb_id='kb', score=.7, **extra)
+    return dict(id=cid, file_id=file, file_name=file+'.txt', kb_id='kb', **{'score':.7, **extra})
 
 
 def expand(db, rows, **kw):
@@ -69,14 +69,75 @@ def test_scope_verified_against_sql(db):
     assert expand_parent_context([hit('a')],db,allowed_kb_ids=['other'])==[]
 
 
-def test_parent_limit_preserves_all_seeds_and_total_budget(db):
-    rows=expand(db,[hit('a'),hit('b')],window_size=1,max_parent_length=4,max_context_chars=20)
+def test_aggregate_budget_preserves_all_seeds_and_total_budget(db):
+    rows=expand(db,[hit('a'),hit('b')],window_size=1,max_context_chars=20)
     assert rows[0]['content']=='alpha\nbeta'
     assert rows[0]['context_group']['truncation_status']=='CHAR_LIMIT_APPLIED'
     rows=expand(db,[hit('a'),hit('b')],max_context_chars=1)
-    assert rows[0]['content']==''
-    assert rows[0]['context_group']['omitted_seed_ids']==['a','b']
-    assert rows[0]['expansion_delivery_status']=='OMITTED'
+    assert rows[0]['content']=='alpha\nbeta'
+    assert rows[0]['context_group']['omitted_seed_ids']==[]
+    assert rows[0]['expansion_delivery_status']=='SEED_ONLY'
+    assert rows[0]['delivery_budget']['mandatory_overrun'] is True
+
+
+def test_parent_longer_than_4096_chars_is_delivered_when_aggregate_budget_allows(db):
+    parent=db.get(DocumentChunk,'p')
+    prefix='x'*2040+'alpha'
+    parent.content=prefix+'y'*(4096-len(prefix)-len('beta'))+'beta'
+    db.add(parent); db.commit()
+    rows=expand(db,[hit('a'),hit('b')],window_size=0,max_context_chars=24000)
+    assert len(rows[0]['content'])==4096
+    assert rows[0]['content']==parent.content
+    assert rows[0]['parent_chunk_id']=='p'
+    assert rows[0]['context_group']['truncation_status']=='NOT_APPLIED'
+    assert rows[0]['context_group']['omitted_seed_ids']==[]
+
+
+def test_parent_limit_selects_six_distinct_parents_by_best_child_score_and_keeps_seeds(db):
+    # Eight verified parents. p0 receives two child hits and must occupy only one
+    # slot using its stronger child score, even though its first hit ranks low.
+    parents=[]
+    children=[]
+    for i in range(8):
+        parent_id=f'parent-{i}'
+        child_id=f'child-{i}'
+        seed_text=f'seed fact {i}'
+        parents.append(DocumentChunk(id=parent_id,file_id='f',chunk_type='parent',content=f'Parent {i}: {seed_text}'))
+        children.append(DocumentChunk(id=child_id,file_id='f',chunk_type='child',parent_id=parent_id,content=seed_text,original_index=100+i))
+    children.append(DocumentChunk(id='child-0b',file_id='f',chunk_type='child',parent_id='parent-0',content='seed fact 0',original_index=108))
+    db.add_all(parents+children); db.commit()
+
+    score_by_id={'child-7':.10,'child-0':.20,'child-1':.95,'child-0b':.99,
+                 'child-2':.85,'child-3':.75,'child-4':.65,'child-5':.55,'child-6':.45}
+    rows=[]
+    for child_id,score in score_by_id.items():
+        row=hit(child_id,score=score)
+        row['rerank_score']=score
+        rows.append(row)
+    rows.append(hit('plain',score=.01))  # independent chunks do not consume a parent slot
+
+    expanded=expand(db,rows,window_size=0,max_context_chars=5000,max_parent_contexts=6)
+    delivered_parents=[r['parent_chunk_id'] for r in expanded
+                       if any(m['relation']=='parent' for m in r['context_group']['source_members'])]
+    assert delivered_parents==['parent-0','parent-1','parent-2','parent-3','parent-4','parent-5']
+    assert len(delivered_parents)==6
+    by_parent={r['parent_chunk_id']:r for r in expanded if r['parent_chunk_id']}
+    assert by_parent['parent-0']['seed_child_ids']==['child-0','child-0b']
+    assert by_parent['parent-0']['parent_selection']=={
+        'rank':1,'score_kind':'rerank_score','score':.99,'limit':6,
+        'selected':True,'reason':'SELECTED_BY_CHILD_SCORE'}
+    for parent_id in ('parent-6','parent-7'):
+        row=by_parent[parent_id]
+        assert row['content']==row['original_content']
+        assert all(m['relation']!='parent' for m in row['context_group']['source_members'])
+        assert row['expansion_delivery_status']=='SEED_ONLY'
+        assert row['parent_selection']['reason']=='PARENT_LIMIT'
+    plain_row=next(r for r in expanded if r['id']=='plain')
+    assert plain_row['content']=='ordinary'
+
+    citations,summary=build_chat_context(expanded,lambda r,t:dict(chunk_id=r['id'],fileId=r['file_id']))
+    assert sum(c.get('evidence_relation')=='parent' for c in citations)==6
+    assert summary['context_group_count']==len(expanded)
 
 
 def test_plain_legacy_and_neighbor_heading_boundary(db):
@@ -96,7 +157,8 @@ def test_bad_parent_content_never_loses_seed(db):
 
 def test_best_seed_original_identity_and_neighbor_never_consumes_other_seed(db):
     rows=expand(db,[hit('a',rerank_score=.1),hit('b',rerank_score=.9)],window_size=0)
-    assert rows[0]['id']=='b' and rows[0]['original_content']=='beta'
+    assert rows[0]['id']=='a' and rows[0]['original_content']=='alpha'
+    assert rows[0]['score_child_id']=='b'
     a=db.get(DocumentChunk,'a'); a.parent_id=None
     b=db.get(DocumentChunk,'b'); b.parent_id=None
     db.commit()
@@ -147,3 +209,49 @@ def test_expansion_diagnostics_are_readable_without_exposing_body():
         truncation_status='SEED_OMITTED_OVER_LIMIT', relation='parent', boundary_status='KNOWN')
     assert sanitize(data,final_export=True)==data
     assert sanitize({'content':'private body'})['content'] != 'private body'
+
+
+def test_group_identity_is_document_order_not_score_and_sources_keep_real_ids(db):
+    rows=expand(db,[hit('b',score=.95),hit('a',score=.4)],window_size=0)
+    row=rows[0]
+    assert row['id']=='a' and row['representative_child_id']=='a'
+    assert row['score_child_id']=='b' and row['score']==.95
+    assert row['context_group_id']=='group:p'
+    assert {c['id']:c['content'] for c in row['hit_children']}=={'a':'alpha','b':'beta'}
+    assert [(c['id'],c['content']) for c in row['citation_sources']]==[('p','intro alpha beta tail')]
+    citations,summary=build_chat_context(rows,lambda r,t:dict(chunk_id=r['id'],score=r.get('score')))
+    assert citations[0]['chunk_id']=='p' and citations[0]['score'] is None
+    assert citations[0]['context_group_id']=='group:p'
+    assert set(summary['seed_evidence_ids'])=={'a','b'}
+
+
+def test_seed_budget_fallback_preserves_each_source_body_and_score_origin(db):
+    row=expand(db,[hit('b',score=.95),hit('a',score=.4)],window_size=0,max_context_chars=12)[0]
+    assert row['context_group_id']=='group:p' and row['score_child_id']=='b'
+    assert {c['id']:c['content'] for c in row['citation_sources']}=={'a':'alpha','b':'beta'}
+    citations,_=build_chat_context([row],lambda r,t:dict(chunk_id=r['id'],score=r.get('score')))
+    # Group score is never attributed to a different representative seed.
+    assert next(c for c in citations if c['chunk_id']=='a')['score'] is None
+
+
+def test_representative_metadata_and_original_body_are_same_source(db):
+    import json
+    a=db.get(DocumentChunk,'a'); b=db.get(DocumentChunk,'b')
+    a.source_metadata_json=json.dumps({'marker':'first-child'})
+    b.source_metadata_json=json.dumps({'marker':'best-child'})
+    db.commit()
+    row=expand(db,[hit('b',score=.95,source_metadata={'marker':'best-child'}),hit('a',score=.4)],window_size=0)[0]
+    assert row['id']=='a' and row['score_child_id']=='b'
+    assert row['source_metadata']['marker']=='first-child'
+    citations,_=build_chat_context([row],lambda r,t:dict(chunk_id=r['id'],source_metadata=r.get('source_metadata')),strategy='ORIGINAL_CONTENT')
+    assert citations[0]['chunk_id']=='a' and citations[0]['content']=='alpha'
+    assert citations[0]['source_metadata']['marker']=='first-child'
+
+
+def test_parent_citation_type_is_actual_parent_and_seed_tampering_is_unverified(db):
+    from app.services.context_builder import _verified_members
+    row=expand(db,[hit('a'),hit('b')],window_size=0)[0]
+    citations,_=build_chat_context([row],lambda r,t:dict(chunk_id=r['id'],chunk_type=r.get('chunk_type')))
+    assert citations[0]['chunk_id']=='p' and citations[0]['chunk_type']=='parent'
+    row['context_group']['seed_evidence_ids']=['unrelated-child']
+    assert _verified_members(row) is None

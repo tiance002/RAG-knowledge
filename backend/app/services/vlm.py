@@ -13,8 +13,9 @@ from app.services.observability import event
 
 
 class VLMDescriptionError(RuntimeError):
-    def __init__(self, status):
+    def __init__(self, status, *, response_evidence=None):
         self.status = status
+        self.response_evidence = response_evidence
         super().__init__("Image description did not complete: " + status)
 
 
@@ -50,6 +51,43 @@ class VLMService:
         text = choice.get('message', {}).get('content')
         if not isinstance(text, str) or not text.strip():
             raise VLMDescriptionError('EMPTY')
+        return text.strip()
+
+class TaskVLMService(VLMService):
+    """Task-scoped VLM behavior; legacy receipt identity remains unchanged."""
+    def __init__(self, base_url=None, api_key=None, model=None, prompt=None, max_tokens=1000):
+        super().__init__(base_url, api_key, model, prompt)
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 128 <= max_tokens <= 32768:
+            raise ValueError("VLM_MAX_TOKENS_INVALID")
+        self.max_tokens = max_tokens
+
+    async def describe_image(self, image_path):
+        if not self.base_url or not self.model:
+            raise VLMDescriptionError("NOT_CONFIGURED")
+        path = Path(image_path)
+        ext = path.suffix.lower().lstrip('.')
+        mime = {'jpg':'jpeg', 'jpeg':'jpeg', 'png':'png', 'gif':'gif', 'webp':'webp'}.get(ext, 'png')
+        encoded = base64.b64encode(path.read_bytes()).decode('ascii')
+        async with httpx.AsyncClient(timeout=120.0, verify=provider_tls_context()) as client:
+            response = await invoke_provider_http_async(lambda: client.post(
+                self.base_url.rstrip('/') + '/chat/completions',
+                headers={'Authorization':'Bearer ' + self.api_key, 'Content-Type':'application/json'},
+                json={'model':self.model, 'messages':[{'role':'user', 'content':[
+                    {'type':'text','text':self.prompt},
+                    {'type':'image_url','image_url':{'url':'data:image/' + mime + ';base64,' + encoded}}
+                ]}], 'max_tokens':self.max_tokens}), stage='vlm', model_name=self.model)
+            response.raise_for_status()
+            result = response.json()
+        choice = result['choices'][0]
+        reason = choice.get('finish_reason')
+        text = choice.get('message', {}).get('content')
+        evidence = {'finish_reason': reason, 'response_id': result.get('id'),
+                    'usage': result.get('usage'), 'max_tokens': self.max_tokens,
+                    'visible_text': text if isinstance(text, str) else None}
+        if reason not in ('stop', None):
+            raise VLMDescriptionError('TRUNCATED' if reason == 'length' else 'UNKNOWN', response_evidence=evidence)
+        if not isinstance(text, str) or not text.strip():
+            raise VLMDescriptionError('EMPTY', response_evidence=evidence)
         return text.strip()
 
 

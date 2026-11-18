@@ -46,7 +46,6 @@ def test_cancelled_request_releases_slot(monkeypatch):
 
 
 def test_borrowed_transport_keeps_slot_until_response_closed(monkeypatch):
-    import hashlib
     import httpx
 
     class BytesStream(httpx.AsyncByteStream):
@@ -58,7 +57,7 @@ def test_borrowed_transport_keeps_slot_until_response_closed(monkeypatch):
         async with provider_http.managed_provider_http() as manager:
             mock_client = httpx.AsyncClient(transport=httpx.MockTransport(
                 lambda request: httpx.Response(200, stream=BytesStream())))
-            key = ("https://one", hashlib.sha256(b"a").digest(), 60.0, True, False)
+            key = provider_http._pool_key("https://one", "a", 5.0, True, False)
             manager.clients[key] = mock_client
             proxy = httpx.AsyncClient(transport=provider_http.ProviderBorrowingTransport(
                 base_url="https://one", api_key="a", stage="llm", trust_env=False))
@@ -75,8 +74,7 @@ def test_borrowed_transport_keeps_slot_until_response_closed(monkeypatch):
     asyncio.run(run())
 
 
-def test_actual_sdk_and_langchain_share_borrowed_connections():
-    import hashlib
+def test_actual_sdk_and_langchain_share_borrowed_connections(monkeypatch):
     import json
     import httpx
     from app.services.llm import LLMService
@@ -93,12 +91,14 @@ def test_actual_sdk_and_langchain_share_borrowed_connections():
             calls.append(request)
             return httpx.Response(200, headers={"content-type": "application/json"}, stream=JSONStream())
         async with provider_http.managed_provider_http() as manager:
-            digest = hashlib.sha256(b"test-key").digest()
             clients = []
-            for trust_env in (False, True):
+            for trust_env, timeout in ((False, 120.0), (True, None)):
                 client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
                 clients.append(client)
-                manager.clients[("https://one/v1", digest, 60.0, True, trust_env)] = client
+                manager.clients[provider_http._pool_key("https://one/v1", "test-key", timeout, True, trust_env)] = client
+            def unexpected_client(*args, **kwargs):
+                raise AssertionError("unexpected pool partition must not make a real request")
+            monkeypatch.setattr(manager, "_new_client", unexpected_client)
             service = LLMService(base_url="https://one/v1", api_key="test-key", model="test")
             result = await service._get_client().chat.completions.create(model="test", messages=[{"role": "user", "content": "hi"}])
             assert result.choices[0].message.content == "hello"
@@ -108,6 +108,9 @@ def test_actual_sdk_and_langchain_share_borrowed_connections():
             assert (await model.ainvoke("hi")).content == "hello"
             assert len(calls) == 2
             assert all(request.headers["authorization"] == "Bearer test-key" for request in calls)
+            assert [request.extensions["timeout"]["read"] for request in calls] == [120.0, None]
+            await service.aclose()
+            assert not any(client.is_closed for client in clients)
         assert all(client.is_closed for client in clients)
     asyncio.run(run())
 
@@ -127,7 +130,7 @@ def test_shutdown_closes_all_clients_and_rejects_waiters(monkeypatch):
         manager = provider_http.ProviderHTTPManager()
         first, second = FakeClient(True), FakeClient()
         manager.clients = {"first": first, "second": second}
-        monkeypatch.setattr(provider_http, "_manager", manager)
+        monkeypatch.setitem(provider_http._managers, asyncio.get_running_loop(), manager)
         await manager.slots.acquire()
         async def queued():
             async with provider_http.provider_request(base_url="https://one", api_key="a", stage="test"):
@@ -187,7 +190,7 @@ def test_startup_reserves_are_unbound_claimed_once_and_closed(monkeypatch):
             assert len(manager.reserves) == 4
             all_reserves = list(manager.reserves.values())
             assert not calls
-            reserved = manager.reserves[(60.0, True, False)]
+            reserved = manager.reserves[provider_http._pool_key("", "", 60.0, True, False)[2:]]
             async with provider_http.provider_request(base_url="https://one", api_key="first", stage="test") as first:
                 assert first is reserved
                 assert "authorization" not in first.headers
@@ -205,11 +208,12 @@ def test_unmatched_custom_tls_does_not_consume_reserve():
     import ssl
     async def run():
         async with provider_http.managed_provider_http(preinitialize=True) as manager:
-            reserve = manager.reserves[(60.0, True, False)]
+            reserve_key = provider_http._pool_key("", "", 60.0, True, False)[2:]
+            reserve = manager.reserves[reserve_key]
             context = ssl.create_default_context()
             async with provider_http.provider_request(base_url="https://one", api_key="first", stage="test", verify=context) as client:
                 assert client is not reserve
-                assert manager.reserves[(60.0, True, False)] is reserve
+                assert manager.reserves[reserve_key] is reserve
             assert not client.is_closed
         assert client.is_closed and reserve.is_closed
     asyncio.run(run())

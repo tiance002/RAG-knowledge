@@ -3,10 +3,15 @@
 """
 
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from functools import lru_cache
 from typing import List
 import os
 from pathlib import Path
+from app.core.router_environment import load_router_environment
+
+
+load_router_environment()
 
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -43,6 +48,12 @@ class Settings(BaseSettings):
     LLM_ANSWER_MAX_TOKENS: int = 4096
     # Relevance grading only: bound one request, without retrying an unknown result.
     AGENT_GRADING_TIMEOUT_SECONDS: float = 60.0
+    # Agent history bodies are opt-in; dialogue remains bounded separately.
+    AGENT_RETAIN_RETRIEVAL_HISTORY: bool = False
+    AGENT_TOOL_RESULT_INLINE_CHARS: int = Field(default=6000, ge=512, le=32000)
+    AGENT_TOOL_RESULT_STORE_DIR: str | None = None
+    AGENT_TOOL_RESULT_MAX_BYTES: int = Field(default=8 * 1024 * 1024, ge=65536)
+    AGENT_TOOL_RESULT_MAX_ENTRIES: int = Field(default=32, ge=1, le=256)
 
     FALLBACK_STRATEGY: str = "model"
     FALLBACK_PROMPT: str = "请根据通用知识回答用户问题；无法确定时说明不确定。"
@@ -67,6 +78,7 @@ class Settings(BaseSettings):
     VLM_BASE_URL: str = "http://localhost:11434/v1"
     VLM_API_KEY: str = "ollama"
     VLM_MODEL: str = ""
+    VLM_MAX_TOKENS: int = Field(default=1000, ge=128, le=32768)
 
     # Bootstrap-only inputs for the first system_settings migration. Runtime
     # UI defaults come from services.runtime_settings after initialization.
@@ -117,12 +129,15 @@ class Settings(BaseSettings):
     # ==================== Rerank 配置 ====================
     RERANK_MAX_CONTEXT: int = 8196          # Rerank 单批最大 token
     RERANK_DEFAULT_TOP_K: int = 20          # 默认 Rerank 返回数量
+    RERANK_MODEL_WEIGHT: float = Field(default=0.6, ge=0)
+    RERANK_RETRIEVAL_WEIGHT: float = Field(default=0.3, ge=0)
+    RERANK_SOURCE_WEIGHT: float = Field(default=0.1, ge=0)
     RERANK_MIN_TOP_K: int = 5               # 最小 Rerank 返回数量
     RERANK_MAX_TOP_K: int = 50              # 最大 Rerank 返回数量
 
     # ==================== 上下文扩展配置 ====================
     CONTEXT_WINDOW_SIZE: int = 1            # 前后上下文 chunk 数
-    MAX_PARENT_LENGTH: int = 4000           # 父文档最大拼接长度（字符）
+    MAX_PARENT_CONTEXTS: int = Field(default=6, ge=0)  # Maximum parent chunks delivered to one model request
     CONTEXT_MAX_CHARS: int = 24000         # All expanded evidence, including neighbors
     GROUNDED_REQUEST_MAX_CHARS: int = 32000 # Serialized messages + references + prompt; character guard
 

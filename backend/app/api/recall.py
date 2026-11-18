@@ -7,7 +7,7 @@
 - hybrid: 混合检索（默认）
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlmodel import Session, select, delete, func
 from typing import List, Optional
 
@@ -19,12 +19,26 @@ from app.schemas import (
 )
 from app.services.retrieval import get_retrieval_service
 from app.services.llm import is_unknown_provider_error
-from app.services.rerank import RerankService, batch_rerank, expand_context
+from app.services.rerank import RerankService, async_batch_rerank, expand_context
+from app.services.request_admission import acquire_request
+from app.services.recall_evaluation import evaluate_recall_identity, recall_identity_fields
+from functools import wraps
 import time
 import re
 from pathlib import PurePath
 
 router = APIRouter(tags=["Recall"])
+
+
+def _bounded_recall(function):
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        lease = await acquire_request(kwargs.get('request'))
+        try:
+            return await function(*args, **kwargs)
+        finally:
+            lease.release()
+    return wrapped
 
 
 def _recall_source(row):
@@ -38,7 +52,8 @@ def _recall_source(row):
         raise ValueError('unverified_context_members')
     origins = [{'chunk_id': m['id'], 'page_number': m.get('page_number'),
                 'source_metadata': m.get('source_metadata') or {}} for m in members]
-    composite = len(origins) > 1
+    # A parent is a different source ID even when it is the group's sole member.
+    composite = len(origins) > 1 or any(origin['chunk_id'] != row.get('id') for origin in origins)
     if composite:
         return {'source_type': 'context_group', 'members': origins}, True
     return (origins[0]['source_metadata'] if origins else None), False
@@ -48,10 +63,12 @@ def _recall_source(row):
     "/knowledge-bases/{kb_id}/recall",
     response_model=ApiResponse[RecallTestResponse],
 )
+@_bounded_recall
 async def recall_test(
     kb_id: str,
     data: RecallRequest,
     session: Session = Depends(get_session),
+    request: Request = None,
 ):
     """
     执行召回测试
@@ -107,7 +124,7 @@ async def recall_test(
                     rerank_model = session.get(CustomModel, data.rerank_model_id)
 
                 # 使用分批 Rerank
-                results = batch_rerank(
+                results = await async_batch_rerank(
                     query=data.query,
                     candidates=results,
                     rerank_service=rerank_service,
@@ -181,6 +198,7 @@ async def recall_test(
                     location = f"记录 {source['record_start']}-{source['record_end']}"
             result_list.append(RecallResult(
                 chunkId=r.get("id"),
+                **recall_identity_fields(r),
                 seed_child_ids=r.get("seed_child_ids", []), parent_chunk_id=r.get("parent_chunk_id"),
                 context_group=r.get("context_group"), score_origin=r.get("score_origin"),
                 source_mapping_status=r.get("source_mapping_status"),
@@ -203,8 +221,11 @@ async def recall_test(
         end_time = time.time()
         query_time = (end_time - start_time) * 1000  # 毫秒
 
+        if not result_list and metrics.get('retrieval_status') == 'PARTIAL':
+            metrics['retrieval_status'] = 'UNKNOWN'
         return ApiResponse(data=RecallTestResponse(
             results=result_list,
+            evaluation=evaluate_recall_identity(result_list),
             query_time=query_time,
             retrieval_status=metrics.get('retrieval_status', 'UNKNOWN'),
             expansion_delivery_status=expansion_delivery_status,
@@ -222,15 +243,21 @@ async def recall_test(
     "/recall/multi",
     response_model=ApiResponse[RecallTestResponse],
 )
+@_bounded_recall
 async def recall_test_multi(
     data: RecallRequest,
     kb_ids: List[str],
     session: Session = Depends(get_session),
+    request: Request = None,
 ):
     """
     多知识库联合召回测试
     """
     start_time = time.time()
+
+    if not kb_ids:
+        raise HTTPException(400, detail={"code": "KNOWLEDGE_SCOPE_REQUIRED",
+                                         "message": "召回测试必须明确选择知识库范围"})
 
     # 验证知识库存在
     for kb_id in kb_ids:
@@ -262,7 +289,7 @@ async def recall_test_multi(
             if data.rerank_model_id:
                 rerank_model = session.get(CustomModel, data.rerank_model_id)
 
-            results = batch_rerank(
+            results = await async_batch_rerank(
                 query=data.query,
                 candidates=results,
                 rerank_service=rerank_service,
@@ -311,6 +338,7 @@ async def recall_test_multi(
                     location = f"记录 {source['record_start']}-{source['record_end']}"
             result_list.append(RecallResult(
                 chunkId=r.get("id"),
+                **recall_identity_fields(r),
                 seed_child_ids=r.get("seed_child_ids", []), parent_chunk_id=r.get("parent_chunk_id"),
                 context_group=r.get("context_group"), score_origin=r.get("score_origin"),
                 source_mapping_status=r.get("source_mapping_status"),
@@ -332,8 +360,11 @@ async def recall_test_multi(
 
         query_time = (time.time() - start_time) * 1000
 
+        if not result_list and metrics.get('retrieval_status') == 'PARTIAL':
+            metrics['retrieval_status'] = 'UNKNOWN'
         return ApiResponse(data=RecallTestResponse(
             results=result_list,
+            evaluation=evaluate_recall_identity(result_list),
             query_time=query_time,
             retrieval_status=metrics.get('retrieval_status', 'UNKNOWN'),
             expansion_delivery_status=expansion_delivery_status,

@@ -28,7 +28,7 @@ def test_actual_app_lifespan_preinitializes_unbound_reserves_and_closes_all(monk
 
     monkeypatch.setattr(main, 'load_persisted_settings', persisted_settings)
     monkeypatch.setattr(observability, 'flush_observations', lambda **kwargs: calls.append('flush_observations'))
-    monkeypatch.setattr(provider_http, '_manager', None)
+    monkeypatch.setattr(provider_http, '_managers', {})
     monkeypatch.setenv('RAG_OBSERVABILITY_ENABLED', 'false')
     monkeypatch.setenv('LANGFUSE_ENABLED', 'false')
 
@@ -48,13 +48,15 @@ def test_actual_app_lifespan_preinitializes_unbound_reserves_and_closes_all(monk
 
     async def run():
         async with main.app.router.lifespan_context(main.app):
-            manager = provider_http._manager
+            manager = provider_http._current_manager()
             observed['manager'] = manager
             assert manager is not None and not manager.closed
             assert len(manager.reserves) == 4
             assert not manager.clients
-            expected_keys = {(60.0, True, False), (120.0, True, False),
-                             (5.0, True, False), (60.0, True, True)}
+            expected_keys = {
+                provider_http._pool_key('', '', timeout, verify, trust_env)[2:]
+                for timeout, verify, trust_env in ((60.0, True, False), (120.0, True, False),
+                                                  (5.0, True, False), (60.0, True, True))}
             assert set(manager.reserves) == expected_keys
             initial = dict(manager.reserves)
             observed['initial_reserves'] = list(initial.values())
@@ -63,7 +65,7 @@ def test_actual_app_lifespan_preinitializes_unbound_reserves_and_closes_all(monk
             assert all(not client.headers.get('Authorization') for client in initial.values())
             assert all(not client.base_url.host for client in initial.values())
 
-            expected_rerank = initial[(120.0, True, False)]
+            expected_rerank = initial[provider_http._pool_key('', '', 120.0, True, False)[2:]]
             async with provider_http.provider_request(base_url='https://synthetic.invalid/v1',
                     api_key='synthetic-key-a', stage='rerank', timeout=120.0) as first:
                 assert first is expected_rerank
@@ -82,7 +84,7 @@ def test_actual_app_lifespan_preinitializes_unbound_reserves_and_closes_all(monk
             assert sends == []
         assert manager.closed
         assert not manager.clients and not manager.reserves
-        assert provider_http._manager is None
+        assert provider_http._current_manager() is None
 
     try:
         asyncio.run(run())

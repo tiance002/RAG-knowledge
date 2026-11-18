@@ -259,6 +259,7 @@ def process_file_parsing(
     parent_chunk_overlap: int = 0,
     child_chunk_size: int = 384,
     child_chunk_overlap: int = 48,
+    xlsx_first_row_as_header: bool = False,
 ):
     """
     处理文件解析任务
@@ -286,7 +287,7 @@ def process_file_parsing(
     if chunk_size <= 0 or not 0 <= chunk_overlap < chunk_size:
         raise ValueError("CHUNK_CONFIGURATION_INVALID")
 
-    from app.services.parent_child import ParentChildConfig, build_parent_child_chunks
+    from app.services.parent_child import ParentChildConfig
     parent_child_config = ParentChildConfig(parent_chunk_size, parent_chunk_overlap,
                                            child_chunk_size, child_chunk_overlap).validate() if parent_child else None
 
@@ -332,7 +333,7 @@ def process_file_parsing(
             safe_commit(session)
             
             # 初始化解析器
-            parser = FileParser(kb_id=file_doc.kb_id)
+            parser = FileParser(kb_id=file_doc.kb_id, xlsx_first_row_as_header=xlsx_first_row_as_header)
 
             from app.services.model_bindings import resolve_model
             kb = session.get(KnowledgeBase, file_doc.kb_id)
@@ -372,7 +373,8 @@ def process_file_parsing(
                     embedding_api_key=embedding_api_key, # 传递 api_key
                     use_semantic=bool(embedding_model) or chunk_mode == "semantic", # 显式启用语义切分
                     embedding_max_tokens=vector_max_tokens, # 传递向量模型上下文长度
-                    semantic_max_tokens=semantic_max_tokens # 传递语义模型上下文长度
+                    semantic_max_tokens=semantic_max_tokens,
+                    defer_chunking=True,
                 )
 
                 # Caption actual image chunks once, using the KB-bound VLM. Failure
@@ -405,9 +407,9 @@ def process_file_parsing(
                         write_manifest(settings.PDF_AUDIT_DIR,
                             digest_bytes(Path(file_doc.local_path).read_bytes()),
                             getattr(parser, 'pdf_page_records', []), parsed_chunks)
+                parsed_chunks = parser.chunk_document(parsed_chunks,
+                    parent_child_config=parent_child_config if parent_child else None)
                 if parent_child:
-                    parsed_chunks = build_parent_child_chunks(parsed_chunks, parent_child_config,
-                        count_tokens=parser.splitter.count_tokens)
                     event("ingest.parent_child", file_id=file_id, unit="characters",
                           parent_count=sum((c.metadata or {}).get("chunk_type") == "parent" for c in parsed_chunks),
                           child_count=sum((c.metadata or {}).get("chunk_type") == "child" for c in parsed_chunks),

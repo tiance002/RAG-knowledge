@@ -1,4 +1,8 @@
 import math
+import asyncio
+import threading
+import weakref
+from app.services.request_stage_timing import benchmark_timed
 from app.services.observability import event, candidates as observe_candidates, observe, model_response, enabled, snapshot
 """
 Rerank 服务模块
@@ -15,6 +19,101 @@ from sqlmodel import select, Session
 from app.core.rerank_model import RerankModelLoader
 from app.services.llm import is_unknown_provider_error, invoke_provider_http, invoke_provider_http_async, provider_error_payload
 from app.services.provider_http import provider_request
+
+_local_model_lock = threading.Lock()
+_local_slots_lock = threading.Lock()
+_local_slots = weakref.WeakKeyDictionary()
+_remote_connection_slots = weakref.WeakKeyDictionary()
+
+
+def _predict_local(query, candidates, model_path, max_len):
+    # The loader is a mutable process singleton, including model/tokenizer
+    # replacement. Sync callers and every event loop share this guard.
+    with _local_model_lock:
+        return RerankModelLoader().predict(query=query, passages=candidates,
+            model_path=model_path, max_len=max_len)
+
+
+async def _async_predict_local(query, candidates, model_path, max_len):
+    return await _run_bounded_rerank_worker(_predict_local, query, candidates, model_path, max_len)
+
+
+async def _run_bounded_rerank_worker(operation, *args, slots=None):
+    loop = asyncio.get_running_loop()
+    slots = _local_slots if slots is None else slots
+    with _local_slots_lock:
+        reference = slots.get(loop)
+        slot = reference() if reference is not None else None
+        if slot is None:
+            slot = asyncio.Semaphore(1)
+            # Neither side of this registry retains a completed worker loop.
+            slots[loop] = weakref.ref(slot)
+    async with slot:
+        # Reuse the loop-owned bounded worker pool. Each gate admits one job
+        # per loop; remote health checks never reserve local-model capacity.
+        task = asyncio.create_task(asyncio.to_thread(
+            operation, *args))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+            except Exception:
+                break
+        # Observe a worker error even after caller cancellation. Cancellation
+        # remains the request outcome, and admission lasts until the thread ends.
+        try:
+            result = task.result()
+        except BaseException:
+            if cancelled:
+                raise asyncio.CancelledError from None
+            raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+
+def candidate_rank_key(row):
+    """Known composite/model scores precede unscored retrieval fallbacks."""
+    for field in ('composite_score', 'rerank_score'):
+        value = row.get(field)
+        if isinstance(value, (int, float)) and math.isfinite(value):
+            return (1, value)
+    value = row.get('score')
+    return (0, value if isinstance(value, (int, float)) and math.isfinite(value) else 0)
+
+
+def apply_composite_scores(rows, settings):
+    """Keep raw scores; normalize unbounded lexical scores before combining."""
+    weights = [getattr(settings, key, default) for key, default in (
+        ('RERANK_MODEL_WEIGHT', .6), ('RERANK_RETRIEVAL_WEIGHT', .3),
+        ('RERANK_SOURCE_WEIGHT', .1))]
+    total = sum(weights)
+    if total <= 0:
+        raise ValueError('RERANK_COMPOSITE_WEIGHTS_MUST_HAVE_POSITIVE_SUM')
+    values = [r.get('score') for r in rows]
+    valid = [v for v in values if isinstance(v, (int, float)) and math.isfinite(v)]
+    unbounded = any(v < 0 or v > 1 for v in valid)
+    lo, hi = (min(valid), max(valid)) if valid else (0, 0)
+    for row in rows:
+        raw = row.get('score')
+        known = isinstance(raw, (int, float)) and math.isfinite(raw)
+        base = ((raw-lo)/(hi-lo) if hi > lo else 1.0) if known and unbounded else raw if known else None
+        model = row.get('rerank_score')
+        model_known = isinstance(model, (int, float)) and math.isfinite(model)
+        source = .95 if row.get('knowledge_source', row.get('source')) == 'web_search' else 1.0
+        row.update(retrieval_base_score=base,
+            retrieval_normalization='candidate_minmax' if unbounded else 'bounded_identity',
+            source_weight=source, composite_score=None,
+            composite_score_status='UNKNOWN_MODEL_SCORE' if not model_known else 'KNOWN')
+        if model_known:
+            # Missing retrieval evidence contributes no invented score: use the
+            # observed model score, as WeKnora does for non-retrieval candidates.
+            base = base if base is not None else max(0., min(1., model))
+            row['composite_score'] = max(0., min(1.,
+                (weights[0]*max(0., min(1., model)) + weights[1]*base + weights[2]*source)/total))
+
 
 def extract_json_from_text(text: str) -> str:
     """从模型响应中提取 JSON 字符串"""
@@ -77,13 +176,7 @@ class RerankService:
             
             if not is_remote_api:
                 # 使用本地模型加载器
-                loader = RerankModelLoader()
-                results = loader.predict(
-                    query=query,
-                    passages=candidates,
-                    model_path=model.base_url,
-                    max_len=model.context_length
-                )
+                results = _predict_local(query, candidates, model.base_url, model.context_length)
                 return results
             else:
                 # 使用 OpenAI 兼容 API (保留原有逻辑作为远程调用支持)
@@ -238,9 +331,7 @@ class RerankService:
         try:
             if model.base_url.startswith(("http://", "https://")):
                 return await self._arerank_via_api(query, candidates, model)
-            loader = RerankModelLoader()
-            return loader.predict(query=query, passages=candidates,
-                model_path=model.base_url, max_len=model.context_length)
+            return await _async_predict_local(query, candidates, model.base_url, model.context_length)
         except Exception as exc:
             if is_unknown_provider_error(exc):
                 raise
@@ -319,14 +410,13 @@ def test_rerank_connection(model_in: Any) -> Dict[str, Any]:
         if not is_remote_api:
             # 测试本地加载
             try:
-                loader = RerankModelLoader()
-                # 尝试加载模型
-                loader.load_model(base_url, max_len=context_length)
-                
-                # 尝试简单推理
-                query = "测试"
-                passages = ["这是一个测试文档", "这是另一个无关文档"]
-                results = loader.predict(query, passages, base_url, context_length)
+                with _local_model_lock:
+                    loader = RerankModelLoader()
+                    # Warmup and prediction share the inference singleton guard.
+                    loader.load_model(base_url, max_len=context_length)
+                    query = "测试"
+                    passages = ["这是一个测试文档", "这是另一个无关文档"]
+                    results = loader.predict(query, passages, base_url, context_length)
                 
                 return {"success": True, "message": "本地模型加载并测试成功", "data": results}
             except Exception as e:
@@ -353,9 +443,32 @@ def test_rerank_connection(model_in: Any) -> Dict[str, Any]:
                  return {"success": True, "message": "API 连接成功"}
             except Exception as e:
                 return {"success": False, "message": "API 连接失败", **provider_error_payload(e, stage="rerank_connection_test")}
+            finally:
+                close = getattr(client, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception as exc:
+                        try:
+                            event('rerank.connection_close_failed', error_type=type(exc).__name__)
+                        except Exception:
+                            pass
 
     except Exception as e:
         return {"success": False, "message": f"未知错误: {str(e)}", "error": str(e)}
+
+
+async def async_test_rerank_connection(model_in: Any) -> Dict[str, Any]:
+    """Test off-loop, isolating remote checks from local singleton admission."""
+    # Read ORM fields on their owning request thread; workers get plain values.
+    values = {name: (model_in.get(name, default) if isinstance(model_in, dict)
+                     else getattr(model_in, name, default))
+              for name, default in (("base_url", None), ("model_name", None),
+                                    ("context_length", 4096), ("api_key", ""))}
+    base_url = values["base_url"]
+    remote = isinstance(base_url, str) and base_url.startswith(("http://", "https://"))
+    return await _run_bounded_rerank_worker(test_rerank_connection, values,
+        slots=_remote_connection_slots if remote else _local_slots)
 
 
 def estimate_tokens(text: str) -> int:
@@ -557,12 +670,13 @@ def _batch_rerank_steps(
                 all_results.append(result)
 
     observe_candidates("rerank.batch_output", all_results)
-    # 4. 按 rerank_score 排序
+    apply_composite_scores(all_results, settings)
+    # 4. Composite relevance; raw model threshold remains independently defined.
     before_sort = [r.get("id", r.get("chunk_id")) for r in all_results] if enabled() else []
-    all_results.sort(key=lambda x: (x.get("rerank_score") is not None, x.get("rerank_score") or 0), reverse=True)
+    all_results.sort(key=candidate_rank_key, reverse=True)
     if enabled():
         after_sort = [r.get("id", r.get("chunk_id")) for r in all_results]
-        event("rag.candidate_transition", operation="sort", input_ids=before_sort, output_ids=after_sort, input_candidate_ids=before_sort, output_candidate_ids=after_sort, sort_key="rerank_score_desc", removed=[], rule_version="rerank_sort_v1")
+        event("rag.candidate_transition", operation="sort", input_ids=before_sort, output_ids=after_sort, input_candidate_ids=before_sort, output_candidate_ids=after_sort, sort_key="composite_score_desc", removed=[], rule_version="rerank_composite_v1")
 
     # 5. 过滤低于阈值的结果
     filtered_results = [
@@ -576,17 +690,20 @@ def _batch_rerank_steps(
         after = [r.get("id", r.get("chunk_id")) for r in filtered_results]
         event("rag.candidate_transition", operation="threshold_filter", input_ids=before, output_ids=after, input_candidate_ids=before, output_candidate_ids=after, threshold=score_threshold, score_kind="rerank_score", rule_version="rerank_threshold_gte_v1", removed=[{"candidate_id": r.get("id", r.get("chunk_id")), "reason_code": "below_threshold", "rank_before": i, "threshold": score_threshold} for i, r in enumerate(all_results, 1) if r.get("rerank_score") is not None and r["rerank_score"] < score_threshold])
         selected = after[:top_k]
-        event("rag.candidate_transition", operation="topk", input_ids=after, output_ids=selected, input_candidate_ids=after, output_candidate_ids=selected, top_k=top_k, score_kind="rerank_score", rule_version="rerank_topk_v1", removed=[{"candidate_id": cid, "reason_code": "outside_topk", "rank_before": i} for i, cid in enumerate(after, 1) if i > len(selected)])
+        event("rag.candidate_transition", operation="topk", input_ids=after, output_ids=selected, input_candidate_ids=after, output_candidate_ids=selected, top_k=top_k, score_kind="composite_score", rule_version="rerank_composite_topk_v1", removed=[{"candidate_id": cid, "reason_code": "outside_topk", "rank_before": i} for i, cid in enumerate(after, 1) if i > len(selected)])
     # 6. 返回 top_k
     observe_candidates('rerank.selected', filtered_results[:top_k], top_k=top_k)
     return filtered_results[:top_k]
 
 
 @observe("retrieval.expand_context")
-def expand_context(top_chunks, session, window_size=None, max_parent_length=None,
-                   include_source_members=False, allowed_kb_ids=None, max_context_chars=None):
+@benchmark_timed('parent_expansion')
+def expand_context(top_chunks, session, window_size=None,
+                   include_source_members=False, allowed_kb_ids=None, max_context_chars=None,
+                   max_parent_contexts=None):
     """Resolve actual parents once per request; legacy invalid links fall back to seeds."""
     from app.services.parent_context import expand_parent_context
     return expand_parent_context(top_chunks, session, window_size=window_size,
-        max_parent_length=max_parent_length, include_source_members=include_source_members,
-        allowed_kb_ids=allowed_kb_ids, max_context_chars=max_context_chars)
+        include_source_members=include_source_members,
+        allowed_kb_ids=allowed_kb_ids, max_context_chars=max_context_chars,
+        max_parent_contexts=max_parent_contexts)

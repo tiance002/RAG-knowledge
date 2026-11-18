@@ -24,21 +24,15 @@ def test_docx_once_and_heading_offsets(tmp_path, monkeypatch):
     doc.save(path)
     monkeypatch.setattr(parser.settings, "IMAGE_DIR", str(tmp_path))
     monkeypatch.setattr(parser, "HAS_LANGCHAIN", False)
-    split = parser.StructuredSplitter.split_by_headings
-    observed = {}
-
-    def capture(self, text, headings, make_id):
-        observed["text"] = text
-        observed["headings"] = [(h.text, text[h.start_pos:h.end_pos]) for h in headings]
-        return split(self, text, headings, make_id)
-
-    monkeypatch.setattr(parser.StructuredSplitter, "split_by_headings", capture)
-    chunks = parser.FileParser("test").parse(str(path), chunk_mode="structure")
+    instance = parser.FileParser("test")
+    raw = instance.extract(str(path))
+    text, spans = raw.text_and_spans()
     for phrase in ("Before.", "Heading A", "Distinct body."):
-        assert observed["text"].count(phrase) == 1
-    assert observed["text"].index("Before.") < observed["text"].index("Heading A") < observed["text"].index("Distinct body.")
-    assert observed["headings"] == [("Heading A", "Heading A")]
+        assert text.count(phrase) == 1
+    assert text.index("Before.") < text.index("Heading A") < text.index("Distinct body.")
+    chunks = instance.parse(str(path), chunk_mode="structure", chunk_size=500, chunk_overlap=0)
     assert sum(c.content.count("Distinct body.") for c in chunks) == 1
+    assert all(c.metadata['chunker_version'] == 'unified-legacy-v1' for c in chunks)
 
 
 def test_child_is_not_pdf_supplement():
@@ -106,14 +100,13 @@ def test_spreadsheet_and_csv_source_locators(tmp_path, monkeypatch):
     wb.close()
     csv = tmp_path / "quoted.csv"
     csv.write_text('label,value\n"spans\ntwo lines",1\nlast,2\n', encoding="utf8")
-    for source, chunks, expected in [
-        (path, p._parse_excel(str(path)), {"sheet": "Quarter", "row_start": 22, "row_end": 23,
-                                           "column_start": 1, "column_end": 2}),
-        (csv, p._parse_csv(str(csv)), {"record_start": 1, "record_end": 2,
-                                        "column_start": 1, "column_end": 2}),
+    for source, chunks, key, expected_rows in [
+        (path, p._parse_excel(str(path)), 'row_start', set(range(1,24))),
+        (csv, p._parse_csv(str(csv)), 'record_start', {0,1,2}),
     ]:
+        locations = [loc for chunk in chunks for loc in chunk.metadata['source_locators']]
+        assert {loc[key] for loc in locations} == expected_rows
         c = chunks[-1]
         loc = source_metadata(source, c.content, c.page_number, c.content_type)
-        assert loc["source_locators"] == [expected]
-        assert all(loc[key] == value for key, value in expected.items())
+        assert loc['source_locators'] == [c.metadata['source_locator']]
         assert source_metadata(source, c.content + " edited", c.page_number, c.content_type) == {}

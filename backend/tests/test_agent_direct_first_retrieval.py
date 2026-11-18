@@ -96,7 +96,8 @@ def test_direct_dispatch_reuses_exact_tool_contract_and_is_not_model_call(monkey
     args = invoke.call_args.args[0]
     assert args == {**{k: v for k, v in current['search_params'].items() if k != 'rerank_enabled'},
                    'use_rerank': True, 'kb_ids': ['allowed'],
-                   'query': current['retrieval_query'], 'original_query': current['original_query']}
+                   'query': current['retrieval_query'], 'original_query': current['original_query'],
+                   'expand_evidence': False}
     dispatch, tool = out['messages']
     assert dispatch.additional_kwargs['execution_origin'] == 'workflow_direct_retrieval'
     assert tool.tool_call_id == dispatch.tool_calls[0]['id']
@@ -109,8 +110,8 @@ def test_direct_dispatch_reuses_exact_tool_contract_and_is_not_model_call(monkey
     model.assert_not_called()
 
 
-@pytest.mark.parametrize('low_first_grade', [False, True])
-def test_actual_graph_saves_only_first_selection_and_preserves_grading_retry(monkeypatch, low_first_grade):
+@pytest.mark.parametrize('model_requests_retry', [False, True])
+def test_actual_graph_saves_only_first_selection_and_preserves_agent_selected_retry(monkeypatch, model_requests_retry):
     schema = aw.search_knowledge_base.args_schema
     calls, tool_args = [], []
     class FakeModel:
@@ -128,11 +129,9 @@ def test_actual_graph_saves_only_first_selection_and_preserves_grading_retry(mon
         name='search_knowledge_base', args_schema=schema, ainvoke=tool))
     async def provider(model, messages, *, stage, **kwargs):
         calls.append(stage)
-        if stage == 'quality':
-            score = '.5' if low_first_grade and calls.count('quality') == 1 else '.9'
-            return AIMessage(content=score)
+        assert stage == 'agent', 'Production graph must not call an independent relevance grader'
         prior = [m for m in messages if isinstance(m, ToolMessage)]
-        if not prior or (low_first_grade and len(prior) == 1):
+        if not prior or (model_requests_retry and len(prior) == 1):
             return AIMessage(content='', tool_calls=[{'id': f'call-{len(calls)}',
                 'name': 'search_knowledge_base', 'args': {'query': '收入明细第二表达' if prior else state()['original_query']}}])
         return AIMessage(content='收入为42万元。[1]', response_metadata={'finish_reason': 'stop'})
@@ -147,9 +146,12 @@ def test_actual_graph_saves_only_first_selection_and_preserves_grading_retry(mon
     assert candidate[1] == base[1][1:]
     assert base[1][0] == 'agent'
     assert candidate[2] == base[2]
-    assert candidate[0]['last_score'] == base[0]['last_score'] == .9
-    assert candidate[0]['retry_count'] == base[0]['retry_count'] == int(low_first_grade)
-    assert candidate[0]['retrieval_attempt_count'] == base[0]['retrieval_attempt_count'] == 1 + int(low_first_grade)
+    assert all(stage == 'agent' for stage in base[1] + candidate[1])
+    assert candidate[0]['last_score'] is base[0]['last_score'] is None
+    assert candidate[0]['grading_status'] == base[0]['grading_status'] == 'NOT_RUN'
+    assert candidate[0]['grading_scope'] == base[0]['grading_scope'] == {}
+    assert candidate[0]['retry_count'] == base[0]['retry_count'] == 0
+    assert candidate[0]['retrieval_attempt_count'] == base[0]['retrieval_attempt_count'] == 1 + int(model_requests_retry)
     assert candidate[0]['messages'][-1].content == base[0]['messages'][-1].content
     assert candidate[0]['citations'] == base[0]['citations']
     assert candidate[0]['generation_status'] == base[0]['generation_status'] == 'COMPLETED'

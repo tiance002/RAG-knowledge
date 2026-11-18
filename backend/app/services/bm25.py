@@ -11,20 +11,34 @@ BM25 索引和检索服务
 import re
 import json
 import math
-import logging
-import time
 from collections import Counter
 from typing import List, Dict, Any
 from datetime import datetime
 
 from sqlmodel import Session, select, delete
 from sqlalchemy import literal_column, func, or_
+from sqlalchemy.orm import load_only
 
 from app.models import BM25Posting, ChunkIndex, IndexStats, DocumentChunk, FileDocument, FileStatus, generate_uuid
 from app.core.config import get_settings
 from app.services.performance_timing import timed_stage
 
 settings = get_settings()
+
+# Bound transient Posting mappings without splitting the publication transaction.
+_POSTING_INSERT_BATCH_SIZE = 1000
+
+
+def _accounting_stats(session, kb_id):
+    """Never transfer the retained legacy DF snapshot on a hot write path."""
+    return session.get(IndexStats, kb_id, populate_existing=True, options=[load_only(
+        IndexStats.total_docs, IndexStats.avg_doc_length, IndexStats.updated_at)])
+
+
+def _delete_sync(session, model):
+    # Publication sessions have no loaded posting/index entities. Other callers
+    # may hold them: fetch synchronizes those identities without stale objects.
+    return 'fetch' if any(isinstance(value, model) for value in session.identity_map.values()) else False
 
 # 中文停用词（常见）
 STOP_WORDS_CN = {
@@ -51,6 +65,21 @@ STOP_WORDS_EN = {
 STOP_WORDS = STOP_WORDS_CN | STOP_WORDS_EN
 
 
+class BM25TokenizerDependencyError(RuntimeError):
+    """The fixed lexical analyzer cannot be loaded; never change it silently."""
+
+
+def require_jieba():
+    try:
+        import jieba
+    except ImportError as exc:
+        raise BM25TokenizerDependencyError(
+            'BM25_JIEBA_REQUIRED: 无法加载 jieba；请在后端运行环境安装 '
+            'jieba==0.42.1。BM25 入库和查询固定使用 jieba，禁止自动降级。'
+        ) from exc
+    return jieba
+
+
 def tokenize(text: str) -> List[str]:
     """
     中英文混合分词
@@ -58,18 +87,14 @@ def tokenize(text: str) -> List[str]:
     策略：
     1. 英文按空格和标点分词，转小写
     2. 中文使用 jieba 分词
-    3. 过滤停用词和单字符
+    3. 过滤停用词和单字符；jieba 不可用时明确报错
     """
+    jieba = require_jieba()
+    # Disabled alternatives, retained as comments to prevent accidental use:
+    # chinese_tokens = list(chinese_text)  # per-character fallback
+    # return tokenize_bigram_compatible(text, STOP_WORDS)  # bigram fallback
     if not text:
         return []
-
-    # 尝试导入 jieba，如果没有则使用简单分词
-    try:
-        import jieba
-        use_jieba = True
-    except ImportError:
-        use_jieba = False
-        logging.getLogger(__name__).warning("jieba 未安装，使用简单分词")
 
     # 1. 提取英文单词（包括数字和下划线）
     english_pattern = r'[a-zA-Z0-9_]+'
@@ -79,12 +104,7 @@ def tokenize(text: str) -> List[str]:
     # 移除英文部分，保留中文和标点
     chinese_text = re.sub(english_pattern, ' ', text)
 
-    if use_jieba:
-        # 使用 jieba 分词
-        chinese_tokens = list(jieba.cut(chinese_text))
-    else:
-        # 简单按字切分中文（降级方案）
-        chinese_tokens = list(chinese_text)
+    chinese_tokens = list(jieba.cut(chinese_text))
 
     # 3. 清理和过滤
     all_tokens = []
@@ -95,7 +115,7 @@ def tokenize(text: str) -> List[str]:
         # - 长度 > 1（过滤单字符，但保留中文双字词）
         # - 不是纯标点
         # - 不是停用词
-        if t and (len(t) > 1 or (not use_jieba and re.fullmatch(r'[\u4e00-\u9fff]', t))) and not re.match(r'^[\s\W]+$', t) and t.lower() not in STOP_WORDS:
+        if t and len(t) > 1 and not re.match(r'^[\s\W]+$', t) and t.lower() not in STOP_WORDS:
             all_tokens.append(t.lower())
 
     return all_tokens
@@ -112,7 +132,7 @@ class BM25Index:
     - 索引删除
     """
 
-    def __init__(self, k1: float = None, b: float = None):
+    def __init__(self, k1: float = None, b: float = None, *, bigram_index_path=None):
         """
         初始化 BM25 索引
 
@@ -122,6 +142,10 @@ class BM25Index:
         """
         self.k1 = k1 or settings.BM25_K1
         self.b = b or settings.BM25_B
+        if bigram_index_path:
+            raise ValueError('BM25_ANALYZER_OVERRIDE_DISABLED: 正式 BM25 只允许 jieba；bigram 仅保留为离线对照')
+        self.bigram_index_path = ''
+        require_jieba()
 
     def index_chunk(
         self,
@@ -156,17 +180,17 @@ class BM25Index:
 
         self._remove_postings(session, chunk_id, kb_id)
         existing = session.exec(
-            select(ChunkIndex).where(ChunkIndex.chunk_id == chunk_id, ChunkIndex.kb_id == kb_id)
+            select(ChunkIndex).options(load_only(ChunkIndex.id, ChunkIndex.doc_length))
+            .where(ChunkIndex.chunk_id == chunk_id, ChunkIndex.kb_id == kb_id)
             .execution_options(populate_existing=True)
         ).first()
 
         if existing:
             # 更新现有索引
-            old_term_freq = json.loads(existing.terms)
             old_doc_length = existing.doc_length
 
             # 先从统计中减去旧值
-            self._decrement_stats(session, kb_id, old_term_freq, old_doc_length)
+            self._decrement_stats(session, kb_id, {}, old_doc_length)
 
             # 更新索引
             existing.terms = json.dumps(term_freq, ensure_ascii=False)
@@ -213,40 +237,28 @@ class BM25Index:
     @timed_stage('ingest.bm25.remove')
     def begin_file_replacement(session, file_id, kb_id):
         """Remove prior physical postings and return their aggregate delta; no commit."""
-        old = session.exec(select(ChunkIndex.id, ChunkIndex.doc_length, ChunkIndex.terms)
+        count, length = session.exec(select(func.count(ChunkIndex.id), func.coalesce(func.sum(ChunkIndex.doc_length), 0))
             .join(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id)
-            .where(DocumentChunk.file_id == file_id, ChunkIndex.kb_id == kb_id)).all()
-        old_df = Counter()
-        for _, _, terms in old:
-            old_df.update(json.loads(terms).keys())
-        ids = [index_id for index_id, _, _ in old]
-        for start in range(0, len(ids), 500):
-            batch = ids[start:start+500]
-            session.execute(delete(BM25Posting).where(BM25Posting.index_id.in_(batch)))
-            session.execute(delete(ChunkIndex).where(ChunkIndex.id.in_(batch)))
-        return len(old), sum(length for _, length, _ in old), old_df
+            .where(DocumentChunk.file_id == file_id, ChunkIndex.kb_id == kb_id)).one()
+        indices = select(ChunkIndex.id).join(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id).where(
+            DocumentChunk.file_id == file_id, ChunkIndex.kb_id == kb_id)
+        session.execute(delete(BM25Posting).where(BM25Posting.kb_id == kb_id,
+            BM25Posting.index_id.in_(indices)).execution_options(synchronize_session=_delete_sync(session, BM25Posting)))
+        chunks = select(DocumentChunk.id).where(DocumentChunk.file_id == file_id)
+        session.execute(delete(ChunkIndex).where(ChunkIndex.kb_id == kb_id,
+            ChunkIndex.chunk_id.in_(chunks)).execution_options(synchronize_session=_delete_sync(session, ChunkIndex)))
+        return count, length
 
     @staticmethod
     @timed_stage('ingest.bm25.replace')
     def finish_file_replacement(session, kb_id, removed, prepared):
         """Batch insert replacement and update KB-wide stats once in caller transaction."""
-        removed_count, removed_length, removed_df = removed
-        stats = session.get(IndexStats, kb_id, populate_existing=True)
+        removed_count, removed_length = removed
+        stats = _accounting_stats(session, kb_id)
         total = stats.total_docs if stats else 0
         total_length = (stats.avg_doc_length * total) if stats else 0
-        started = time.perf_counter()
-        prior_json = stats.term_doc_freq if stats else '{}'
-        frequencies = Counter(json.loads(prior_json))
-        decode_ms = (time.perf_counter() - started) * 1000
-        if removed_count > total or any(frequencies[t] < count for t, count in removed_df.items()):
+        if removed_count > total:
             raise ValueError('BM25_STATS_INCONSISTENT')
-        delta = Counter()
-        for row in prepared:
-            delta.update(row['frequencies'].keys())
-        delta.subtract(removed_df)
-        changed_terms = sum(value != 0 for value in delta.values())
-        frequencies.update(delta)
-        frequencies = {term: count for term, count in frequencies.items() if count > 0}
         new_total = total - removed_count + len(prepared)
         new_length = total_length - removed_length + sum(row['doc_length'] for row in prepared)
         if new_length < -1e-6 or (new_total == 0 and abs(new_length) > 1e-6):
@@ -255,26 +267,21 @@ class BM25Index:
             stats = IndexStats(kb_id=kb_id)
         stats.total_docs = new_total
         stats.avg_doc_length = max(0.0, new_length / new_total) if new_total else 0.0
-        started = time.perf_counter()
-        stats.term_doc_freq = (json.dumps(frequencies, ensure_ascii=False, separators=(',', ':'))
-                               if changed_terms else prior_json)
-        encode_ms = (time.perf_counter() - started) * 1000
         stats.updated_at = datetime.utcnow()
         session.add(stats)
         if prepared:
             session.execute(ChunkIndex.__table__.insert(), [dict(id=row['id'], chunk_id=row['chunk_id'],
                 kb_id=kb_id, terms=row['terms'], doc_length=row['doc_length'], created_at=datetime.utcnow())
                 for row in prepared])
-            postings = [dict(kb_id=kb_id, index_id=row['id'], term=term, tf=tf)
-                for row in prepared for term, tf in row['frequencies'].items()]
+            postings = []
+            for row in prepared:
+                for term, tf in row['frequencies'].items():
+                    postings.append(dict(kb_id=kb_id, index_id=row['id'], term=term, tf=tf))
+                    if len(postings) == _POSTING_INSERT_BATCH_SIZE:
+                        session.execute(BM25Posting.__table__.insert(), postings)
+                        postings = []
             if postings:
                 session.execute(BM25Posting.__table__.insert(), postings)
-        logging.getLogger(__name__).info(
-            'BM25_FILE_REPLACEMENT stats_decode_ms=%.3f stats_encode_ms=%.3f '
-            'stats_before_bytes=%d stats_after_bytes=%d changed_terms=%d chunks=%d postings=%d',
-            decode_ms, encode_ms, len(prior_json.encode('utf-8')),
-            len(stats.term_doc_freq.encode('utf-8')), changed_terms, len(prepared),
-            sum(len(row['frequencies']) for row in prepared))
 
     @staticmethod
     def _remove_postings(session: Session, chunk_id: str, kb_id: str) -> None:
@@ -297,7 +304,8 @@ class BM25Index:
         """
         self._remove_postings(session, chunk_id, kb_id)
         chunk_index = session.exec(
-            select(ChunkIndex).where(ChunkIndex.chunk_id == chunk_id, ChunkIndex.kb_id == kb_id)
+            select(ChunkIndex).options(load_only(ChunkIndex.id, ChunkIndex.doc_length))
+            .where(ChunkIndex.chunk_id == chunk_id, ChunkIndex.kb_id == kb_id)
             .execution_options(populate_existing=True)
         ).first()
 
@@ -305,8 +313,7 @@ class BM25Index:
             return
 
         # 从统计中减去
-        term_freq = json.loads(chunk_index.terms)
-        self._decrement_stats(session, kb_id, term_freq, chunk_index.doc_length)
+        self._decrement_stats(session, kb_id, {}, chunk_index.doc_length)
 
         # 删除索引
         session.delete(chunk_index)
@@ -401,6 +408,12 @@ class BM25Index:
         """
         top_k = top_k or settings.BM25_TOP_K
 
+        # Disabled alternate analyzer entry: production tests must use jieba.
+        # if self.bigram_index_path:
+        #     from app.services.bm25_generation import BigramGeneration
+        #     return BigramGeneration(self.bigram_index_path).search(
+        #         session, query, kb_id, top_k, k1=self.k1, b=self.b)
+
         # 1. 查询分词
         query_tokens = tokenize(query)
         if not query_tokens:
@@ -456,11 +469,12 @@ class BM25Index:
         tie_order = (literal_column("chunk_index.rowid") if session.get_bind().dialect.name == "sqlite"
                      else ChunkIndex.created_at)
         for start in range(0, len(terms), 500):
+            batch_terms = set(terms[start:start + 500])
             statement = (
                 select(ChunkIndex.chunk_id, ChunkIndex.doc_length, tie_order, BM25Posting.term, BM25Posting.tf, DocumentChunk.file_id)
                 .select_from(BM25Posting).join(ChunkIndex, ChunkIndex.id == BM25Posting.index_id)
                 .outerjoin(DocumentChunk, DocumentChunk.id == ChunkIndex.chunk_id)
-                .where(BM25Posting.kb_id == kb_id, BM25Posting.term.in_(terms[start:start + 500]))
+                .where(BM25Posting.kb_id == kb_id, BM25Posting.term.in_(batch_terms))
             )
             if live_only:
                 statement = statement.join(FileDocument, FileDocument.id == DocumentChunk.file_id).where(
@@ -470,11 +484,15 @@ class BM25Index:
             for chunk_id, length, order, term, tf, file_id in postings:
                 if file_id in inactive:
                     continue
-                term_doc_freq[term] += 1
                 if chunk_id not in matches:
                     matches[chunk_id] = (length, order, {})
                 frequencies = matches[chunk_id][2]
-                frequencies[term] = tf
+                if term in batch_terms:
+                    frequencies[term] = frequencies.get(term, 0) + tf
+
+        # DF counts matching chunks for each exact jieba term.
+        for _, _, frequencies in matches.values():
+            term_doc_freq.update(frequencies.keys())
 
         ranked = []
         for chunk_id, (length, order, frequencies) in matches.items():
@@ -534,7 +552,7 @@ class BM25Index:
         doc_length: int
     ) -> None:
         """增加统计信息"""
-        stats = session.get(IndexStats, kb_id, populate_existing=True)
+        stats = _accounting_stats(session, kb_id)
 
         if not stats:
             # 创建新的统计记录
@@ -542,7 +560,6 @@ class BM25Index:
                 kb_id=kb_id,
                 total_docs=1,
                 avg_doc_length=float(doc_length),
-                term_doc_freq=json.dumps({t: 1 for t in term_freq.keys()}, ensure_ascii=False),
                 updated_at=datetime.utcnow()
             )
             session.add(stats)
@@ -557,12 +574,6 @@ class BM25Index:
             stats.avg_doc_length = new_avg
             stats.total_docs = new_total
 
-            # 更新词文档频率
-            old_term_doc_freq = json.loads(stats.term_doc_freq)
-            for term in term_freq.keys():
-                old_term_doc_freq[term] = old_term_doc_freq.get(term, 0) + 1
-
-            stats.term_doc_freq = json.dumps(old_term_doc_freq, ensure_ascii=False)
             stats.updated_at = datetime.utcnow()
 
             session.add(stats)
@@ -575,7 +586,7 @@ class BM25Index:
         doc_length: int
     ) -> None:
         """减少统计信息"""
-        stats = session.get(IndexStats, kb_id, populate_existing=True)
+        stats = _accounting_stats(session, kb_id)
 
         if not stats or stats.total_docs <= 0:
             return
@@ -587,7 +598,6 @@ class BM25Index:
             # 如果没有文档了，重置统计
             stats.total_docs = 0
             stats.avg_doc_length = 0.0
-            stats.term_doc_freq = "{}"
         else:
             # 更新平均文档长度
             old_avg = stats.avg_doc_length
@@ -598,16 +608,6 @@ class BM25Index:
                 new_avg = 0.0
             stats.avg_doc_length = max(new_avg, 0.0)
             stats.total_docs = new_total
-
-            # 更新词文档频率
-            old_term_doc_freq = json.loads(stats.term_doc_freq)
-            for term in term_freq.keys():
-                if term in old_term_doc_freq:
-                    old_term_doc_freq[term] = max(old_term_doc_freq[term] - 1, 0)
-                    if old_term_doc_freq[term] == 0:
-                        del old_term_doc_freq[term]
-
-            stats.term_doc_freq = json.dumps(old_term_doc_freq, ensure_ascii=False)
 
         stats.updated_at = datetime.utcnow()
         session.add(stats)

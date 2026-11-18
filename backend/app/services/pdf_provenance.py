@@ -74,7 +74,7 @@ def source_metadata(path, content, page_number, content_type, *, root=None):
     from app.core.config import get_settings
     root = root or get_settings().PDF_AUDIT_DIR
     source = Path(path)
-    if source.suffix.lower() not in {'.pdf', '.xlsx', '.csv'} or not source.is_file():
+    if source.suffix.lower() not in {'.pdf', '.xlsx', '.csv', '.docx', '.txt', '.md', '.jpg', '.jpeg', '.png', '.bmp', '.webp'} or not source.is_file():
         return {}
     stat = source.stat()
     sha = _source_hash(str(source.resolve()), stat.st_size, stat.st_mtime_ns)
@@ -99,8 +99,13 @@ def source_metadata(path, content, page_number, content_type, *, root=None):
     if origins:
         result['content_origins'] = origins
     descriptions = [m['image_description'] for m in matches if m.get('image_description')]
+    descriptions.extend(d for m in matches for d in m.get('image_descriptions', []))
     if descriptions:
         result['image_descriptions'] = descriptions
+    rules = [dict(size=m['child_chunk_size'], overlap=m['child_chunk_overlap']) for m in matches
+             if m.get('parent_child_version') == 'unified-go-legacy-v1' and 'child_chunk_size' in m]
+    if rules and all(rule == rules[0] for rule in rules):
+        result['parent_child_rules'] = rules[0]
     if source.suffix.lower() in {'.xlsx', '.csv'} and len(locators) == 1:
         result.update(locators[0])
     return result

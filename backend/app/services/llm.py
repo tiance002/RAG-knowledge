@@ -10,23 +10,57 @@ import requests
 from typing import List, Dict, AsyncGenerator, Any
 from langchain_openai import ChatOpenAI
 import logging
-import sys
 import os
 import json
 import time
 import uuid
 import asyncio
+from urllib.parse import urlsplit
 from pathlib import Path
 from datetime import datetime
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, asynccontextmanager
+from contextvars import ContextVar
 from types import SimpleNamespace
 from openai import APIStatusError
 
 from app.core.config import get_settings
-from app.services.provider_http import ProviderBorrowingTransport
+from app.services.provider_http import ProviderBorrowingTransport, _await_cleanup
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+_owned_llm_services = ContextVar("owned_llm_services", default=None)
+
+
+async def close_quietly(close):
+    """Finish cleanup under cancellation without replacing a request with a close error."""
+    async def run_close():
+        try:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+        except Exception as exc:
+            logger.warning("Resource close failed: %s", type(exc).__name__)
+    await _await_cleanup(asyncio.create_task(run_close()))
+
+
+@asynccontextmanager
+async def safely_closing(resource):
+    try:
+        yield resource
+    finally:
+        close = getattr(resource, "aclose", None)
+        if close is not None:
+            await close_quietly(close)
+
+
+class GenerationInputBudgetExceeded(ValueError):
+    """The final application request was rejected before generation dispatch."""
+    code = "FINAL_REQUEST_OVER_CHAR_BUDGET"
+
+    def __init__(self, request_chars: int, limit_chars: int):
+        super().__init__(self.code)
+        self.request_chars = request_chars
+        self.limit_chars = limit_chars
 
 
 class ProviderStreamError(Exception):
@@ -406,6 +440,11 @@ async def invoke_provider_model(model, messages, *, config, stage, model_name, t
 
 
 def provider_error_payload(exc: BaseException, *, stage: str, unknown: bool = False) -> dict:
+    if isinstance(exc, GenerationInputBudgetExceeded):
+        return {"error": "生成请求输入超过长度限制，本次生成请求未发送；请减少历史轮次或缩小检索范围后再试。",
+                "status": "FAILED", "code": exc.code, "stage": "generation_input_budget",
+                "generation_request_sent": False, "retryable": False,
+                "request_chars": exc.request_chars, "limit_chars": exc.limit_chars}
     status = getattr(exc, "provider_status", None) or ("UNKNOWN" if unknown else _provider_status(exc))
     local_request_id = getattr(exc, "local_request_id", None)
     provider_request_id = _safe_id(getattr(exc, "provider_request_id", None)) or _provider_id(exc)
@@ -419,7 +458,7 @@ class LLMService:
 
     def __init__(self, base_url: str = None, api_key: str = None, model: str = None):
         self.base_url = base_url or settings.LLM_BASE_URL
-        
+
         # 自动修正 base_url: 如果包含 /chat/completions 后缀则移除
         if self.base_url:
             self.base_url = self.base_url.rstrip("/")
@@ -430,8 +469,44 @@ class LLMService:
         self.api_key = api_key or settings.LLM_API_KEY
         self.model = model or settings.LLM_MODEL
         self._client = None
+        self._langchain_http_clients = []
+        self._closed = False
+        self._close_task = None
+        owner = _owned_llm_services.get()
+        if owner is not None:
+            owner.append(self)
+
+    async def _close(self):
+        if self._client is not None:
+            close = getattr(self._client, "close", None)
+            if close is not None:
+                await close_quietly(close)
+        for client in self._langchain_http_clients:
+            await close_quietly(client.aclose)
+
+    async def aclose(self):
+        if self._close_task is None:
+            self._closed = True
+            self._close_task = asyncio.create_task(self._close())
+        await _await_cleanup(self._close_task)
+
+    def _uses_siliconflow_qwen_parameters(self, target_model=None):
+        return ((target_model or self.model) == 'Qwen/Qwen3.5-4B'
+                and urlsplit(self.base_url).hostname in
+                ('api.siliconflow.cn', 'api.siliconflow.com'))
+
+    def provider_request_parameters(self, target_model=None, *, extra_body=None):
+        """Keep provider-specific defaults shared by direct and LangChain calls."""
+        if extra_body is None:
+            extra_body = getattr(self, '_router_extra_body', None)
+        options = dict(extra_body or {})
+        if self._uses_siliconflow_qwen_parameters(target_model):
+            options.setdefault('enable_thinking', False)
+        return {'extra_body': options} if options else {}
 
     def _get_client(self):
+        if self._closed:
+            raise RuntimeError("LLMService is closed")
         if not self._client:
             self._client = AsyncOpenAI(
                 base_url=self.base_url,
@@ -485,11 +560,14 @@ class LLMService:
                     {'type': 'text', 'text': render('weknora_rewrite_user.txt')},
                     {'type': 'image', 'count': len(images), 'content': '[REDACTED]'}]}]
             with provider_generation("rewrite", self.model, trace_messages, max_tokens=max_tokens, temperature=0.3) as (attempt, observation):
+                from app.services.conversation_context import record_provider_request
+                record_provider_request(request_messages, 'query_understanding')
                 response = await client.chat.completions.create(
                     model=self.model,
                     messages=request_messages,
                     max_tokens=max_tokens,
                     temperature=0.3,
+                    **self.provider_request_parameters(self.model),
                 )
                 attempt["provider_request_id"] = _provider_id(response)
                 attach_provider_usage(attempt, response)
@@ -530,6 +608,9 @@ class LLMService:
                     intent, image_description = '', ''
                 event('query.rewrite_result', status='COMPLETED', finish_reason=reason)
                 event("query.rewritten", query=snapshot(content) if enabled() else None)
+                from app.services.conversation_context import record_understanding
+                record_understanding({'rewrite_query': content.strip(), 'intent': intent.strip(),
+                                      'image_description': image_description.strip(), 'status': 'COMPLETED'})
                 return {'rewrite_query': content.strip(), 'intent': intent.strip(),
                         'image_description': image_description.strip()}
         except Exception as e:
@@ -561,7 +642,7 @@ class LLMService:
         request_messages = []
         if system_prompt:
             request_messages.append({"role": "system", "content": system_prompt})
-        
+
         request_messages.extend(messages)
         observe_model_history(request_messages)
         if enabled():
@@ -569,10 +650,13 @@ class LLMService:
 
         try:
             generation_parameters = {} if max_tokens is None else {"max_tokens": max_tokens}
+            provider_parameters = self.provider_request_parameters(target_model)
             with provider_generation(stage, target_model, request_messages, stream=True, temperature=temperature, **generation_parameters) as (attempt, observation):
                 if generation_metadata:
                     _update_generation(observation, **generation_metadata)
                 print(f"DEBUG_LLM: Sending request to {target_model}")
+                from app.services.conversation_context import record_provider_request
+                record_provider_request(request_messages, stage)
                 # print(f"DEBUG_LLM: Messages structure: {request_messages}") # 调试用，注意日志脱敏
 
                 response = await client.chat.completions.create(
@@ -581,6 +665,7 @@ class LLMService:
                     stream=True,
                     temperature=temperature,
                     **generation_parameters,
+                    **provider_parameters,
                 )
 
                 attempt["stream_started"] = True
@@ -590,8 +675,12 @@ class LLMService:
                 finish_reason = None
                 stream_usage = None
                 raw_usage = None
+                provider_model = None
                 try:
                     async for chunk in response:
+                        actual_model = getattr(chunk, 'model', None)
+                        if provider_model is None and isinstance(actual_model, str) and actual_model.strip():
+                            provider_model = actual_model
                         usage = getattr(chunk, 'usage', None)
                         if usage is not None:
                             attach_provider_usage(attempt, raw_usage=usage)
@@ -609,19 +698,16 @@ class LLMService:
                 finally:
                     if on_final is not None:
                         try:
-                            on_final({'finish_reason': finish_reason, 'usage': raw_usage})
+                            on_final({'finish_reason': finish_reason, 'usage': raw_usage, 'model': provider_model})
                         except Exception:
                             pass
+                    if getattr(self, '_router_direct_history', False):
+                        identity = 'UNKNOWN' if provider_model is None else 'MATCH' if provider_model == target_model else 'MISMATCH'
+                        event('router.provider_identity', stage='direct_history', evidence_scope='HISTORY_ONLY',
+                              requested_model_id=target_model, provider_model_id=provider_model, status=identity)
                     close = getattr(response, "close", None)
                     if close is not None:
-                        pending_error = sys.exc_info()[0] is not None
-                        try:
-                            result = close()
-                            if hasattr(result, "__await__"):
-                                await result
-                        except BaseException:
-                            if not pending_error:
-                                raise
+                        await close_quietly(close)
                     if observation is not None:
                         _update_generation(observation, output=capture(''.join(observed_parts), content_role='provider_response'),
                                            finish_reason=finish_reason, usage=stream_usage)
@@ -668,6 +754,7 @@ class LLMService:
                     messages=request_messages,
                     max_tokens=settings.LLM_ANSWER_MAX_TOKENS,
                     temperature=0.7,
+                    **self.provider_request_parameters(target_model),
                 )
                 attempt["provider_request_id"] = _provider_id(response)
                 attach_provider_usage(attempt, response)
@@ -686,13 +773,21 @@ class LLMService:
     def get_chat_model(self, temperature: float = 0.5, streaming: bool = True, max_tokens: int = None,
                        *, timeout: float | None = None) -> ChatOpenAI:
         """获取 LangChain ChatOpenAI 实例"""
+        if self._closed:
+            raise RuntimeError("LLMService is closed")
         options = {} if timeout is None else {"timeout": timeout}
+        options.update(self.provider_request_parameters(self.model))
         # LangChain owns proxy configuration and rejects a custom async client
         # alongside OPENAI_PROXY. Preserve its existing proxy path in that case.
         if not os.environ.get("OPENAI_PROXY"):
-            options["http_async_client"] = httpx.AsyncClient(
-                follow_redirects=True, transport=ProviderBorrowingTransport(
-                    base_url=self.base_url, api_key=self.api_key, stage="llm", trust_env=True))
+            http_options = {} if timeout is None else {"timeout": timeout}
+            http_client = httpx.AsyncClient(
+                follow_redirects=True, trust_env=True, **http_options,
+                transport=ProviderBorrowingTransport(
+                    base_url=self.base_url, api_key=self.api_key, stage="llm",
+                    trust_env=True))
+            self._langchain_http_clients.append(http_client)
+            options["http_async_client"] = http_client
         return ChatOpenAI(
             model=self.model,
             openai_api_key=self.api_key,

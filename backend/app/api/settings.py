@@ -282,8 +282,8 @@ async def test_custom_model_connection(
                 raise ValueError("模型未返回内容")
         
         elif db_model.model_type == ModelType.RERANK:
-            from app.services.rerank import test_rerank_connection
-            result = test_rerank_connection(db_model)
+            from app.services.rerank import async_test_rerank_connection
+            result = await async_test_rerank_connection(db_model)
             if not result["success"]:
                 raise Exception(result["message"])
 

@@ -13,6 +13,10 @@ from sqlmodel import select
 from app.models import FileDocument, FileStatus, KnowledgeBase
 
 
+class UploadCommitUnknown(RuntimeError):
+    """The insert commit may have succeeded; retain staged bytes for reconciliation."""
+
+
 def digest_file(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -52,7 +56,7 @@ def register_upload(session, *, kb_id, file_id, name, path, size, sha256,
         kb = session.exec(select(KnowledgeBase).where(KnowledgeBase.id == kb_id).with_for_update()).first()
     if kb is None or kb.is_deleted:
         raise HTTPException(404, detail="知识库不存在")
-    rows = session.exec(select(FileDocument).where(FileDocument.kb_id == kb_id)
+    rows = session.exec(select(FileDocument).where(FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None))
                         .order_by(FileDocument.created_at, FileDocument.id)).all()
     same_name = [row for row in rows if original_name(row) == name]
     hashes = {}
@@ -70,8 +74,10 @@ def register_upload(session, *, kb_id, file_id, name, path, size, sha256,
                 "duplicate_file_id": identical.id if identical else None,
                 "existing_files": [file_view(row, hashes[row.id]) for row in same_name],
                 "actions": (["reuse"] if identical else []) + ["new", "replace"]}
-    if action == "check" and same_name:
-        raise HTTPException(409, detail=conflict)
+    if action == "check":
+        if same_name:
+            raise HTTPException(409, detail=conflict)
+        raise HTTPException(404, detail={"code": "CHECK_NO_CONFLICT", "message": "没有同名文件；未创建文档"})
     if action in {"auto", "reuse"} and identical:
         if action == "reuse" and target_file_id:
             identical = next((row for row in same_name if row.id == target_file_id and hashes[row.id] == sha256), None)
@@ -103,5 +109,8 @@ def register_upload(session, *, kb_id, file_id, name, path, size, sha256,
     session.add(row)
     result = {**file_view(row), "outcome": "replacement_staged" if target else "created",
               "duplicate": False, "name_conflict": bool(same_name), "available_actions": []}
-    session.commit()
+    try:
+        session.commit()
+    except BaseException as exc:
+        raise UploadCommitUnknown("UPLOAD_COMMIT_UNKNOWN") from exc
     return result

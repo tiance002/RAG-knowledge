@@ -43,6 +43,7 @@ var/
 
 # Local runtime credentials shared by RAG and RSI (template is safe to commit)
 /config/runtime-secrets.env
+/config/model-router.env
 
 # Source-derived manifests and private image-description receipts
 /storage/pdf_manifests/

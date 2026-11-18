@@ -121,8 +121,8 @@ def test_empty_input_and_unknown_group_do_not_fabricate_members():
     assert summary['source_mapping_status']=='UNKNOWN'
 
 
-def test_length_limit_never_claims_truncated_out_sibling(db):
-    row=rerank.expand_context([seed_row()],db,window_size=0,max_parent_length=12,include_source_members=True)[0]
+def test_citation_mapping_never_claims_unverified_sibling(db):
+    row=rerank.expand_context([seed_row()],db,window_size=0,include_source_members=True)[0]
     citations,_=build([row])
     assert all(c['content'] in row['content'] or c['content']==row['original_content'] for c in citations)
     assert all(c['chunk_id']!='sibling' for c in citations if 'SIBLING_GOLD' not in row['content'])
@@ -181,7 +181,7 @@ def test_builder_does_not_add_input_clipping_beyond_expander(db):
     row=db.get(DocumentChunk,'sibling')
     row.content='NEIGHBOR_START:' + 'x'*6000 + ':NEIGHBOR_END'
     db.add(row); db.commit()
-    expanded=rerank.expand_context([seed_row()],db,window_size=1,max_parent_length=10000,include_source_members=True)
+    expanded=rerank.expand_context([seed_row()],db,window_size=1,include_source_members=True)
     citations,summary=build(expanded)
     neighbor=next(c for c in citations if c['chunk_id']=='sibling')
     assert neighbor['content']==row.content and 'NEIGHBOR_END' in neighbor['content']

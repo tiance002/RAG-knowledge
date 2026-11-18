@@ -21,7 +21,7 @@ def test_request_scope_settings_and_safe_telemetry(monkeypatch):
     workflow = agent_workflow.AgentWorkflow.__new__(agent_workflow.AgentWorkflow)
     state = {'messages':[message], 'kb_ids':['allowed'], 'search_params':params}
     asyncio.run(workflow.run_tools(state, {}))
-    assert invoke.await_args.args[0] == {'query':'sensitive query', 'kb_ids':['allowed'], 'search_mode':'fulltext', 'top_k':9, 'score_threshold':0.22, 'vector_weight':0.4, 'bm25_weight':0.6, 'use_rerank':True, 'rerank_top_k':4, 'rerank_score_threshold':0.25, 'rerank_model_id':'private-model', 'context_window':2}
+    assert invoke.await_args.args[0] == {'query':'sensitive query', 'kb_ids':['allowed'], 'search_mode':'fulltext', 'top_k':9, 'score_threshold':0.22, 'vector_weight':0.4, 'bm25_weight':0.6, 'use_rerank':True, 'rerank_top_k':4, 'rerank_score_threshold':0.25, 'rerank_model_id':'private-model', 'context_window':2, 'expand_evidence':False}
     data = next(data for name, data in events if name == 'agent.actual_query')
     assert data['requested_parameters']['score_threshold'] == 0.9
     assert data['actual_parameters']['score_threshold'] == 0.22
@@ -41,7 +41,7 @@ def test_defaults_and_empty_scope(monkeypatch):
     workflow = agent_workflow.AgentWorkflow.__new__(agent_workflow.AgentWorkflow)
     state = {'messages':[message], 'kb_ids':['allowed'], 'search_params':{}}
     asyncio.run(workflow.run_tools(state, {}))
-    assert invoke.await_args.args[0] == {'query':'q', 'kb_ids':['allowed']}
+    assert invoke.await_args.args[0] == {'query':'q', 'kb_ids':['allowed'], 'expand_evidence':False}
     actual = next(data['actual_parameters'] for name, data in events if name == 'agent.actual_query')
     assert actual['search_mode'] == 'hybrid' and actual['top_k'] == 5
     invoke.reset_mock()

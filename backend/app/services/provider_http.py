@@ -1,7 +1,7 @@
-"""Loop-scoped provider connection pools for the API process.
+"""Lifespan/loop-owned HTTP pools borrowed by short-lived LLM SDK clients.
 
-Workers using asyncio.run get a short-lived client, never a client from a
-closed loop. Credentials are used only to partition pools, never as headers.
+This module never supplies provider headers, changes request bodies, or retries.
+An unmanaged worker loop gets a temporary client owned by its response lease.
 """
 import asyncio
 from contextlib import asynccontextmanager
@@ -14,20 +14,22 @@ import httpx
 
 from app.services.observability import event
 
-_MAX_IN_FLIGHT = 16
-_MAX_POOLS = 64
-_MAX_CONNECTIONS = 16
-_RESERVE_SPECS = ((60.0, True, False), (120.0, True, False), (5.0, True, False), (60.0, True, True))
-_manager = None
 logger = logging.getLogger(__name__)
+_MAX_IN_FLIGHT = 16
+_MAX_CONNECTIONS = 16
+_MAX_POOLS = 64
+_DEFAULT_TIMEOUT = 120.0
+_RESERVE_SPECS = ((60.0, True, False), (120.0, True, False),
+                  (5.0, True, False), (60.0, True, True))
+_TIMEOUT_PHASES = ("connect", "read", "write", "pool")
+_ENV_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+              "SSL_CERT_FILE", "SSL_CERT_DIR")
+_managers = {}
 
 
 def _positive_env(name, default):
-    raw = os.getenv(name)
-    if raw is None:
-        return default
     try:
-        value = int(raw)
+        value = int(os.getenv(name, str(default)))
         if value > 0:
             return value
     except ValueError:
@@ -38,16 +40,63 @@ def _positive_env(name, default):
 
 def _limits():
     maximum = _positive_env("RAG_PROVIDER_MAX_CONNECTIONS", _MAX_CONNECTIONS)
-    return httpx.Limits(max_connections=maximum, max_keepalive_connections=min(8, maximum), keepalive_expiry=30.0)
+    return httpx.Limits(max_connections=maximum,
+                        max_keepalive_connections=min(8, maximum),
+                        keepalive_expiry=30.0)
+
+
+def _timeout_values(timeout):
+    # HTTPX passes these four values down to httpcore on each Request. In
+    # particular, timeout=None means disabled timeouts, not our LLM default.
+    if isinstance(timeout, dict):
+        return {phase: timeout.get(phase) for phase in _TIMEOUT_PHASES}
+    return httpx.Timeout(timeout).as_dict()
+
+
+def _environment_key(trust_env):
+    if not trust_env:
+        return None
+    values = tuple((name, os.getenv(name)) for root in _ENV_NAMES
+                   for name in (root, root.lower()))
+    # Proxy credentials and paths must not appear in retained pool keys/logs.
+    return hashlib.sha256(repr(values).encode()).digest()
+
+
+def _pool_key(base_url, api_key, timeout, verify, trust_env):
+    tls_key = verify if isinstance(verify, (bool, str)) else id(verify)
+    return (str(base_url or ""), hashlib.sha256((api_key or "").encode()).digest(),
+            tuple(_timeout_values(timeout).items()), tls_key,
+            bool(trust_env), _environment_key(trust_env))
 
 
 def _record_timing(name, stage, duration):
-    # Telemetry cannot make a request fail or prevent cleanup.
     try:
         event(name, stage=stage, duration_ms=duration * 1000)
-        event("performance.stage", stage=stage, stage_name=name.replace(".", "_"), duration_ms=duration * 1000)
+        event("performance.stage", stage=stage, stage_name=name.replace(".", "_"),
+              duration_ms=duration * 1000)
     except Exception:
         logger.warning("Provider timing observation failed")
+
+
+async def _await_cleanup(task):
+    """Finish releasing sockets/slots even if the borrower is cancelled."""
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = task.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
+def _current_manager():
+    manager = _managers.get(asyncio.get_running_loop())
+    if manager is not None and manager.pid == os.getpid():
+        return manager
+    return None
 
 
 class ProviderHTTPManager:
@@ -60,35 +109,51 @@ class ProviderHTTPManager:
         self.clients = {}
         self.reserves = {}
         self.closed = False
+        self._leases = set()
+        self._streams = set()
+        self._close_task = None
+
+    def _new_client(self, timeout, verify, trust_env):
+        return httpx.AsyncClient(timeout=httpx.Timeout(**_timeout_values(timeout)),
+                                 verify=verify, trust_env=trust_env,
+                                 limits=self.limits)
 
     async def preinitialize(self):
-        """Prepare unbound clients without sending traffic or selecting credentials."""
+        """Prepare unbound clients without selecting credentials or sending."""
         if self.closed:
             raise RuntimeError("Provider HTTP manager is closed")
         if self.reserves:
             return
         try:
             for timeout, verify, trust_env in _RESERVE_SPECS:
+                key = _pool_key("", "", timeout, verify, trust_env)[2:]
                 started = time.monotonic()
                 try:
-                    client = httpx.AsyncClient(timeout=timeout, verify=verify,
-                                               trust_env=trust_env, limits=self.limits)
+                    self.reserves[key] = self._new_client(timeout, verify, trust_env)
                 finally:
-                    _record_timing('provider.client_initialize', 'startup', time.monotonic() - started)
-                self.reserves[(timeout, verify, trust_env)] = client
+                    _record_timing("provider.client_initialize", "startup", time.monotonic() - started)
         except BaseException as exc:
             reserves, self.reserves = list(self.reserves.values()), {}
-            for client in reserves:
-                try:
-                    await client.aclose()
-                except Exception as close_exc:
-                    logger.warning("Provider reserve close failed: %s", type(close_exc).__name__)
+            async def close_reserves():
+                for client in reserves:
+                    try:
+                        await client.aclose()
+                    except Exception as close_exc:
+                        logger.warning("Provider reserve close failed: %s", type(close_exc).__name__)
+            await _await_cleanup(asyncio.create_task(close_reserves()))
             if not isinstance(exc, Exception):
                 raise
             logger.warning("Provider client preinitialization failed: %s", type(exc).__name__)
 
-    async def close(self):
+    async def _close(self):
+        # Stop admission first. A queued borrower wakes when its prior lease is
+        # released, observes closed=True, and cannot start another request.
         self.closed = True
+        for stream in list(self._streams):
+            try:
+                await stream.aclose()
+            except Exception as exc:
+                logger.warning("Provider response close failed: %s", type(exc).__name__)
         clients = [*self.clients.values(), *self.reserves.values()]
         self.clients, self.reserves = {}, {}
         for client in clients:
@@ -96,85 +161,138 @@ class ProviderHTTPManager:
                 await client.aclose()
             except Exception as exc:
                 logger.warning("Provider client close failed: %s", type(exc).__name__)
+        # Also release leases whose send had not returned response headers.
+        for lease in list(self._leases):
+            try:
+                await lease.__aexit__(None, None, None)
+            except Exception as exc:
+                logger.warning("Provider lease close failed: %s", type(exc).__name__)
+
+    async def close(self):
+        if self._close_task is None:
+            self.closed = True
+            self._close_task = asyncio.create_task(self._close())
+        await _await_cleanup(self._close_task)
 
 
 @asynccontextmanager
 async def managed_provider_http(*, preinitialize=False):
-    global _manager
     manager = ProviderHTTPManager()
-    previous = _manager
-    _manager = manager
+    previous = _managers.get(manager.loop)
+    _managers[manager.loop] = manager
     try:
         if preinitialize:
             await manager.preinitialize()
         yield manager
     finally:
-        if _manager is manager:
-            _manager = previous
-        await manager.close()
-
-
-@asynccontextmanager
-async def provider_request(*, base_url, api_key, stage, timeout=60.0, verify=True, trust_env=False):
-    """Acquire one in-flight slot; hold it until the entire request finishes."""
-    manager = _manager
-    if (manager is None or manager.closed or manager.pid != os.getpid()
-            or manager.loop is not asyncio.get_running_loop()):
-        manager = None
-    started = time.monotonic()
-    if manager is not None:
-        await manager.slots.acquire()
-        if manager.closed:
-            manager.slots.release()
-            raise RuntimeError("Provider HTTP manager is closed")
-    wait = time.monotonic() - started
-    slot_started = time.monotonic()
-    client = None
-    temporary = False
-    try:
-        # Include TLS configuration in pool isolation without retaining secrets.
-        tls_key = verify if isinstance(verify, (bool, str)) else id(verify)
-        digest = hashlib.sha256((api_key or '').encode()).digest()
-        key = (base_url or '', digest, timeout, tls_key, trust_env)
-        client = manager.clients.get(key) if manager is not None else None
-        limits = manager.limits if manager is not None else _limits()
-        if client is None:
-            # Never reserve a custom TLS context or share a claimed client across keys.
-            if manager is not None and verify is True:
-                client = manager.reserves.pop((timeout, True, trust_env), None)
-            if client is None:
-                initialized = time.monotonic()
-                try:
-                    client = httpx.AsyncClient(timeout=timeout, verify=verify, trust_env=trust_env, limits=limits)
-                finally:
-                    _record_timing('provider.client_initialize', stage, time.monotonic() - initialized)
-            if manager is not None and len(manager.clients) < _MAX_POOLS:
-                manager.clients[key] = client
-            else:
-                temporary = True
-        _record_timing('provider.local_wait', stage, wait)
+        # Keep the closed owner visible while shutdown rejects its waiters.
         try:
-            event('provider.pool_config', stage=stage, managed=manager is not None,
-                  max_in_flight=manager.max_in_flight if manager is not None else None,
-                  max_connections=limits.max_connections)
-        except Exception:
-            logger.warning("Provider configuration observation failed")
-        yield client
-    finally:
-        try:
-            if temporary and client is not None:
-                await client.aclose()
+            await manager.close()
         finally:
-            _record_timing('provider.slot_finished', stage, time.monotonic() - slot_started)
-            if manager is not None:
+            if _managers.get(manager.loop) is manager:
+                if previous is None:
+                    _managers.pop(manager.loop, None)
+                else:
+                    _managers[manager.loop] = previous
+
+
+class _ProviderLease:
+    def __init__(self, *, base_url, api_key, stage, timeout, verify, trust_env):
+        self.manager = None
+        self.base_url, self.api_key = base_url, api_key
+        self.key = None
+        self.stage, self.timeout = stage, timeout
+        self.verify, self.trust_env = verify, trust_env
+        self.client = None
+        self.temporary = False
+        self.acquired = False
+        self.closed = False
+        self.started = None
+        self._close_task = None
+
+    async def __aenter__(self):
+        if self.closed or self.started is not None:
+            raise RuntimeError("Provider lease cannot be reused")
+        manager = self.manager = _current_manager()
+        self.key = _pool_key(self.base_url, self.api_key, self.timeout,
+                             self.verify, self.trust_env)
+        waiting = time.monotonic()
+        if manager is not None:
+            await manager.slots.acquire()
+            self.acquired = True
+            if manager.closed:
                 manager.slots.release()
+                self.acquired = False
+                raise RuntimeError("Provider HTTP manager is closed")
+            manager._leases.add(self)
+        wait_duration = time.monotonic() - waiting
+        self.started = time.monotonic()
+        try:
+            self.client = manager.clients.get(self.key) if manager else None
+            if self.client is None:
+                if manager is not None:
+                    self.client = manager.reserves.pop(self.key[2:], None)
+                if self.client is None:
+                    initialized = time.monotonic()
+                    try:
+                        if manager:
+                            self.client = manager._new_client(self.timeout, self.verify, self.trust_env)
+                        else:
+                            self.client = httpx.AsyncClient(
+                                timeout=httpx.Timeout(**_timeout_values(self.timeout)),
+                                verify=self.verify, trust_env=self.trust_env, limits=_limits())
+                    finally:
+                        _record_timing("provider.client_initialize", self.stage,
+                                       time.monotonic() - initialized)
+                if manager is not None and len(manager.clients) < _MAX_POOLS:
+                    manager.clients[self.key] = self.client
+                else:
+                    self.temporary = True
+            _record_timing("provider.local_wait", self.stage, wait_duration)
+            try:
+                event("provider.pool_config", stage=self.stage, managed=manager is not None,
+                      max_in_flight=manager.max_in_flight if manager is not None else None,
+                      max_connections=(manager.limits if manager is not None else _limits()).max_connections)
+            except Exception:
+                logger.warning("Provider configuration observation failed")
+            return self.client
+        except BaseException:
+            await self.__aexit__(None, None, None)
+            raise
+
+    async def _close(self):
+        self.closed = True
+        try:
+            if self.temporary and self.client is not None:
+                await self.client.aclose()
+        finally:
+            if self.manager is not None:
+                self.manager._leases.discard(self)
+                if self.acquired:
+                    self.acquired = False
+                    self.manager.slots.release()
+            if self.started is not None:
+                _record_timing("provider.slot_finished", self.stage,
+                               time.monotonic() - self.started)
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        await _await_cleanup(self._close_task)
+
+
+def provider_request(*, base_url, api_key, stage, timeout=60.0,
+                     verify=True, trust_env=False):
+    return _ProviderLease(base_url=base_url, api_key=api_key, stage=stage,
+                          timeout=timeout, verify=verify, trust_env=trust_env)
 
 
 class _BorrowedResponseStream(httpx.AsyncByteStream):
     def __init__(self, response, lease):
-        self.response = response
-        self.lease = lease
-        self.closed = False
+        self.response, self.lease = response, lease
+        self._close_task = None
+        if lease.manager is not None:
+            lease.manager._streams.add(self)
 
     async def __aiter__(self):
         try:
@@ -183,32 +301,50 @@ class _BorrowedResponseStream(httpx.AsyncByteStream):
         finally:
             await self.aclose()
 
-    async def aclose(self):
-        if not self.closed:
-            self.closed = True
+    async def _close(self):
+        try:
+            await self.response.aclose()
+        finally:
             try:
-                await self.response.aclose()
-            finally:
                 await self.lease.__aexit__(None, None, None)
+            finally:
+                if self.lease.manager is not None:
+                    self.lease.manager._streams.discard(self)
+
+    async def aclose(self):
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close())
+        await _await_cleanup(self._close_task)
 
 
 class ProviderBorrowingTransport(httpx.AsyncBaseTransport):
-    """Bridge SDK-owned clients to the loop-owned pool, including streams."""
-    def __init__(self, *, base_url, api_key, stage, trust_env):
-        self.base_url = base_url
-        self.api_key = api_key
-        self.stage = stage
-        self.trust_env = trust_env
+    """SDK-owned facade; the application lifespan owns the borrowed sockets."""
+    def __init__(self, *, base_url, api_key, stage, trust_env=False,
+                 timeout=_DEFAULT_TIMEOUT, verify=True):
+        self.base_url, self.api_key, self.stage = base_url, api_key, stage
+        self.trust_env, self.timeout, self.verify = trust_env, timeout, verify
 
     async def handle_async_request(self, request):
+        timeout = request.extensions.get("timeout", self.timeout)
         lease = provider_request(base_url=self.base_url, api_key=self.api_key,
-                                 stage=self.stage, trust_env=self.trust_env)
+                                 stage=self.stage, timeout=timeout,
+                                 trust_env=self.trust_env, verify=self.verify)
         client = await lease.__aenter__()
         try:
-            response = await client.send(request, stream=True, follow_redirects=False)
+            # Redirect/auth policy belongs to the outer SDK's HTTPX client.
+            # send forwards the already-built request, including timeout/trace.
+            response = await client.send(request, stream=True,
+                                         follow_redirects=False, auth=httpx.Auth())
+            if lease.closed or (lease.manager is not None and lease.manager.closed):
+                await response.aclose()
+                raise RuntimeError("Provider HTTP manager is closed")
+            return httpx.Response(status_code=response.status_code, headers=response.headers,
+                                  stream=_BorrowedResponseStream(response, lease),
+                                  extensions=response.extensions, request=request)
         except BaseException as exc:
             await lease.__aexit__(type(exc), exc, exc.__traceback__)
             raise
-        return httpx.Response(status_code=response.status_code, headers=response.headers,
-                              stream=_BorrowedResponseStream(response, lease),
-                              extensions=response.extensions, request=request)
+
+    async def aclose(self):
+        # Closing an SDK wrapper must not close the lifespan's shared pool.
+        pass

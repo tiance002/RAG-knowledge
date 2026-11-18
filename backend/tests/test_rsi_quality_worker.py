@@ -93,8 +93,23 @@ def run_offline_product(tmp_path, candidate, behavior='normal', extra_env=None):
     # OpenAI loopback HTTP serialization, BM25, ChatService and API SSE stay real.
     harness = tmp_path / 'offline_provider.py'
     harness.write_text('''
-import importlib.util, json, sys, httpx
+import importlib.abc, importlib.util, json, os, sys, httpx
 from pathlib import Path
+# Keep the child on the same application under test even when the worker
+# prepends its repository backend path during its isolated configuration.
+application_root = Path(os.environ['OFFLINE_TEST_APPLICATION_ROOT']).resolve()
+class ApplicationFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != 'app' and not fullname.startswith('app.'):
+            return None
+        target_path = application_root.joinpath(*fullname.split('.'))
+        package, module = target_path / '__init__.py', target_path.with_suffix('.py')
+        if package.is_file():
+            return importlib.util.spec_from_file_location(fullname, package, submodule_search_locations=[str(package.parent)])
+        if module.is_file():
+            return importlib.util.spec_from_file_location(fullname, module)
+        raise ModuleNotFoundError('Missing application test source: ' + fullname, name=fullname)
+sys.meta_path.insert(0, ApplicationFinder())
 spec = importlib.util.spec_from_file_location('worker', sys.argv[1])
 w = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(w)
@@ -146,7 +161,9 @@ async def embedding_provider(self, url, *args, **kwargs):
 httpx.AsyncClient.post = embedding_provider
 raise SystemExit(w.main(['--input', sys.argv[2], '--output', sys.argv[3], '--live']))
 ''', encoding='utf-8')
-    env = dict(os.environ, SILICONFLOW_API_KEY='offline-test-key-never-artifact', PYTHONIOENCODING='utf-8')
+    import app
+    env = dict(os.environ, SILICONFLOW_API_KEY='offline-test-key-never-artifact', PYTHONIOENCODING='utf-8',
+               OFFLINE_TEST_APPLICATION_ROOT=str(Path(app.__file__).resolve().parent.parent))
     if extra_env:
         env.update(extra_env)
     result = subprocess.run([sys.executable, str(harness), str(PATH), str(src), str(out), behavior],
@@ -203,7 +220,7 @@ def test_unknown_stops_without_reissuing_and_keeps_denominator(tmp_path):
     assert report['model_requests'] == 1
 
 
-def test_real_agent_flow_uses_bm25_tools_grading_and_final_memory_policy(tmp_path):
+def test_real_agent_flow_uses_bm25_tools_and_final_memory_policy_without_prefix_grading(tmp_path):
     candidate = job()
     candidate['max_model_requests'] = 5
     candidate['artifact']['workflow']['mode'] = 'agent'
@@ -211,8 +228,12 @@ def test_real_agent_flow_uses_bm25_tools_grading_and_final_memory_policy(tmp_pat
     result, out = run_offline_product(tmp_path, candidate)
     assert result.returncode == 0, result.stdout + result.stderr + (out / 'product.log').read_text(encoding='utf-8')
     row = json.loads((out / 'results.json').read_text(encoding='utf-8'))['results'][0]
-    assert row['provider_call_count'] == 3
-    assert row['usage']['total_tokens'] == 126
+    # The production graph delegates evidence sufficiency to the Agent rather
+    # than running the historical prefix-only grading provider request.
+    assert row['provider_call_count'] == 2
+    assert row['usage']['total_tokens'] == 84
+    assert all('文档相关性评分员' not in json.dumps(json.loads((out / call['request_file']).read_text(encoding='utf-8')), ensure_ascii=False)
+               for call in row['provider_calls'])
     assert row['final_request']['generated_content'].endswith('[1].')
     assert row['final_context_chars'] is None and row['final_context_status'] == 'UNKNOWN'
     assert row['final_prompt_messages_chars'] > 0

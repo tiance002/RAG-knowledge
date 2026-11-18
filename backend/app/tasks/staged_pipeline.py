@@ -174,6 +174,7 @@ def freeze_payload(session, file_doc, operation, payload):
         'PDF_PARSER_MODE', 'PDF_TESSDATA_DIR', 'PDF_OCR_DPI',
         'PDF_SCANNED_TABLES_ENABLED', 'PDF_TABLES_ENABLED')}
     payload['_vlm_prompt'] = settings.VLM_PROMPT
+    payload['_vlm_max_tokens'] = getattr(settings, 'VLM_MAX_TOKENS', 1000)
     return payload
 
 
@@ -206,16 +207,50 @@ def _validate_vectors(vectors, count):
     return dimension
 
 
+def _effect_identity(claim, kind, identity):
+    identity_hash = _digest(_json({'kind': kind, 'identity': identity,
+        'source_sha256': claim.payload['_source_sha256'],
+        'models': claim.payload['_model_snapshots']}))
+    return _digest(_json([claim.task_id, claim.stage, kind, identity_hash])), identity_hash
+
+
+def _vlm_request_identity(claim, image_hash, service):
+    budget = claim.payload.get('_vlm_max_tokens', 1000)
+    if isinstance(budget, bool) or not isinstance(budget, int) or not 128 <= budget <= 32768:
+        raise ValueError('VLM_MAX_TOKENS_INVALID')
+    identity = dict(image_sha256=image_hash, base_url=service.base_url,
+                    model=service.model, prompt=service.prompt,
+                    max_tokens=budget)
+    if claim.payload.get('_vlm_reuse_completed_legacy') and identity['max_tokens'] != 1000:
+        # Explicitly authorized legacy recovery can reuse complete captions.
+        # Their original request identity and immutable artifact remain intact.
+        from app.tasks import dispatch
+        legacy = {**identity, 'max_tokens': 1000}
+        key, input_hash = _effect_identity(claim, 'vlm', legacy)
+        with Session(dispatch.engine) as session:
+            effect = session.get(dispatch.FileTaskEffect, key)
+            if (effect is not None and effect.task_id == claim.task_id and
+                    effect.stage == claim.stage and effect.input_hash == input_hash and
+                    effect.state == 'COMPLETED'):
+                return legacy
+    return identity
+
+
 class EffectRunner:
     def __init__(self, claim):
         self.claim = claim
 
     async def __call__(self, kind, identity, callback):
         from app.tasks import dispatch
-        identity_hash = _digest(_json({'kind': kind, 'identity': identity,
-            'source_sha256': self.claim.payload['_source_sha256'],
-            'models': self.claim.payload['_model_snapshots']}))
-        key = _digest(_json([self.claim.task_id, self.claim.stage, kind, identity_hash]))
+        key, identity_hash = _effect_identity(self.claim, kind, identity)
+        cache_only = kind == 'vlm' and self.claim.payload.get('_vlm_cache_only', False)
+        if cache_only:
+            with Session(dispatch.engine) as session:
+                cached = session.get(dispatch.FileTaskEffect, key)
+                if (cached is None or cached.state != 'COMPLETED' or
+                        cached.task_id != self.claim.task_id or cached.stage != self.claim.stage or
+                        cached.input_hash != identity_hash):
+                    raise UnconfirmedEffect('VLM_CACHE_ONLY_RESULT_REQUIRED')
         state = dispatch.begin_effect(self.claim, key, identity_hash)
         if state == 'COMPLETED':
             # The result location is deterministic; recover a completed call even
@@ -231,6 +266,9 @@ class EffectRunner:
             return value['result']
         if state != 'NEW':
             raise UnconfirmedEffect('EFFECT_PREVIOUS_OUTCOME_UNCONFIRMED')
+        if cache_only:
+            # A concurrent ledger change must never turn a cache import into a paid call.
+            raise UnconfirmedEffect('VLM_CACHE_ONLY_RESULT_REQUIRED')
         try:
             with capture_provider_ids() as provider_ids:
                 result = await callback()
@@ -251,6 +289,18 @@ class EffectRunner:
             # multi-request batches, must never be replayed implicitly.
             if isinstance(exc, StaleStageClaim):
                 raise
+            evidence = getattr(exc, 'response_evidence', None)
+            if kind == 'vlm' and isinstance(evidence, dict):
+                try:
+                    write_artifact(self.claim.task_id, {'schema': 'task-effect-rejected-v1',
+                        'task_id': self.claim.task_id, 'stage': self.claim.stage,
+                        'input_hash': identity_hash, 'effect_key': key, 'kind': kind,
+                        'status': getattr(exc, 'status', 'UNKNOWN'),
+                        'provider_calls': provider_ids, 'response': evidence})
+                except (OSError, ValueError, TypeError):
+                    # A failed evidence write still leaves the paid intent PENDING.
+                    # It must not authorize replay or turn the caption into success.
+                    pass
             delay = _safe_retry_delay(exc, provider_ids)
             if delay is not None:
                 code = 'PROVIDER_REJECTED_429' if provider_ids else 'PROVIDER_PRE_CONNECT_FAILED'
@@ -349,10 +399,37 @@ def _verify_checkpoint_artifacts(task_id, checkpoint):
             raise ValueError('TASK_PROVENANCE_SOURCE_MISMATCH')
 
 
+def _relevant_resume_effects(row, effects):
+    # A manual budget recovery retains its original intent as REPLAY_AUTHORIZED.
+    # Only an explicitly mapped successor can settle that historical intent;
+    # ordinary authorized replays and unrelated states retain stock semantics.
+    payload = json.loads(row.payload)
+    recovery = payload.get('_vlm_recovery')
+    if not recovery or row.stage != 'parse':
+        return effects
+    if (not isinstance(recovery, dict) or recovery.get('max_tokens') != payload.get('_vlm_max_tokens') or
+            recovery.get('max_tokens') != 2048 or not isinstance(recovery.get('superseded'), dict)):
+        raise ValueError('VLM_RECOVERY_MAPPING_INVALID')
+    by_key = {effect.effect_key: effect for effect in effects}
+    excluded = set()
+    for old_key, mapping in recovery['superseded'].items():
+        old = by_key.get(old_key)
+        successor = by_key.get(mapping.get('successor_effect_key')) if isinstance(mapping, dict) else None
+        if (old is None or successor is None or old is successor or
+                old.state != 'REPLAY_AUTHORIZED' or old.stage != 'parse' or
+                old.input_hash != mapping.get('input_hash') or
+                successor.input_hash != mapping.get('successor_input_hash') or
+                successor.state not in ('PENDING', 'COMPLETED')):
+            raise ValueError('VLM_RECOVERY_SUCCESSOR_UNSETTLED')
+        excluded.add(old_key)
+    return [effect for effect in effects if effect.effect_key not in excluded]
+
+
 def verify_checkpoint_for_resume(row, effects):
     """UNKNOWN may resume only from an intact checkpoint and settled effects."""
     from app.tasks.dispatch import Claim
     try:
+        effects = _relevant_resume_effects(row, effects)
         if any(effect.state != 'COMPLETED' for effect in effects):
             return False
         payload = json.loads(row.payload)
@@ -397,6 +474,7 @@ def recover_materialized_effects_for_resume(session, row, effects):
     from app.tasks import dispatch
     try:
         directory = _task_directory(row.task_id)
+        effects = _relevant_resume_effects(row, effects)
         pending = [effect for effect in effects if effect.state == 'PENDING']
         if any(effect.state not in ('PENDING', 'COMPLETED') for effect in effects):
             return False
@@ -490,11 +568,52 @@ def _preview(claim, checkpoint):
         return result
 
 
+def _validate_vlm_cache_only_coverage(claim, chunks, service, settings):
+    if not claim.payload.get('_vlm_cache_only'):
+        return
+    import re
+    expected = claim.payload.get('_vlm_cache_expected_inputs')
+    suffixes = claim.payload.get('_vlm_cache_expected_suffixes')
+    locators = claim.payload.get('_vlm_cache_expected_locators')
+    if (service is None or not isinstance(expected, list) or len(expected) != 21 or
+            any(not isinstance(value, str) or len(value) != 64 for value in expected) or
+            len(set(expected)) != 21 or not isinstance(suffixes, dict) or set(suffixes) != set(expected) or
+            not isinstance(locators, dict) or set(locators) != set(expected)):
+        raise UnconfirmedEffect('VLM_CACHE_ONLY_COVERAGE_INVALID')
+    actual = []
+    root = Path(settings.IMAGE_DIR).resolve()
+    for chunk in chunks:
+        if chunk.content_type != 'image':
+            continue
+        if not chunk.image_path:
+            raise UnconfirmedEffect('VLM_CACHE_ONLY_IMAGE_MISSING')
+        image = (root / chunk.image_path).resolve()
+        if not image.is_relative_to(root) or not image.is_file():
+            raise UnconfirmedEffect('VLM_CACHE_ONLY_IMAGE_MISSING')
+        identity = _vlm_request_identity(claim, source_digest(image), service)
+        _, input_hash = _effect_identity(claim, 'vlm', identity)
+        if image.suffix != suffixes.get(input_hash):
+            raise UnconfirmedEffect('VLM_CACHE_ONLY_COVERAGE_MISMATCH')
+        locator = locators.get(input_hash)
+        actual_locator = re.search(r'(_p([0-9]+)_i[0-9]+)$', image.stem)
+        if (not isinstance(locator, dict) or actual_locator is None or
+                locator.get('locator') != actual_locator.group(1) or
+                type(locator.get('page_number')) is not int or
+                type(chunk.page_number) is not int or
+                chunk.page_number != locator['page_number'] or
+                chunk.page_number != int(actual_locator.group(2))):
+            raise UnconfirmedEffect('VLM_CACHE_ONLY_LOCATOR_MISMATCH')
+        actual.append(input_hash)
+    if len(actual) != 21 or len(set(actual)) != 21 or set(actual) != set(expected):
+        raise UnconfirmedEffect('VLM_CACHE_ONLY_COVERAGE_MISMATCH')
+
+
 def _parse(claim):
     from app.tasks import dispatch
     from app.services.parser import FileParser
-    from app.services.vlm import VLMService
-    from app.services.parent_child import ParentChildConfig, build_parent_child_chunks
+    from app.services.vlm import TaskVLMService
+    from app.services.parent_child import (ParentChildConfig,
+        derive_image_description_chunk)
     payload = claim.payload
     source = _assert_source(payload)
     with Session(dispatch.engine) as session:
@@ -505,7 +624,8 @@ def _parse(claim):
     audit = _task_directory(claim.task_id) / ('a' + str(claim.attempt_no))
     parser_settings = settings.model_copy(update={**payload['_parser_settings'], 'PDF_AUDIT_DIR': str(audit)})
     parser = FileParser(payload['_kb_id'], image_namespace=f'tasks/{UUID(claim.task_id).hex}/{claim.attempt_no}',
-                        parser_settings=parser_settings, audit_flat=True)
+                        parser_settings=parser_settings, audit_flat=True,
+                        xlsx_first_row_as_header=payload.get('xlsx_first_row_as_header', False))
     parent_child = payload.get('parent_child', False)
     pc = ParentChildConfig(payload.get('parent_chunk_size', 4096), payload.get('parent_chunk_overlap', 0),
                            payload.get('child_chunk_size', 384), payload.get('child_chunk_overlap', 48))
@@ -520,12 +640,16 @@ def _parse(claim):
         embedding_base_url=semantic.base_url if semantic else None,
         embedding_api_key=semantic.api_key if semantic else None,
         embedding_max_tokens=vector.context_length if vector else settings.EMBEDDING_MAX_CONTEXT_LENGTH,
-        semantic_max_tokens=semantic.context_length if semantic else None)
+        semantic_max_tokens=semantic.context_length if semantic else None,
+        defer_chunking=True)
     summary = {'COMPLETED': 0, 'NOT_CONFIGURED': 0}
     runner = EffectRunner(claim)
-    service = VLMService(base_url=vlm.base_url, api_key=vlm.api_key, model=vlm.model_name,
+    service = TaskVLMService(base_url=vlm.base_url, api_key=vlm.api_key, model=vlm.model_name,
                          prompt=payload['_vlm_prompt']) if vlm else None
+    _validate_vlm_cache_only_coverage(claim, chunks, service, settings)
+    parsed_with_descriptions, derived_descriptions = [], set()
     for chunk in chunks:
+        parsed_with_descriptions.append(chunk)
         if chunk.content_type != 'image' or not chunk.image_path:
             continue
         if service is None:
@@ -534,17 +658,34 @@ def _parse(claim):
         image = (Path(settings.IMAGE_DIR) / chunk.image_path).resolve()
         if not image.is_relative_to(Path(settings.IMAGE_DIR).resolve()):
             raise ValueError('TASK_IMAGE_PATH_INVALID')
-        identity = dict(image_sha256=source_digest(image), base_url=service.base_url,
-                        model=service.model, prompt=service.prompt, max_tokens=1000)
+        identity = _vlm_request_identity(claim, source_digest(image), service)
+        service.max_tokens = identity['max_tokens']
         caption = asyncio.run(runner('vlm', identity, lambda: service.describe_image(str(image))))
-        chunk.content += '\n[图片描述（模型生成，需核对原图）]\n' + caption
-        chunk.metadata = {**(chunk.metadata or {}), 'content_origin':'model_generated_image_description',
-                           'image_description': {'status':'COMPLETED', 'image_sha256':identity['image_sha256'],
-                                                 'model':service.model}}
-        chunk.token_count = parser.splitter.count_tokens(chunk.content)
+        description = {'status':'COMPLETED', 'image_sha256':identity['image_sha256'], 'model':service.model}
+        if parent_child and source.suffix.lower() == '.pdf':
+            # Original IMAGE bytes/placeholder stay original; derived text gets
+            # its own authenticated manifest record and searchable child IDs.
+            chunk.metadata = {**(chunk.metadata or {}), 'image_description': description}
+            locator = (chunk.metadata or {}).get('source_locator') or {}
+            key = (chunk.page_number, identity['image_sha256'],
+                json.dumps(locator, sort_keys=True) if locator else chunk.image_path)
+            if key not in derived_descriptions:
+                effect_key, _ = _effect_identity(claim, 'vlm', identity)
+                derived = derive_image_description_chunk(chunk, caption,
+                    source_sha256=payload['_source_sha256'], image_sha256=identity['image_sha256'],
+                    model=service.model, prompt_sha256=hashlib.sha256(service.prompt.encode()).hexdigest(),
+                    max_tokens=identity['max_tokens'], effect_key=effect_key)
+                derived.token_count = parser.splitter.count_tokens(derived.content)
+                parsed_with_descriptions.append(derived)
+                derived_descriptions.add(key)
+        else:
+            chunk.content += '\n[图片描述（模型生成，需核对原图）]\n' + caption
+            chunk.metadata = {**(chunk.metadata or {}), 'content_origin':'model_generated_image_description',
+                               'image_description': description}
+            chunk.token_count = parser.splitter.count_tokens(chunk.content)
         summary['COMPLETED'] += 1
-    if parent_child:
-        chunks = build_parent_child_chunks(chunks, pc, count_tokens=parser.splitter.count_tokens)
+    chunks = parser.chunk_document(parsed_with_descriptions, parent_child_config=pc if parent_child else None,
+                                   persist_manifest=False)
     _assert_source(payload)
     from app.services.pdf_provenance import write_manifest
     final_manifest = write_manifest(str(audit), payload['_source_sha256'],
@@ -683,7 +824,7 @@ def sweep_task_artifacts(grace_seconds=3600, max_tasks=25, max_files_per_task=20
                         envelope = read_bounded(task.task_id, str(candidate))
                     except (ValueError, OSError):
                         continue
-                    if (envelope.get('schema') == 'task-effect-v1' and
+                    if (envelope.get('schema') in ('task-effect-v1', 'task-effect-rejected-v1') and
                             envelope.get('task_id') == task.task_id and
                             envelope.get('effect_key') in effect_keys):
                         protected.add(str(candidate.resolve()))

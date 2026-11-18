@@ -154,22 +154,31 @@ async def upload_file(
     # Stream the exact saved bytes; UUID storage keys never contain user paths.
     import hashlib
     from pathlib import Path
-    from app.services.file_uploads import register_upload
+    from app.services.file_uploads import register_upload, UploadCommitUnknown
+    from app.services.upload_recovery import create_journal, prepare_journal, clear_journal, sync_staged_source
     file_id = generate_uuid()
-    directory = Path(settings.UPLOAD_DIR) / kb_id
+    directory = Path(settings.UPLOAD_DIR).resolve() / kb_id
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{file_id}_source{ext}"
     digest = hashlib.sha256()
     size = 0
     retained = False
+    created = False
+    journal = None
+    commit_unknown = False
     try:
+        journal, journal_row = create_journal(settings.UPLOAD_DIR, kb_id, file_id, path)
         async with aiofiles.open(path, "xb") as handle:
+            created = True
             while part := await file.read(1024 * 1024):
                 size += len(part)
                 if size > settings.MAX_FILE_SIZE:
                     raise HTTPException(400, detail={"code": 40002, "message": "文件过大，最大支持 100MB"})
                 digest.update(part)
                 await handle.write(part)
+        # Make the staged bytes durable before any DB row can refer to them.
+        sync_staged_source(path)
+        prepare_journal(journal, journal_row, size, digest.hexdigest())
         result = register_upload(session, kb_id=kb_id, file_id=file_id,
                                  name=file.filename, path=path, size=size,
                                  sha256=digest.hexdigest(), action=action,
@@ -179,10 +188,24 @@ async def upload_file(
               file_id=result["file_id"], kb_id=kb_id, status=result["status"],
               outcome=result["outcome"])
         return ApiResponse(data=FileUploadResponse(**result))
+    except UploadCommitUnknown:
+        # A committed row might already reference these bytes; reconcile before cleanup.
+        retained = True
+        commit_unknown = True
+        event("ingest.upload_commit_unknown", file_id=file_id, kb_id=kb_id,
+              status="UNKNOWN", recovery="RECONCILE_BEFORE_CLEANUP")
+        raise
     finally:
         if not retained:
             session.rollback()
-            path.unlink(missing_ok=True)
+            if created:
+                path.unlink(missing_ok=True)
+        if journal is not None and not commit_unknown:
+            try:
+                clear_journal(journal)
+            except OSError:
+                # A retained journal is safe for read-only reconciliation.
+                event("ingest.upload_journal_cleanup_failed", file_id=file_id, kb_id=kb_id)
 
 
 
@@ -296,6 +319,8 @@ def parse_file_manually(
 
     # 提取 config 中的参数
     config = config or {}
+    if 'xlsx_first_row_as_header' in config and type(config['xlsx_first_row_as_header']) is not bool:
+        raise HTTPException(status_code=422, detail='XLSX_HEADER_CONFIGURATION_INVALID')
     prior = _replay(file_id, "parse", request_key, config)
     if prior:
         return ApiResponse(data=prior)
@@ -329,7 +354,7 @@ def parse_file_manually(
         separator=config.get('separator', "\n\n"), heading_level=heading_level,
         auto_vectorize=auto_vectorize, embedding_model=embedding_model,
         vector_model=vector_model,
-        **{key: config[key] for key in ("parent_child", "parent_chunk_size", "parent_chunk_overlap", "child_chunk_size", "child_chunk_overlap") if key in config},
+        **{key: config[key] for key in ("parent_child", "parent_chunk_size", "parent_chunk_overlap", "child_chunk_size", "child_chunk_overlap", "xlsx_first_row_as_header") if key in config},
     ), request_key=request_key, expected_generation=file_doc.desired_generation, request_input=config)
     return ApiResponse(message="解析任务已入队", data=task)
 

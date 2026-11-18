@@ -18,6 +18,7 @@ def service(vector_rows=(), lexical=None):
     # This fixture supplies no SQL session; candidate authorization is covered
     # separately with real SQL and Chroma in test_index_builds.
     svc._vector_scope = Mock(return_value=([row['id'] for row in vector_rows], []))
+    svc._authorized_route_rows = Mock(side_effect=lambda session, rows, allowed: rows)
     svc._embed_query_for_kb = AsyncMock(return_value=[0.1])
     svc.bm25_index = Mock()
     svc.bm25_index.search.side_effect = lexical or (lambda **kw: [])

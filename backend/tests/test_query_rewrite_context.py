@@ -21,6 +21,9 @@ def test_rewrite_keeps_current_input_separate_and_sends_one_request(query):
     create = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(
         finish_reason="stop", message=SimpleNamespace(content=query))], usage=None))
     service = LLMService(api_key="test", model="test")
+    # The request owner supplies the persisted history limit. This prompt test
+    # does not bootstrap a second application database or read process defaults.
+    service.history_rounds = 20
     service._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     assert asyncio.run(service.rewrite_query(query)) == query
     create.assert_awaited_once()
@@ -138,7 +141,8 @@ def test_rewrite_api_accepts_optional_actual_history(monkeypatch):
         Message(role="user", content="介绍 Redis 7.2。"),
         Message(role="assistant", content="Redis 7.2 是内存数据库。"),
     ])
-    response = asyncio.run(api.rewrite_query(data, session=object()))
+    from starlette.requests import Request
+    response = asyncio.run(api.rewrite_query(data, request=Request({'type': 'http'}), session=object()))
     assert response.data.rewritten_query == "Redis 7.2 的失效策略呢？"
     rewrite.assert_awaited_once_with(data.query, history=[
         {"role": "user", "content": "介绍 Redis 7.2。"},

@@ -11,6 +11,8 @@ from app.services import chat, memory, web_search, grounded_generation
 
 
 def service(monkeypatch):
+    monkeypatch.setattr(chat, 'get_runtime_settings', lambda: SimpleNamespace(
+        max_chat_history_rounds=5, revision=1, degraded=False))
     prefs = memory.PreferencesSnapshot(values=memory.PreferenceValues(),
         sources={key: 'default' for key in memory.FIELDS})
     monkeypatch.setattr(memory, 'get_memory_service', lambda:
@@ -51,9 +53,13 @@ def test_opt_in_chat_and_agent_use_web_branch_before_kb_preflight(monkeypatch, m
     generate.assert_awaited_once()
     model_messages = generate.await_args.args[1]
     assert '私有' not in str(model_messages)
-    assert generate.await_args.args[2] == [evidence]
+    citations = generate.await_args.args[2]
+    assert all(citations[0][key] == value for key, value in evidence.items())
+    assert citations[0]['source_id'] == 1 and citations[0]['source_alias'] == 's1'
+    assert citations[0]['origin'] == 'CURRENT_WEB_SEARCH'
+    assert citations[0]['web_snapshot_status'] == 'CAPTURED_SEARCH_RESULT'
     result = next(data for kind, data in events if kind == 'rag_result')
-    assert result['citations'] == [evidence]
+    assert result['citations'] == citations
     assert result['web_search']['request_id'] == 'search-id'
     assert events[0][1]['requested_mode'] == mode
     assert events[-1][1]['answer_mode'] == 'WEB_SEARCH_GROUNDED'
@@ -98,7 +104,8 @@ def test_default_false_keeps_existing_chat_path(monkeypatch):
 def test_model_unknown_is_terminal_without_replay(monkeypatch):
     instance = service(monkeypatch)
     monkeypatch.setattr(web_search, 'search_web', AsyncMock(return_value=web_search.WebSearchResult(
-        'SUCCESS', 'query', [{'content': 'web evidence'}])))
+        'SUCCESS', 'query', [{'source_type': 'web', 'title': 'Evidence',
+                             'url': 'https://example.org/evidence', 'content': 'web evidence'}])))
     generate = AsyncMock(side_effect=TimeoutError('uncertain'))
     monkeypatch.setattr(grounded_generation, 'generate_grounded_candidate', generate)
     events = collect(instance, messages(), web_search_enabled=True)

@@ -196,6 +196,8 @@ def dispatch_file_task(file_id, operation, payload, request_key=None, *, expecte
             raise FileTaskConflict('TASK_INPUT_CHANGED')
         if get_runtime_settings(session).revision != snapshot.revision:
             raise FileTaskConflict('TASK_SETTINGS_CHANGED')
+        from app.services.image_caption_derivatives import guard_caption_model_at_acceptance
+        guard_caption_model_at_acceptance(session, doc, payload)
         if expected_generation is not None and doc.desired_generation != expected_generation:
             raise FileTaskConflict('TASK_GENERATION_CONFLICT')
         busy = session.exec(select(FileTaskReceipt).where(FileTaskReceipt.active_file == file_id)).first()

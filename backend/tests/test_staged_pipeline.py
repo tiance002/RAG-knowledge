@@ -72,7 +72,8 @@ def test_auto_parse_hands_off_full_checkpoint_then_embed(stages, monkeypatch):
         calls.append((list(contents), model_id))
         return [[1.0, 0.0] for _ in contents]
     monkeypatch.setattr(EmbeddingService, '_embed', embedding)
-    claim = submit('parse', {'auto_vectorize': True, 'parent_child': True})
+    claim = submit('parse', {'auto_vectorize': True, 'parent_child': True,
+                             'child_chunk_size':20,'child_chunk_overlap':0})
     pipeline.execute_stage(claim)
     with Session(stages[0]) as session:
         receipt = session.get(dispatch.FileTaskReceipt, claim.task_id)

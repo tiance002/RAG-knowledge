@@ -17,6 +17,10 @@ UNKNOWN_POLICIES = ('BASELINE', 'CHEAP', 'EXPENSIVE')
 FEATURE_STATUSES = ('OBSERVED', 'ESTIMATED', 'UNKNOWN')
 RULE_VERSION = 'rule-router-v1.2-reviewed-signals-uncalibrated'
 AFFINITY_VERSION = 'rule-router-v1.3-task-interactions-experimental'
+RISK_V4_VERSION = 'rule-router-v1.5-cheap-default-risk-v4-estimated'
+RISK_V5_VERSION = 'rule-router-v1.6-cheap-default-risk-v5-d-observe-length'
+RISK_V6_VERSION = 'rule-router-v1.7-cheap-default-risk-v6-c-semantic-refinement'
+QUALITY_FIRST_VERSION = 'rule-router-v1.4-quality-first-estimated-uncalibrated'
 # Weak initial prior, not fitted/calibrated weights. Long or tabular context
 # alone must not be treated as evidence of a difficult reasoning task.
 DEFAULT_WEIGHTS = {'T': 0.25, 'C': 0.20, 'J': 0.25, 'D': 0.10, 'L': 0.10, 'M': 0.10}
@@ -56,7 +60,7 @@ class RouterConfig:
             raise ValueError('unknown unknown-feature policy')
         _unit(self.threshold, 'threshold')
         _unit(self.task_risk_floor, 'task_risk_floor')
-        if self.selection_policy not in ('WEIGHTED_V1', 'AFFINITY_V2'):
+        if self.selection_policy not in ('WEIGHTED_V1', 'AFFINITY_V2', 'QUALITY_FIRST_V3', 'RISK_V4', 'RISK_V5', 'RISK_V6'):
             raise ValueError('unknown selection policy')
         if set(self.weights) != set(FEATURE_NAMES):
             raise ValueError('weights must specify T,C,J,D,L,M exactly')
@@ -78,7 +82,7 @@ class RouterConfig:
             mode=env.get(prefix + 'MODE', 'OFF').strip().upper(),
             cheap_model=env.get(prefix + 'CHEAP_MODEL', 'Qwen/Qwen3.5-4B').strip(),
             expensive_model=env.get(prefix + 'EXPENSIVE_MODEL', 'zai-org/GLM-5.3-Flash').strip(),
-            threshold=float(env.get(prefix + 'THRESHOLD', '0.5')),
+            threshold=float(env.get(prefix + 'THRESHOLD', '0.45' if env.get(prefix + 'SELECTION_POLICY', '').strip().upper() in ('RISK_V5', 'RISK_V6') else '0.5')),
             selection_policy=env.get(prefix + 'SELECTION_POLICY', 'WEIGHTED_V1').strip().upper(),
             task_risk_floor=float(env.get(prefix + 'TASK_RISK_FLOOR', '0.55')),
             weights={k: float(env.get(prefix + 'WEIGHT_' + k, str(DEFAULT_WEIGHTS[k]))) for k in FEATURE_NAMES},
@@ -415,6 +419,224 @@ def task_interactions(question, features, metadata):
     return matches
 
 
+def quality_first_candidate(question, citations=None, messages=None):
+    """Explicit model preference from general wording families, never competence.
+
+    The optional evidence/message arguments support offline replay parity; no
+    source IDs, answers, Gold labels, or historical verdicts enter this rule.
+    Evidence eligibility and fixed/OFF modes remain the caller's responsibility.
+    These cues estimate benefit and are not calibrated success probabilities.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return {'role': None, 'risk': [], 'defer': [], 'reason': 'QUESTION_UNKNOWN',
+                'status': 'UNKNOWN'}
+    q = question.casefold()
+    risk = []
+    if re.search(r'计算|相减|差额|剩余|换算|比率|相隔|多多少|少多少|少多|多多|高多少|低多少|百分[点比]|\b(?:calculate|calculation|subtract|ratio|remaining|remained|exceed|sum|twice|percentage points|more than|less than|how many years|how much .*than)\b', q):
+        risk.append('DERIVED_NUMERIC_OPERATION')
+    if re.search(r'刚才|同一|上述|它|其|该项目|这张|前.*(?:题|问)|\b(?:its|that report|that project|that year|same|previous|question (?:two|three|\d+)|questions? ago)\b', q):
+        risk.append('CONVERSATIONAL_ENTITY_ALIGNMENT')
+    if re.search(r'分别|口径|对应|各自|比较|对比|区别|\b(?:respectively|compare|versus|difference)\b', q):
+        risk.append('RELATION_OR_FIELD_ALIGNMENT')
+    if re.search(r'万元|多少.*(?:元|人|个)|哪位|什么|哪.*(?:位|年)|\b(?:how many|how much|who|where|what time|what date|when|which)\b', q):
+        risk.append('SCOPED_FACT_LOOKUP')
+    if re.search(r'\band\b|以及|并曾|同时|和.*(?:什么|多少|哪)|如何|为什么|\b(?:how does|why)\b', q):
+        risk.append('MULTI_FACT_OR_MECHANISM')
+    defer = []
+    if re.search(r'\b(?:sequence|mitigations?|preventative follow-ups?|escalation path|rollback|disable path)\b|操作步骤|处置流程|回滚路径|升级路径', q):
+        defer.append('PROCEDURAL_COVERAGE')
+    if re.search(r'\b(?:env var|environment variable|branch name|email.*(?:channel|slack)|(?:channel|slack).*email)\b|环境变量|分支名', q):
+        defer.append('VERBATIM_IDENTIFIER_LOOKUP')
+    priority = any(x in risk for x in ('DERIVED_NUMERIC_OPERATION', 'CONVERSATIONAL_ENTITY_ALIGNMENT', 'RELATION_OR_FIELD_ALIGNMENT'))
+    role = 'EXPENSIVE' if priority or not defer else 'CHEAP'
+    return {'role': role, 'risk': risk, 'defer': defer,
+            'reason': 'BENEFIT_RISK_PRIORITY' if priority else 'LOW_OBSERVED_BENEFIT_FAMILY' if defer else 'QUALITY_FIRST_DEFAULT',
+            'status': 'ESTIMATED'}
+
+
+def qwen_risk_v4(question, citations=None, messages=None):
+    """Pure pre-generation risk points, never a model failure probability.
+
+    Frozen general wording and context interactions match the offline V4 rule.
+    Source labels only measure diversity/format; no benchmark outcome is read.
+    Absent citations/history are empty observations, never invented evidence.
+    """
+    if not isinstance(question, str) or not question.strip():
+        return {'score_points': 0, 'signals': {}, 'status': 'UNKNOWN',
+                'reason': 'QUESTION_UNKNOWN', 'matched_rules': [],
+                'interpretation': 'ESTIMATED_RISK_NOT_PROBABILITY'}
+    citations = list(citations or ())
+    messages = list(messages or ())
+    def _signals(question,citations,messages):
+        q=question.casefold();match=lambda p:bool(re.search(p,q,re.I))
+        hist=any(m.get('role')=='assistant' and m.get('content') for m in messages)
+        sources={c.get('fileId') or c.get('file_id') or c.get('fileName') for c in citations};sources.discard(None)
+        structured=any(str(c.get('fileName','')).lower().endswith(('.xlsx','.xls','.csv','.docx')) or c.get('content_type')=='table' for c in citations)
+        arithmetic=match(r'计算|相减|差额|剩余|换算|比率|相隔|多多少|少多少|高多少|低多少|百分点|\b(?:calculate|calculation|subtract|ratio|remaining|remained|exceed|sum|twice|percentage points|more than|less than|how many years|how much .*than)\b')
+        reference=hist and match(r'刚才|同一|上述|其|该项目|这张|前.*(?:题|问)|\b(?:its|that report|that project|that year|same|previous|question (?:two|three|\d+)|questions? ago)\b')
+        financial=match(r'结转|结余|支出|收入|负债|预算|成本|收益率|\b(?:budget|cost|liabilit\w*|equity|revenues?|expenditures?|yield factor|retail price|income)\b')
+        multi=question.count('?')+question.count('？')>=2 or match(r'\b(?:and (?:(?:by|at|from|to) )?(?:what|which|who|where|when|how)|what .* and (?:percentage|who)|date and time|sampling approach and percentage)\b|并曾|以及.*(?:谁|多少|什么)|分别|各自')
+        mechanism=match(r'\b(?:how does|how .*prevent|why|explain)\b|为什么|如何.*(?:避免|防止)')
+        numeric_scope=match(r'\d{4}|万元|千元|million|thousands|\b(?:fiscal|FY\d|table|percentage|dollars|percentages|USD)\b')
+        procedure=match(r'\b(?:sequence|mitigations?|preventative follow-ups?|escalation path|rollback|disable path)\b|操作步骤|处置流程|回滚路径|升级路径')
+        identifier=match(r'\b(?:env var|environment variable|branch name|metric name|run id|image tag|email.*(?:channel|slack))\b|环境变量|分支名|镜像标签|指标名称|运行标识')
+        return dict(arithmetic=arithmetic,history_reference=reference,financial_field=financial,multiple_facts=multi,
+                    mechanism=mechanism,numeric_scope=numeric_scope,structured=structured,competing_sources=len(sources)>=3,
+                    procedure=procedure,identifier=identifier,has_history=hist,has_evidence=bool(citations))
+
+    def _score(s):
+        base=max(45*s['arithmetic'],40*s['history_reference'],35*s['financial_field'],35*s['multiple_facts'],30*s['mechanism'])
+        # Context alone cannot upgrade; interactions amplify an identified task.
+        if not base:return 0
+        value=base+10*s['numeric_scope']+10*(s['structured'] and (s['financial_field'] or s['arithmetic']))+10*s['competing_sources']
+        if not (s['arithmetic'] or s['history_reference']):value-=20*(s['procedure'] or s['identifier'])
+        # A bare arithmetic cue in ordinary history is not enough to pay for an upgrade.
+        if not s['has_evidence'] and not (s['numeric_scope'] or s['financial_field']):value-=10
+        return max(0,min(100,value))
+    observed = _signals(question, citations, messages)
+    points = _score(observed)
+    # Primary families use max, not a sum of correlated wording cues.
+    primary = {name: weight for name, weight in (
+        ('arithmetic', 45), ('history_reference', 40), ('financial_field', 35),
+        ('multiple_facts', 35), ('mechanism', 30)) if observed[name]}
+    base = max(primary.values(), default=0)
+    amplifiers = {
+        'numeric_scope': 10 if base and observed['numeric_scope'] else 0,
+        'structured_numeric': 10 if base and observed['structured'] and (observed['financial_field'] or observed['arithmetic']) else 0,
+        'competing_sources': 10 if base and observed['competing_sources'] else 0,
+    }
+    discounts = {
+        'procedure_or_identifier': 20 if base and not (observed['arithmetic'] or observed['history_reference']) and (observed['procedure'] or observed['identifier']) else 0,
+        'bare_history_arithmetic': 10 if base and not observed['has_evidence'] and not (observed['numeric_scope'] or observed['financial_field']) else 0,
+    }
+    return {'score_points': points, 'signals': observed, 'status': 'ESTIMATED',
+            'primary_contributions': primary, 'primary_max_points': base,
+            'amplifiers': amplifiers, 'discounts': discounts,
+            'matched_rules': [name for name, matched in observed.items() if matched],
+            'interpretation': 'ESTIMATED_RISK_NOT_PROBABILITY'}
+
+
+def _risk_v5_context_length(question, messages):
+    """Exact request characters and text observations, never provider tokens.
+
+    These observations have no scoring weight. Missing messages are UNKNOWN,
+    including their request/system/history lengths, rather than an empty input.
+    """
+    result = {'status': 'UNKNOWN' if messages is None else 'OBSERVED',
+              'request_chars': None, 'system_text_chars': None,
+              'prior_history_chars': None,
+              'question_chars': len(question) if isinstance(question, str) else None,
+              'interpretation': 'OBSERVE_ONLY_NO_VALIDATED_LENGTH_WEIGHT'}
+    if messages is None:
+        return result
+    from app.services.grounded_request_budget import request_chars
+    def text_chars(message):
+        content = message.get('content')
+        if isinstance(content, str):
+            return len(content)
+        if isinstance(content, list):
+            return sum(len(part['text']) for part in content
+                       if isinstance(part, dict) and isinstance(part.get('text'), str))
+        return 0
+    current = max((i for i, m in enumerate(messages) if m.get('role') == 'user'), default=len(messages))
+    result.update(request_chars=request_chars(messages),
+                  system_text_chars=sum(text_chars(m) for m in messages if m.get('role') in ('system', 'developer')),
+                  prior_history_chars=sum(text_chars(m) for m in messages[:current] if m.get('role') not in ('system', 'developer')))
+    return result
+
+
+def qwen_risk_v5(question, citations=None, messages=None):
+    """Opt-in frozen variant D; context length is observation only.
+
+    V4 signal extraction stays immutable. Only the independent fact-pair weight,
+    two task interactions and literal identifier discount differ in this rule.
+    """
+    messages = None if messages is None else list(messages)
+    risk = qwen_risk_v4(question, citations, messages)
+    risk['context_length'] = _risk_v5_context_length(question, messages)
+    if risk['status'] != 'ESTIMATED':
+        risk['extra_signals'] = {}
+        return risk
+    q = question.casefold()
+    match = lambda pattern: bool(re.search(pattern, q, re.I))
+    extra = {
+        'time_or_measurement': match(r'时间|日期|何时|几点|截止|比例|百分|采样|速率|\b(?:time|date|when|scheduled|deadline|confirm|rate|percentage|percent|sampling|qps|slots?|multipliers?|numeric|compute)\b'),
+        'causal_relation': match(r'为此|因此|因而|导致|\b(?:because|therefore|as a result|in response|prevent)\b'),
+        'conditional_mechanism': match(r'\b(?:if|when|unless|resume|retry)\b|如果|当.*时|除非|重试|恢复'),
+        'literal_identifier_query': match(r'\b(?:command|flag|config key|endpoint|header|content.type|model name|model version|issue id|tracking id)\b|命令|参数名|配置键|接口路径|请求头|模型名称|版本号|工单编号'),
+    }
+    observed = risk['signals']
+    primary = dict(risk['primary_contributions'])
+    if observed['multiple_facts']:
+        primary['multiple_facts'] = 35 if extra['time_or_measurement'] or extra['causal_relation'] else 25
+    base = max(primary.values(), default=0)
+    amplifiers = dict(risk['amplifiers'])
+    amplifiers.update(history_financial=5 if base and observed['history_reference'] and observed['financial_field'] else 0,
+                      conditional_mechanism=10 if base and observed['mechanism'] and extra['conditional_mechanism'] else 0)
+    discounts = dict(risk['discounts'])
+    discounts['literal_identifier_query'] = 10 if base and extra['literal_identifier_query'] and not (observed['arithmetic'] or observed['history_reference']) else 0
+    points = max(0, min(100, base + sum(amplifiers.values()) - sum(discounts.values()))) if base else 0
+    risk.update(score_points=points, primary_contributions=primary, primary_max_points=base,
+                amplifiers=amplifiers, discounts=discounts, extra_signals=extra,
+                matched_rules=risk['matched_rules'] + ['extra.' + name for name, value in extra.items() if value])
+    return risk
+
+
+def qwen_risk_v6(question, citations=None, messages=None):
+    """Opt-in semantic variant C, with raw risk independent of route eligibility.
+
+    Frozen V5 observations are refined only for reference/name precision,
+    coupled multi-fact tasks and exclusion arithmetic. Length remains observe-only.
+    """
+    risk = qwen_risk_v5(question, citations, messages)
+    if risk['status'] != 'ESTIMATED':
+        risk['semantic_signals'] = {}
+        return risk
+    match = lambda pattern: bool(re.search(pattern, question, re.I))
+    observed = dict(risk['signals'])
+    reference_pattern = (
+        r'刚才|同一|上述|其(?!中|他|余|实|次|后|前)|该项目|这张|前.*(?:题|问)|'
+        r'\b(?:its|that report|that project|that year|same|previous|question (?:two|three|\d+)|'
+        r'questions? ago)\b')
+    reference_question = re.sub(r'\b(?:repeat\w*|reissu\w*|retry\w*|resen\w*|duplicat\w*)\s+(?:\w+\s+){0,2}same\b', '', question, flags=re.I)
+    observed['history_reference'] = observed['has_history'] and bool(re.search(reference_pattern, reference_question, re.I))
+    mechanism_question = re.sub(r'(?:更名|改名|命名)\s*为\s*什么', '', question)
+    observed['mechanism'] = bool(re.search(r'\b(?:how does|how .*prevent|why|explain)\b|为什么|如何.*(?:避免|防止)', mechanism_question, re.I))
+    semantic = {
+        'measurement': match(r'比例|百分|采样|速率|计算|换算|倍率|乘数|数量|名额|槽位|\b(?:rate|percentage|percent|sampling|qps|slots?|multipliers?|numeric|compute|calculate)\b'),
+        'temporal_dependency': match(r'截止|之前|之后|早于|晚于|以便|才能|需要.*确认|(?:日期|时间).{0,30}(?:相同|不同|一致|差异)|\b(?:before|after|until|deadline|by what time|by when|needs? to|must|so that|so the|in order to|same (?:date|time)|earlier|later|difference|duration)\b'),
+        'exclusion_arithmetic': match(r'排除|剔除|扣除|去掉|不计|不含|\b(?:exclude|excluding|except|after removing)\b') and match(r'多少|几个|几项|几家|几名|几位|数量|\b(?:how many|how much|number|count)\b'),
+    }
+    observed['arithmetic'] = observed['arithmetic'] or semantic['exclusion_arithmetic']
+    extra = risk['extra_signals']
+    semantic['coupled_multiple_facts'] = extra['causal_relation'] or (extra['time_or_measurement'] and (semantic['measurement'] or semantic['temporal_dependency']))
+    primary = {name: weight for name, weight in (
+        ('arithmetic', 45), ('history_reference', 40), ('financial_field', 35),
+        ('multiple_facts', 35 if semantic['coupled_multiple_facts'] else 25),
+        ('mechanism', 30)) if observed[name]}
+    base = max(primary.values(), default=0)
+    amplifiers = {
+        'numeric_scope': 10 if base and observed['numeric_scope'] else 0,
+        'structured_numeric': 10 if base and observed['structured'] and (observed['financial_field'] or observed['arithmetic']) else 0,
+        'competing_sources': 10 if base and observed['competing_sources'] else 0,
+        'history_financial': 5 if base and observed['history_reference'] and observed['financial_field'] else 0,
+        'conditional_mechanism': 10 if base and observed['mechanism'] and extra['conditional_mechanism'] else 0,
+    }
+    discounts = {
+        'procedure_or_identifier': 20 if base and not (observed['arithmetic'] or observed['history_reference']) and (observed['procedure'] or observed['identifier']) else 0,
+        'bare_history_arithmetic': 10 if base and not observed['has_evidence'] and not (observed['numeric_scope'] or observed['financial_field']) else 0,
+        'literal_identifier_query': 10 if base and extra['literal_identifier_query'] and not (observed['arithmetic'] or observed['history_reference']) else 0,
+    }
+    points = max(0, min(100, base + sum(amplifiers.values()) - sum(discounts.values()))) if base else 0
+    risk.update(score_points=points, signals=observed, primary_contributions=primary,
+                primary_max_points=base, amplifiers=amplifiers, discounts=discounts,
+                semantic_signals=semantic,
+                matched_rules=[name for name, value in observed.items() if value]
+                + ['extra.' + name for name, value in extra.items() if value]
+                + ['semantic.' + name for name, value in semantic.items() if value])
+    return risk
+
+
 def apply_selection_policy(question, features, metadata, config):
     """Shared by live selection and offline replay of captured input features.
 
@@ -425,12 +647,31 @@ def apply_selection_policy(question, features, metadata, config):
     lower, upper = score_interval(features, config.weights)
     details = {'policy': config.selection_policy, 'base_score_lower': lower,
                'base_score_upper': upper, 'matched_rules': [], 'status': 'NOT_APPLICABLE'}
-    if config.selection_policy == 'AFFINITY_V2':
+    if config.selection_policy in ('RISK_V4', 'RISK_V5', 'RISK_V6'):
+        risk = metadata.get(config.selection_policy.lower().replace('risk_', 'qwen_risk_')) or {}
+        known = risk.get('status') == 'ESTIMATED' and isinstance(risk.get('score_points'), (int, float))
+        lower = upper = risk['score_points'] / 100 if known else 0.0
+        details.update(status='ESTIMATED' if known else 'UNKNOWN',
+                       matched_rules=risk.get('matched_rules', []) if known else [],
+                       method={'RISK_V4': RISK_V4_VERSION, 'RISK_V5': RISK_V5_VERSION, 'RISK_V6': RISK_V6_VERSION}[config.selection_policy], interpretation='ESTIMATED_RISK_NOT_PROBABILITY',
+                       calibration='FROZEN_HEURISTIC_NOT_PROBABILITY',
+                       reason='RISK_THRESHOLD' if known else 'RISK_OBSERVATIONS_UNKNOWN')
+    elif config.selection_policy == 'AFFINITY_V2':
         matches = task_interactions(question, features, metadata)
         details.update(matched_rules=matches, status='ESTIMATED',
                        task_risk_floor=config.task_risk_floor, calibration='UNCALIBRATED')
         if matches:
             lower, upper = max(lower, config.task_risk_floor), max(upper, config.task_risk_floor)
+    elif config.selection_policy == 'QUALITY_FIRST_V3':
+        candidate = quality_first_candidate(question)
+        details.update(status=candidate['status'], role_override=candidate['role'],
+                       matched_rules=candidate['risk'] + candidate['defer'],
+                       risk_rules=candidate['risk'], defer_rules=candidate['defer'],
+                       reason=candidate['reason'],
+                       cheap_deferral_reason=candidate['reason'] if candidate['role'] == 'CHEAP' else None,
+                       method='GENERAL_WORDING_BENEFIT_PREFERENCE_V1',
+                       interpretation='ESTIMATED_BENEFIT_NOT_PROBABILITY',
+                       calibration='UNCALIBRATED')
     return lower, upper, details
 
 
@@ -453,6 +694,12 @@ def decide_route(question, citations, messages=None, retrieval_status='SUCCESS',
         return RouteDecision(**common, selected_role='NONE', selected_model=None, reason='INSUFFICIENT_EVIDENCE')
     features, metadata = extract_features(question, citations, messages, completeness=completeness,
                                           conflict=conflict, top1_score_kind=top1_score_kind)
+    if config.selection_policy == 'RISK_V4':
+        metadata['qwen_risk_v4'] = qwen_risk_v4(question, citations, messages)
+    elif config.selection_policy == 'RISK_V5':
+        metadata['qwen_risk_v5'] = qwen_risk_v5(question, citations, messages)
+    elif config.selection_policy == 'RISK_V6':
+        metadata['qwen_risk_v6'] = qwen_risk_v6(question, citations, messages)
     metadata['weights'] = dict(config.weights)
     metadata['unknown_policy'] = {'mode': config.unknown_policy}
     metadata['model_roles'] = {'cheap': {'model': config.cheap_model},
@@ -465,10 +712,24 @@ def decide_route(question, citations, messages=None, retrieval_status='SUCCESS',
         metadata['target_field_collision'] = measure_target_field_collision(question, citations)
     lower, upper, policy = apply_selection_policy(question, features, metadata, config)
     metadata['selection_policy'] = policy
-    metadata['rule_version'] = AFFINITY_VERSION if config.selection_policy == 'AFFINITY_V2' else RULE_VERSION
+    metadata['rule_version'] = {'AFFINITY_V2': AFFINITY_VERSION,
+                                'QUALITY_FIRST_V3': QUALITY_FIRST_VERSION}.get(config.selection_policy, RULE_VERSION)
+    if config.selection_policy == 'RISK_V4':
+        metadata['rule_version'] = RISK_V4_VERSION
+    elif config.selection_policy == 'RISK_V5':
+        metadata['rule_version'] = RISK_V5_VERSION
+    elif config.selection_policy == 'RISK_V6':
+        metadata['rule_version'] = RISK_V6_VERSION
     if config.mode in ('CHEAP_ONLY', 'EXPENSIVE_ONLY'):
         role = 'CHEAP' if config.mode == 'CHEAP_ONLY' else 'EXPENSIVE'
         reason = 'FIXED_MODE'
+    elif config.selection_policy in ('RISK_V4', 'RISK_V5', 'RISK_V6'):
+        role = 'EXPENSIVE' if policy['status'] == 'ESTIMATED' and lower >= config.threshold else 'CHEAP'
+        reason = ('RISK_AT_OR_ABOVE_THRESHOLD' if role == 'EXPENSIVE' else
+                  'RISK_OBSERVATIONS_UNKNOWN_CHEAP' if policy['status'] == 'UNKNOWN' else 'RISK_BELOW_THRESHOLD')
+    elif config.selection_policy == 'QUALITY_FIRST_V3':
+        role = policy['role_override'] or config.unknown_policy
+        reason = policy['reason'] if policy['role_override'] else 'QUESTION_UNKNOWN_' + config.unknown_policy
     elif upper < config.threshold:
         role, reason = 'CHEAP', 'INTERVAL_BELOW_THRESHOLD'
     elif lower >= config.threshold:

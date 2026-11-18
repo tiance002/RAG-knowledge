@@ -21,11 +21,11 @@ def test_same_local_parent_never_crosses_file_or_kb(db):
 
 def test_independent_hit_not_swallowed_and_seed_survives_budget(db):
     sibling={**seed_row(), 'id':'sibling', 'content':'SIBLING_GOLD'}
-    out=rerank.expand_context([seed_row(), sibling], db, window_size=1, max_parent_length=100)
+    out=rerank.expand_context([seed_row(), sibling], db, window_size=1)
     assert {x['id'] for x in out} == {'seed','sibling'}
     db.get(DocumentChunk,'seed').content='X'*100
     db.commit()
-    out=rerank.expand_context([sibling],db,window_size=0,max_parent_length=15)
+    out=rerank.expand_context([sibling],db,window_size=0)
     assert 'SIBLING_GOLD' in out[0]['content']
 
 
@@ -84,10 +84,12 @@ def test_authorized_scope_rejects_forged_seed(db):
     assert rerank.expand_context([row],db,window_size=0,allowed_kb_ids=['other-kb']) == []
 
 
-def test_seed_larger_than_limit_is_explicitly_omitted(db):
+def test_seed_larger_than_optional_budget_is_preserved_whole_and_reported(db):
     row=rerank.expand_context([seed_row()],db,window_size=0,max_context_chars=3,include_source_members=True)[0]
-    assert row['content'] == '' and row['original_content'] == ''
-    assert row['context_group']['truncation_status']=='SEED_OMITTED_OVER_LIMIT'
+    assert row['content'] == 'SEED_PART' and row['original_content'] == 'SEED_PART'
+    assert row['delivery_budget']['mandatory_overrun'] is True
+    assert row['context_group']['omitted_seed_ids'] == []
+    assert row['context_group']['truncation_status'] == 'NOT_APPLIED'
 
 def test_hybrid_empty_or_failure_does_not_repeat_vector_call(monkeypatch):
     import asyncio
@@ -96,6 +98,7 @@ def test_hybrid_empty_or_failure_does_not_repeat_vector_call(monkeypatch):
     from app.services.retrieval import RetrievalService
     service=RetrievalService.__new__(RetrievalService)
     service._vector_scope=lambda session,kb_id: (['c'], [])  # Transport double; authorization tested separately.
+    service._authorized_route_rows=lambda session,rows,kb_ids: rows
     service._embed_query_for_kb=AsyncMock(return_value=[1.0])
     service.vector_store=SimpleNamespace(query=Mock(side_effect=RuntimeError('synthetic storage error')))
     service.bm25_index=SimpleNamespace(search=Mock(return_value=[]))
@@ -123,12 +126,14 @@ def test_partial_rerank_api_delivers_unknown_score_on_both_routes(db, monkeypatc
     monkeypatch.setattr(recall,'get_retrieval_service',lambda: SimpleNamespace(search=AsyncMock(return_value=(rows, {}))))
     class Service:
         def __init__(self,*args): self.calls=0
-        def rerank(self,*args,**kwargs):
+        async def arerank(self,*args,**kwargs):
             self.calls+=1
             return [{'index':0,'score':.9}] if self.calls==1 else []
     monkeypatch.setattr(recall,'RerankService',Service)
-    actual=rerank.batch_rerank
-    monkeypatch.setattr(recall,'batch_rerank',lambda **kw: actual(**kw,max_context_tokens=5))
+    actual=rerank.async_batch_rerank
+    async def bounded_rerank(**kw):
+        return await actual(**kw,max_context_tokens=5)
+    monkeypatch.setattr(recall,'async_batch_rerank',bounded_rerank)
     app=FastAPI();app.include_router(recall.router);app.dependency_overrides[get_session]=lambda:db
     client=TestClient(app); payload={'query':'q','context_window':0,'rerank_enabled':True,'rerank_score_threshold':.5}
     for path,body in [('/knowledge-bases/kb/recall',payload),('/recall/multi',{'data':payload,'kb_ids':['kb']})]:
@@ -151,6 +156,7 @@ def test_hybrid_route_failures_have_distinct_statuses(vector,bm25,expected,capsy
     from app.services.retrieval import RetrievalService
     service=RetrievalService.__new__(RetrievalService)
     service._vector_scope=lambda session,kb_id: (['c'], [])  # Transport double; authorization tested separately.
+    service._authorized_route_rows=lambda session,rows,kb_ids: rows
     service._embed_query_for_kb=AsyncMock(return_value=[1.])
     service.vector_store=SimpleNamespace(query=Mock(side_effect=vector if isinstance(vector,Exception) else None,return_value=vector if isinstance(vector,list) else None))
     service.bm25_index=SimpleNamespace(search=Mock(side_effect=bm25 if isinstance(bm25,Exception) else None,return_value=bm25 if isinstance(bm25,list) else None))
@@ -171,6 +177,7 @@ def test_hybrid_postprocessing_failure_does_not_reissue_vector(capsys):
     from app.services.retrieval import RetrievalService
     service=RetrievalService.__new__(RetrievalService)
     service._vector_scope=lambda session,kb_id: (['c'], [])  # Transport double; authorization tested separately.
+    service._authorized_route_rows=lambda session,rows,kb_ids: rows
     service._embed_query_for_kb=AsyncMock(return_value=[1.])
     service.vector_store=SimpleNamespace(query=Mock(return_value=[{'id':'c','score':.8}]))
     service.bm25_index=SimpleNamespace(search=Mock(return_value=[]))
@@ -191,8 +198,8 @@ def test_recall_unknown_rerank_is_not_silent_or_retried(db,monkeypatch,capsys):
     recall=importlib.util.module_from_spec(spec);monkeypatch.setitem(sys.modules,spec.name,recall);spec.loader.exec_module(recall)
     row={'id':'seed','file_name':'fixture.pdf','content':'source','score':.9}
     monkeypatch.setattr(recall,'get_retrieval_service',lambda:SimpleNamespace(search=AsyncMock(return_value=([row],{}))))
-    failed=Mock(side_effect=httpx.ReadTimeout('secret-provider-message'))
-    monkeypatch.setattr(recall,'batch_rerank',failed)
+    failed=AsyncMock(side_effect=httpx.ReadTimeout('secret-provider-message'))
+    monkeypatch.setattr(recall,'async_batch_rerank',failed)
     app=FastAPI();app.include_router(recall.router);app.dependency_overrides[get_session]=lambda:db
     client=TestClient(app);payload={'query':'q','context_window':0,'rerank_enabled':True}
     response=client.post('/knowledge-bases/kb/recall',json=payload)

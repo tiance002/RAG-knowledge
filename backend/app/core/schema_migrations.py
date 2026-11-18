@@ -17,6 +17,12 @@ ADDITIVE_COLUMNS = {
     "document_chunks": {"start_offset": "INTEGER", "end_offset": "INTEGER", "source_metadata_json": "VARCHAR"},
 }
 
+# Cover the existing BM25 live-count join without loading content/terms payloads.
+BM25_READ_INDEXES = {
+    "ix_chunk_index_bm25_live": ("chunk_index", ("kb_id", "chunk_id", "doc_length", "id")),
+    "ix_document_chunks_bm25_scope": ("document_chunks", ("id", "file_id", "chunk_type")),
+}
+
 
 def apply_additive_schema_migrations(engine):
     """Idempotently add nullable columns without guessing historical values.
@@ -52,6 +58,11 @@ def apply_additive_schema_migrations(engine):
             connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_file_documents_sha256 ON file_documents (sha256)")
         if "image_path" in {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(document_chunks)")}:
             connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_document_chunks_image_path ON document_chunks(image_path)")
+        for name, (table, columns) in BM25_READ_INDEXES.items():
+            present = {row[1] for row in connection.exec_driver_sql(f'PRAGMA table_info("{table}")')}
+            if set(columns) <= present:
+                column_sql = ", ".join(f'"{column}"' for column in columns)
+                connection.exec_driver_sql(f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ({column_sql})')
     from app.core.file_task_migration import migrate_file_tasks
     migrate_file_tasks(engine)
     return changes

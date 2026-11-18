@@ -109,7 +109,7 @@ def test_agent_tool_call_is_not_a_final_answer(monkeypatch):
 def test_routed_agent_binding_passes_thinking_without_changing_off_model():
     model = MagicMock()
     bound_tools = model.bind_tools.return_value
-    llm = SimpleNamespace(get_chat_model=lambda **kwargs: model)
+    llm = SimpleNamespace(model='synthetic', get_chat_model=lambda **kwargs: model)
     assert grounded_generation._routed_chat_model(llm, []) is bound_tools
     bound_tools.bind.assert_not_called()
     llm._router_extra_body = {'enable_thinking': False}

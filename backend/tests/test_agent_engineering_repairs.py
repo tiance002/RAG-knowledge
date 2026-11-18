@@ -182,7 +182,7 @@ def test_router_role_binding_failure_does_not_call_or_fallback(monkeypatch, miss
     assert len(calls) == 1
 
 
-def test_real_graph_multiple_tools_delivers_stable_ids_to_answer_and_grader(monkeypatch):
+def test_real_graph_multiple_tools_delivers_stable_ids_to_answer_without_independent_grader(monkeypatch):
     from langchain_core.messages import HumanMessage
     monkeypatch.setenv('RAG_MODEL_ROUTER_MODE', 'OFF')
     monkeypatch.setattr(aw, 'LLMService', lambda: SimpleNamespace(model='fake',
@@ -192,21 +192,25 @@ def test_real_graph_multiple_tools_delivers_stable_ids_to_answer_and_grader(monk
     seen = []
     async def invoke(model, messages, config, stage, model_name, **kwargs):
         seen.append((stage, messages))
-        if stage == 'quality':
-            return AIMessage(content='0.9')
+        assert stage == 'agent', 'Production graph must not call an independent relevance grader'
         if len([s for s, _ in seen if s == 'agent']) == 1:
             return AIMessage(content='', tool_calls=[
                 {'name': 'search_knowledge_base', 'id': 'a', 'args': {'query': 'qA'}},
                 {'name': 'search_knowledge_base', 'id': 'b', 'args': {'query': 'qB'}}])
         return AIMessage(content='B [2]', response_metadata={'finish_reason': 'stop'})
     monkeypatch.setattr(aw, 'invoke_provider_model', invoke)
-    result = asyncio.run(obj.app.ainvoke({'messages': [HumanMessage(content='Use my documents to answer.')],
-        'kb_ids': ['allowed'], 'search_params': {}, 'agent_steps': []}))
+    try:
+        result = asyncio.run(obj.app.ainvoke({'messages': [HumanMessage(content='Use my documents to answer.')],
+            'kb_ids': ['allowed'], 'search_params': {}, 'agent_steps': []}))
+    finally:
+        obj.close()
     assert result['messages'][-1].content == 'B [2]'
     assert [c['source_id'] for c in result['citations']] == [1, 2]
-    assert result['grading_scope']['source_ids'] == [1, 2]
-    grader = next(messages[0].content for stage, messages in seen if stage == 'quality')
-    assert 'Document 1' in grader and 'Document 2' in grader
+    assert result['grading_scope'] == {}
+    assert result['grading_status'] == 'NOT_RUN' and result['last_score'] is None
+    answer_context = '\n'.join(m.content for m in seen[-1][1] if isinstance(m, ToolMessage))
+    assert 'Document s1' in answer_context and 'Document s2' in answer_context
+    assert all(stage == 'agent' for stage, _ in seen)
     assert result['validation_status'] == 'NOT_RUN'
 
 

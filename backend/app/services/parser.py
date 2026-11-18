@@ -39,7 +39,7 @@ def run_async(coro):
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    
+
     if loop.is_running():
         # 如果已经在循环中 (虽然 parser 通常在 celery 线程，不应在 loop 中)，
         # 但为了防止意外，这里做一个简单的 fallback 或者报错
@@ -110,7 +110,7 @@ class TextSplitter:
         self.separator = separator.replace("\\n", "\n") if separator else "\n\n"
         self.max_overflow_ratio = max_overflow_ratio
         self.max_chunk_size = int(self.chunk_size * (1 + max_overflow_ratio))
-        
+
         # 初始化 LangChain 的 Token Splitter (如果可用)
         self.langchain_splitter = None
         if HAS_LANGCHAIN:
@@ -172,7 +172,7 @@ class TextSplitter:
         """
         if start >= end:
             return -1
-    
+
         search_text = text[start:end]
 
         # 所有可能的边界符号
@@ -202,7 +202,7 @@ class TextSplitter:
     def split(self, text: str) -> List[str]:
         """
         切分文本
-        
+
         如果 HAS_LANGCHAIN 为 True，则优先使用基于 Token 的 RecursiveCharacterTextSplitter。
         否则使用基于字符的语义完整性切分。
         """
@@ -254,7 +254,7 @@ class TextSplitter:
             # 步骤 2: 向后扩展查找边界 [end, end + chunk_size * 0.2]
             # 注意：如果 max_overflow_ratio 为 0（例如二次切分模式），则 forward_search_end = end，不会进行向后查找
             forward_search_end = min(end + int(self.chunk_size * self.max_overflow_ratio), text_len)
-            
+
             forward_boundary = -1
             if forward_search_end > end:
                  forward_boundary = self._find_sentence_boundary(text, end, forward_search_end, forward=True)
@@ -343,7 +343,7 @@ class StructuredSplitter:
         # 如果未指定语义模型限制，默认与向量模型一致，或者给一个安全值
         self.semantic_max_tokens = semantic_max_tokens or embedding_max_tokens
         self.text_splitter = TextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        
+
         self.semantic_splitter = None
         if self.use_semantic and SemanticChunker is not None:
             self._init_semantic_splitter()
@@ -354,23 +354,23 @@ class StructuredSplitter:
         """初始化语义切分器"""
         # 优先使用传入的 base_url，否则使用全局配置
         raw_base_url = settings.EMBEDDING_BASE_URL if self.embedding_base_url is None else self.embedding_base_url
-        
+
         # 清洗 base_url (EmbeddingService 内部也会处理，但为了 log 清晰)
         base_url = raw_base_url.rstrip("/")
-        
+
         # 优先使用传入的模型，否则使用全局默认配置
         model_name = settings.EMBEDDING_MODEL if self.embedding_model is None else self.embedding_model
         api_key = settings.EMBEDDING_API_KEY if self.embedding_api_key is None else self.embedding_api_key
-        
+
         print(f"🔧 [StructuredSplitter] Initializing EmbeddingServiceAdapter with base_url: {base_url}, model: {model_name}, has_key: {bool(api_key)}")
-        
+
         # Use the configured provider adapter for semantic embeddings.
         embeddings = EmbeddingServiceAdapter(
             base_url=base_url,
             api_key=api_key,
             model=model_name
         )
-        
+
         self.semantic_splitter = SemanticChunker(
             embeddings=embeddings,
             breakpoint_threshold_type="percentile",
@@ -400,7 +400,7 @@ class StructuredSplitter:
         """根据配置选择切分策略"""
         if not content.strip():
             return []
-            
+
         # 1. 计算 Token 数量
         # 解释：这里必须计算 Token，原因如下：
         # (1) 无论是否使用语义切分，我们都需要确保最终生成的 Chunk 不会超过 向量模型(Embedding Model) 的限制。
@@ -408,7 +408,7 @@ class StructuredSplitter:
         # (2) 如果使用语义切分，我们需要确保传给 语义模型 的文本片段不会超过它的上下文窗口。
         #     虽然我们不想"多此一举"，但为了程序的健壮性，防止 API 报错，这是必要的"安全检查"。
         token_count = self._count_tokens(content)
-        
+
         # 2. 检查是否超过向量模型限制 (Vector Model Context)
         # 如果未超过限制，直接保留完整块（优先保证结构树）
         # 注意：如果 ignore_limit_check 为 True (如纯语义切分模式)，则跳过此检查，强制进行语义切分尝试
@@ -425,7 +425,7 @@ class StructuredSplitter:
         # 不再预先估算并进行物理切分，而是直接将内容传给语义切分模型。
         # 理由：SemanticChunker 内部是按句子进行 Embedding 的，只要单句不超限，整体长文本通常也能处理。
         # 如果切分后的结果依然过大，再进行二次处理。
-        
+
         print(f"🔍 [StructuredSplitter] Checking semantic split: use_semantic={self.use_semantic}, has_splitter={self.semantic_splitter is not None}")
 
         if self.use_semantic and self.semantic_splitter:
@@ -435,7 +435,7 @@ class StructuredSplitter:
                 docs = self.semantic_splitter.create_documents([content])
                 chunks = [doc.page_content for doc in docs]
                 print(f"🧠 [StructuredSplitter] 语义切分完成，获得 {len(chunks)} 个片段", flush=True)
-                
+
                 # 再次检查切分后的片段是否满足向量模型限制
                 # 如果某个片段依然过大（虽然语义完整，但 Embedding 模型吃不下），需要二次切分
                 final_chunks = []
@@ -456,7 +456,7 @@ class StructuredSplitter:
                 raise_if_effect_error(e)
                 print(f"❌ [StructuredSplitter] 语义切分失败: {e}，回退到固定切分", flush=True)
                 # Fallback to fixed split below
-        
+
         # 4. 回退或默认使用固定切分 (TextSplitter)
         print(f"🔨 [StructuredSplitter] 使用固定切分 (Tokens: {token_count}, Chunk Size: {self.chunk_size})", flush=True)
         # 对应需求："对超出的部分...使用固定切分的方式如：500token切分一个chuck"
@@ -498,11 +498,11 @@ class StructuredSplitter:
                 # 优化：对前言部分也进行切分检查 (支持语义切分)
                 # 如果前言过长，会调用 _split_content 进行语义/固定切分
                 preamble_sub_chunks = self._split_content(preamble_content)
-                
+
                 for idx, pc in enumerate(preamble_sub_chunks):
                     chunks.append(StructuredChunk(
                         content=pc,
-                        heading_level=0, 
+                        heading_level=0,
                         heading_text="前言",
                         heading_path=["前言"],
                         parent_id=None,
@@ -515,7 +515,7 @@ class StructuredSplitter:
             while heading_path and len(heading_path) >= heading.level:
                 heading_path.pop()
             heading_path.append(heading.text)
-            
+
             # 构建完整的标题上下文 (用于拼接到每个 chunk 前面)
             # 例如: "1. Project Overview\n1.1 Project Background"
             full_heading_context = "\n".join(heading_path)
@@ -556,7 +556,7 @@ class StructuredSplitter:
                 # 必须考虑加上标题上下文后的总长度
                 token_count = self._count_tokens(content)
                 heading_tokens = self._count_tokens(full_heading_context)
-                
+
                 # 如果 (标题 + 内容) 超过限制，则进行切分
                 if (token_count + heading_tokens) > self.embedding_max_tokens:
                     # 创建标题 chunk (保留作为父节点结构)
@@ -582,7 +582,7 @@ class StructuredSplitter:
                         # 关键修复：将标题上下文拼接到每个子块的内容前面
                         # 确保 "1.1 Project Background" 的切片包含 "1. Project Overview" 信息
                         chunk_content_with_context = f"{full_heading_context}\n\n{sub_content}"
-                        
+
                         chunks.append(StructuredChunk(
                             content=chunk_content_with_context,
                             heading_level=heading.level,
@@ -629,7 +629,7 @@ class StructuredSplitter:
 
     def _fallback_split(self, text: str, generate_id_func) -> List[StructuredChunk]:
         """当没有识别到标题时，使用普通切分"""
-        # Fallback 时，是否应该忽略 limit check? 
+        # Fallback 时，是否应该忽略 limit check?
         # 如果是 Structure 模式但没找到标题，通常还是希望尽量保留完整块，除非超长
         # 所以这里保持 ignore_limit_check=False
         text_chunks = self._split_content(text)
@@ -650,18 +650,18 @@ class StructuredSplitter:
     def extract_markdown_headings(text: str) -> List[HeadingInfo]:
         """
         从 Markdown 格式文本中提取标题
-        
+
         支持：
         - # 一级标题
         - ## 二级标题
         - ### 三级标题
-        
+
         优化：
         - 排除代码块 (```...```) 中的注释行
         """
         import re
         headings = []
-        
+
         # 匹配代码块 OR 标题
         # Group 1: 代码块
         # Group 2: 标题的 # 符号
@@ -675,7 +675,7 @@ class StructuredSplitter:
             if match.group(1):
                 # 匹配到代码块，跳过
                 continue
-            
+
             if match.group(2):
                 # 匹配到标题
                 level = len(match.group(2))
@@ -683,20 +683,20 @@ class StructuredSplitter:
                 # 过滤掉仅包含 # 的行或空标题
                 if not title:
                     continue
-                
+
                 print(f"  -> Found heading match: '{match.group(0).strip()}'")
                 print(f"     Group 2 (Hashes): '{match.group(2)}' (Len: {len(match.group(2))})")
                 print(f"     Group 3 (Title): '{title}'")
-                
+
                 print(f"  -> Final Level: {level}")
-                    
+
                 headings.append(HeadingInfo(
                     level=level,
                     text=title,
                     start_pos=match.start(),
                     end_pos=match.end()
                 ))
-        
+
         print(f"🔍 [Parser] Total headings found: {len(headings)}")
         return headings
 
@@ -827,694 +827,108 @@ class StructuredSplitter:
 class FileParser:
     """文件解析器"""
 
-    def __init__(self, kb_id: str, *, image_namespace=None, parser_settings=None, audit_flat=False):
+    def __init__(self, kb_id: str, *, image_namespace=None, parser_settings=None, audit_flat=False, xlsx_first_row_as_header=False):
         self.kb_id = kb_id
         self.settings = parser_settings or settings
         self.audit_flat = audit_flat
+        if type(xlsx_first_row_as_header) is not bool:
+            raise ValueError('XLSX_HEADER_CONFIGURATION_INVALID')
+        self.xlsx_first_row_as_header = xlsx_first_row_as_header
         self.image_prefix = kb_id if image_namespace is None else f"{kb_id}/{image_namespace}"
         self.image_dir = os.path.join(self.settings.IMAGE_DIR, self.image_prefix)
         os.makedirs(self.image_dir, exist_ok=True)
 
     @observe("ingest.parser")
-    def parse(
-        self,
-        file_path: str,
-        chunk_mode: str = "auto",  # auto, no_chunk, custom, structure
-        chunk_size: int = None,
-        chunk_overlap: int = None,
-        separator: str = "\n\n",
-        heading_level: int = 2,  # structure 模式专用
-        use_semantic: bool = False,  # 是否使用语义切分
-        embedding_model: str = None,  # 动态指定 Embedding 模型
-        embedding_base_url: str = None, # 动态指定 Embedding Base URL
-        embedding_api_key: str = None, # 动态指定 Embedding API Key
-        embedding_max_tokens: int = 8192, # Embedding 模型最大上下文 (用于向量模型限制检查)
-        semantic_max_tokens: int = None, # 语义模型最大上下文 (用于语义切分限制检查)
-    ) -> List[ParsedChunk]:
-        """
-        解析文件
+    def parse(self, file_path, chunk_mode="auto", chunk_size=None, chunk_overlap=None,
+              separator="\n\n", heading_level=2, use_semantic=False,
+              embedding_model=None, embedding_base_url=None, embedding_api_key=None,
+              embedding_max_tokens=8192, semantic_max_tokens=None,
+              defer_chunking=False, parent_child_config=None):
+        """Compatibility facade: extract source units, then invoke ONE chunker.
 
-        Args:
-            file_path: 文件路径
-            chunk_mode: 切分模式 (custom, no_split, structure)
-            chunk_size: 块大小
-            chunk_overlap: 重叠大小
-            separator: 分隔符
-            heading_level: 结构化模式的标题级别 (1, 2, 3)
-            use_semantic: 是否使用语义切分 (仅在 structure 模式或 fallback 下生效)
-            embedding_model: 指定使用的 Embedding 模型名称，为 None 时使用默认配置
-            embedding_base_url: 指定使用的 Embedding Base URL
-            embedding_api_key: 指定使用的 Embedding API Key
-            embedding_max_tokens: 向量模型最大上下文长度
-            semantic_max_tokens: 语义模型最大上下文长度
+        Task workers defer until image captions have joined the extracted text.
+        Deferred values are intermediate units, never published index chunks.
         """
-        # Missing values use the shared runtime defaults; explicit zero is valid.
+        from types import SimpleNamespace
         if chunk_size is None or chunk_overlap is None:
             from app.services.runtime_settings import get_runtime_settings
             defaults = get_runtime_settings()
             chunk_size = defaults.chunk_size if chunk_size is None else chunk_size
             chunk_overlap = defaults.chunk_overlap if chunk_overlap is None else chunk_overlap
-
-        self.splitter = TextSplitter(chunk_size, chunk_overlap, separator)
-        
-        # 语义切分逻辑开关
-        # 1. 如果是 semantic 模式，强制开启 use_semantic
-        # 2. 如果是 structure 模式，也强制开启 use_semantic (用户需求：必选项)
-        if chunk_mode == 'semantic' or chunk_mode == 'structure':
-            use_semantic = True
-            print(f"🔧 [Parser] Mode '{chunk_mode}' detected, forcing use_semantic=True")
-        
-        self.structured_splitter = StructuredSplitter(
-            heading_level, 
-            chunk_size, 
-            chunk_overlap=chunk_overlap,  # 传递重叠大小
-            use_semantic=use_semantic,
-            embedding_model=embedding_model,
-            embedding_base_url=embedding_base_url,
-            embedding_api_key=embedding_api_key, # 传递 API Key
-            embedding_max_tokens=embedding_max_tokens,
-            semantic_max_tokens=semantic_max_tokens
-        )
-
+        if chunk_size <= 0 or not 0 <= chunk_overlap < chunk_size:
+            raise ValueError('CHUNK_CONFIGURATION_INVALID')
+        self.splitter = SimpleNamespace(chunk_size=chunk_size, chunk_overlap=chunk_overlap, count_tokens=len)
         self.chunk_mode = chunk_mode
         self.heading_level = heading_level
+        self._chunk_parameters = dict(size=chunk_size, overlap=chunk_overlap,
+            mode=chunk_mode, separators=tuple(dict.fromkeys([separator, '\n', '。'])))
+        self._semantic_parameters = dict(embedding_model=embedding_model,
+            embedding_base_url=embedding_base_url, embedding_api_key=embedding_api_key,
+            embedding_max_tokens=embedding_max_tokens, semantic_max_tokens=semantic_max_tokens)
+        self._document = self.extract(file_path)
+        return self._document.blocks if defer_chunking else self.chunk_document(
+            self._document.blocks, parent_child_config=parent_child_config)
 
-        ext = os.path.splitext(file_path)[1].lower()
-        event("ingest.parser_configuration", kb_id=self.kb_id, mode=chunk_mode, format=ext, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    def extract(self, file_path):
+        from app.services.document_extractors import extract_document
+        return extract_document(self, file_path)
 
-        if ext == ".pdf":
-            return self._parse_pdf(file_path)
-        elif ext == ".docx":
-            return self._parse_docx(file_path)
-        elif ext == ".xlsx":
-            return self._parse_excel(file_path)
-        elif ext == ".csv":
-            return self._parse_csv(file_path)
-        elif ext == ".txt" or ext == ".md":
-            return self._parse_txt(file_path)
-        elif ext in [".jpg", ".jpeg", ".png", ".bmp", ".webp"]:
-            return self._parse_image_file(file_path)
-        else:
-            raise ValueError(f"不支持的文件格式: {ext}")
+    def chunk_document(self, blocks, *, parent_child_config=None, persist_manifest=True):
+        from app.services.document_chunker import ChunkConfig, chunk_document
+        from app.services.parsed_document import ParsedDocument
+        from app.services.pdf_provenance import write_manifest
+        parameters = getattr(self, '_chunk_parameters', dict(size=4096, overlap=0, mode='legacy'))
+        document = ParsedDocument(blocks, self._document.source_sha256, self._document.pages)
+        semantic = None
+        if parameters['mode'] == 'semantic':
+            adapter = StructuredSplitter(self.heading_level, parameters['size'],
+                chunk_overlap=parameters['overlap'], use_semantic=True, **self._semantic_parameters)
+            if adapter.semantic_splitter is None:
+                raise ValueError('SEMANTIC_SPLITTER_UNAVAILABLE')
+            semantic = lambda text: [doc.page_content for doc in adapter.semantic_splitter.create_documents([text])]
+        chunks = chunk_document(document, ChunkConfig(**parameters, parent_child=parent_child_config),
+                                count_tokens=self.splitter.count_tokens, semantic_split=semantic)
+        if persist_manifest:
+            self.pdf_manifest_path = write_manifest(self.settings.PDF_AUDIT_DIR, document.source_sha256,
+                document.pages, chunks, schema='unified-document-chunks-v1', flat=self.audit_flat)
+        return chunks
+
 
     def _save_image(self, image_bytes: bytes, file_id: str, page_num: int, img_index: int, ext: str = "png") -> str:
         """保存图片到本地"""
         image_filename = f"{file_id}_p{page_num}_i{img_index}.{ext}"
         image_path = os.path.join(self.image_dir, image_filename)
-        
+
         with open(image_path, "wb") as f:
             f.write(image_bytes)
-            
+
         # 返回相对路径或文件名，用于前端展示和后续处理
         # 这里返回文件名，前端通过 /static/images/{kb_id}/{filename} 访问
         # 或者后端统一处理路径
         return f"{self.image_prefix}/{image_filename}"
 
-    def _process_text_content(self, text: str, page_num: int) -> List[ParsedChunk]:
-        """处理文本内容（根据切分策略）"""
-        if not text.strip():
-            return []
-            
-        chunks = []
-        
-        # 语义切分模式
-        if self.chunk_mode == "semantic":
-             # 复用 structured_splitter 中的逻辑，它已经初始化好了 semantic_splitter
-             # 强制忽略向量模型长度限制，进行语义切分
-             text_chunks = self.structured_splitter._split_content(text, ignore_limit_check=True)
-             for tc in text_chunks:
-                chunks.append(ParsedChunk(
-                    content=tc,
-                    page_number=page_num,
-                    content_type="text",
-                    metadata={"chunk_type": "semantic"},
-                    token_count=self.structured_splitter._count_tokens(tc)
-                ))
-             return chunks
 
-        # 处理不切分模式
-        if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-            # 即使不切分，也可能需要处理一些基本的清理
-            # 修正：不切分模式下，保留全部文本为一个 Chunk，不进行任何拆分
-            # 注意：如果文件是 PDF，这里处理的是单页内容聚合；如果需要全文档不切分，需要在上层处理
-            # 对于 _process_text_content 来说，它接收的是一段文本（可能是全文也可能是单页），这里直接返回即可
-            cleaned_text = text.strip()
-            if cleaned_text:
-                chunks.append(ParsedChunk(
-                    content=cleaned_text,
-                    page_number=page_num,
-                    content_type="text",
-                    token_count=self.splitter.count_tokens(cleaned_text)
-                ))
-        else:
-            text_chunks = self.splitter.split(text)
-            for tc in text_chunks:
-                chunks.append(ParsedChunk(
-                    content=tc,
-                    page_number=page_num,
-                    content_type="text",
-                    token_count=self.splitter.count_tokens(tc)
-                ))
-        return chunks
+    def _parse_pdf(self, file_path):
+        """Legacy caller adapter; all formats share the same chunking facade."""
+        return self.parse(file_path, chunk_mode=getattr(self, 'chunk_mode', 'legacy'),
+                          chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
+                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))
 
-    def _parse_pdf(self, file_path: str) -> List[ParsedChunk]:
-        if self.settings.PDF_PARSER_MODE == "legacy":
-            return self._parse_pdf_legacy(file_path)
-        if self.settings.PDF_PARSER_MODE != "enhanced":
-            raise ValueError("PDF_PARSER_MODE_INVALID")
-        from pathlib import Path
-        from app.services.pdf_pipeline import parse_page
-        from app.services.pdf_provenance import digest_bytes, write_manifest
 
-        source_sha = digest_bytes(Path(file_path).read_bytes())
-        chunks, pages, aggregate = [], [], []
-        self.pdf_page_records = pages
-        self.pdf_manifest_path = None
 
-        def emit_text(parts):
-            if not parts:
-                return
-            text = "\n".join(piece.content for piece in parts)
-            regions, position = [], 0
-            for piece in parts:
-                regions.append({**piece.locator, "start": position,
-                                "end": position + len(piece.content)})
-                position += len(piece.content) + 1
-            cursor = 0
-            for chunk in self._process_text_content(text, parts[0].locator['page']):
-                start = text.find(chunk.content, cursor)
-                if start < 0:
-                    raise ValueError('PDF_CHUNK_SOURCE_ALIGNMENT_FAILED')
-                end = start + len(chunk.content)
-                selected = [r for r in regions if r['start'] < end and r['end'] > start]
-                chunk.metadata = {**(chunk.metadata or {}), "source_locator": {
-                    "source_sha256": source_sha, "kind": "pdf-text", "regions": selected,
-                    "start": start, "end": end, "page": selected[0]['page'],
-                    "pages": sorted({r['page'] for r in selected})}}
-                chunk.page_number = selected[0]['page']
-                chunks.append(chunk)
-                cursor = start + 1
+    def _parse_docx(self, file_path):
+        """Legacy caller adapter; all formats share the same chunking facade."""
+        return self.parse(file_path, chunk_mode=getattr(self, 'chunk_mode', 'legacy'),
+                          chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
+                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))
 
-        with fitz.open(file_path) as doc:
-            if doc.needs_pass:
-                raise ValueError('PDF_PASSWORD_REQUIRED')
-            for page in doc:
-                result = parse_page(page, source_sha256=source_sha,
-                    tessdata=self.settings.PDF_TESSDATA_DIR, dpi=self.settings.PDF_OCR_DPI,
-                    scan_tables=self.settings.PDF_SCANNED_TABLES_ENABLED,
-                    tables_enabled=self.settings.PDF_TABLES_ENABLED)
-                pages.append(result.record)
-                pending = []
-                events = [(p.locator.get('bbox', p.locator.get('table_bbox'))[1],
-                           p.locator.get('bbox', p.locator.get('table_bbox'))[0], 0, p)
-                          for p in result.pieces]
-                events.extend((b['bbox'][1], b['bbox'][0], 1, b) for b in result.images)
-                for _, _, image, piece in sorted(events, key=lambda item: item[:3]):
-                    if image:
-                        raw = piece['image']
-                        bbox = fitz.Rect(piece['bbox'])
-                        if len(raw) < 3072 or bbox.width <= 0 or bbox.height <= 0 or not .02 <= bbox.width/bbox.height <= 50:
-                            continue
-                        if self.chunk_mode not in ('no_split', 'no_chunk'):
-                            emit_text(pending)
-                            pending = []
-                        path = self._save_image(raw, source_sha[:16], page.number+1,
-                                                piece['_source_block_index'], piece.get('ext', 'png'))
-                        chunks.append(ParsedChunk(content=f'[图片: {path}]', page_number=page.number+1,
-                            content_type='image', image_path=path, metadata={"source_locator": {
-                                "source_sha256": source_sha, "page": page.number+1,
-                                "bbox": list(bbox), "kind": "pdf-image"}}))
-                    elif self.chunk_mode in ('no_split', 'no_chunk'):
-                        aggregate.append(piece)
-                    elif piece.kind == 'table':
-                        emit_text(pending)
-                        pending = []
-                        chunks.append(ParsedChunk(content=piece.content, page_number=page.number+1,
-                            content_type='table', token_count=self.structured_splitter._count_tokens(piece.content),
-                            metadata={"source_locator": {**piece.locator, "source_sha256": source_sha,
-                                                        "kind": "pdf-table-row"}}))
-                    else:
-                        pending.append(piece)
-                emit_text(pending)
-        emit_text(aggregate)
-        self.pdf_manifest_path = write_manifest(self.settings.PDF_AUDIT_DIR, source_sha, pages, chunks, flat=self.audit_flat)
-        if not chunks or all(p['status'] == 'failed' for p in pages):
-            raise ValueError('PDF_NO_SEARCHABLE_CONTENT: see page diagnostics')
-        if any(p['status'] in ('failed', 'partial') for p in pages):
-            raise ValueError('PDF_PARTIAL_PARSE: see page diagnostics')
-        return chunks
 
-    def _parse_pdf_legacy(self, file_path: str) -> List[ParsedChunk]:
-        """解析 PDF 文件 (包含图片提取和顺序保持)"""
-        chunks = []
-        doc = fitz.open(file_path)
-        file_id = os.path.basename(file_path).split("_")[0]
+    def _parse_txt(self, file_path):
+        """Legacy caller adapter; all formats share the same chunking facade."""
+        return self.parse(file_path, chunk_mode=getattr(self, 'chunk_mode', 'legacy'),
+                          chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
+                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))
 
-        # for no_split mode: aggregate all text
-        full_doc_text_buffer = []
-
-        for page_num, page in enumerate(doc, start=1):
-            # 获取页面上的所有块 (text, image)
-            # sort=True 会根据垂直坐标排序，符合阅读顺序
-            blocks = page.get_text("dict", sort=True)["blocks"]
-            
-            # 如果是不切分模式，我们在页面级别聚合所有文本
-            # 否则我们依然在 block 级别处理，以便正确插入图片
-            page_text_buffer = ""
-            
-            # 临时存储本页的chunks，最后再根据模式决定如何合并
-            page_chunks = []
-            current_text_buffer = ""
-
-            for block_idx, block in enumerate(blocks):
-                if block["type"] == 0:  # Text Block
-                    # 提取文本
-                    block_text = ""
-                    for line in block["lines"]:
-                        for span in line["spans"]:
-                            block_text += span["text"]
-                        block_text += "\n"
-                    
-                    if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-                        page_text_buffer += block_text
-                    else:
-                        current_text_buffer += block_text
-                    
-                elif block["type"] == 1:  # Image Block
-                    # 2. 处理图片
-                    try:
-                        image_bytes = block["image"]
-                        image_ext = block["ext"]
-                        img_size = len(image_bytes)
-                        
-                        # 获取图片尺寸信息 (用于调试和过滤)
-                        width, height = 0, 0
-                        try:
-                            # 尝试从 bytes 创建 pixmap 获取尺寸
-                            pix = fitz.Pixmap(image_bytes)
-                            width, height = pix.width, pix.height
-                            pix = None # 释放资源
-                        except Exception:
-                            pass
-
-                        # 打印调试信息
-                        print(f"🔍 [PDF Image Debug] Page: {page_num} | Size: {img_size} bytes ({img_size/1024:.2f} KB) | Dim: {width}x{height} | Ext: {image_ext}")
-
-                        # 过滤过小的图片 (小于 3KB)
-                        if img_size < 3072:
-                            print(f"   -> SKIPPED (Size < 3KB)")
-                            # 如果图片无效，不打断文本流
-                            continue
-                        
-                        # 过滤极端长宽比的图片 (通常是分割线)
-                        # 例如: 宽度是高度的 50 倍，或者高度是宽度的 50 倍
-                        if width > 0 and height > 0:
-                            ratio = width / height
-                            if ratio > 50 or ratio < 0.02:
-                                print(f"   -> SKIPPED (Extreme Aspect Ratio: {ratio:.2f})")
-                                continue
-
-                        # 只有图片有效时，才结算之前的文本 (仅在非 no_split 模式下)
-                        if self.chunk_mode != "no_split" and self.chunk_mode != "no_chunk":
-                            if current_text_buffer:
-                                page_chunks.extend(self._process_text_content(current_text_buffer, page_num))
-                                current_text_buffer = ""
-
-                        # 保存图片
-                        saved_path = self._save_image(image_bytes, file_id, page_num, block_idx, image_ext)
-                        
-                        # 创建图片块 (图片总是单独成块)
-                        # 注意：在 no_split 模式下，图片也会成为独立的块插入在文本之间，或者追加在最后？
-                        # 通常 no_split 意味着文本不切分，但图片还是独立的
-                        # 为了简单，我们先把图片存入 page_chunks
-                        page_chunks.append(ParsedChunk(
-                            content=f"[图片: {saved_path}]", # 占位符内容
-                            page_number=page_num,
-                            content_type="image",
-                            image_path=saved_path,
-                            metadata={
-                                "timestamp": datetime.now().isoformat(),
-                                "original_name": f"image_{page_num}_{block_idx}"
-                            }
-                        ))
-                    except Exception as e:
-                        raise_if_effect_error(e)
-                        print(f"PDF 图片提取失败 (Page {page_num}): {e}")
-            
-            # 页面结束处理
-            if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-                # 不切分模式：累积文本到全局 buffer，不立即切分
-                if page_text_buffer:
-                    full_doc_text_buffer.append(page_text_buffer)
-                # 追加本页提取的所有图片 (图片依然是独立的 chunk)
-                chunks.extend(page_chunks)
-            else:
-                # 普通切分模式：处理剩余的 buffer
-                if current_text_buffer:
-                    page_chunks.extend(self._process_text_content(current_text_buffer, page_num))
-                chunks.extend(page_chunks)
-
-        doc.close()
-
-        # no_split 模式下，最后统一生成一个文本 Chunk
-        if (self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk") and full_doc_text_buffer:
-             full_text = "\n".join(full_doc_text_buffer)
-             # 使用 page_number=1 或 0 表示全文
-             # 插入到开头，作为整个文档的文本内容
-             text_chunks = self._process_text_content(full_text, 1)
-             if text_chunks:
-                 # 将文本块插在最前面
-                 chunks.insert(0, text_chunks[0])
-
-        return chunks
-
-    def _parse_docx(self, file_path: str) -> List[ParsedChunk]:
-        """解析 Word 文件 (包含图片提取和顺序保持)"""
-        chunks = []
-        doc = DocxDocument(file_path)
-        file_id = os.path.basename(file_path).split("_")[0]
-        
-        current_text_buffer = ""
-        # 用于 no_split 模式的页面级缓存
-        page_text_buffer = ""
-        page_image_chunks = []
-        
-        # 结构化模式专用
-        full_text_buffer = ""
-        headings = []
-        
-        # 辅助函数：处理段落中的图片和文本
-        def process_paragraph(para, page_num):
-            nonlocal current_text_buffer, page_text_buffer, page_image_chunks, full_text_buffer, headings
-            
-            # 临时文本，用于当前段落
-            para_text = ""
-            
-            for run in para.runs:
-                # 1. 提取文本
-                if run.text:
-                    if self.chunk_mode == "semantic":
-                        full_text_buffer += run.text
-
-                    if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-                        page_text_buffer += run.text
-                    elif self.chunk_mode != "structure":
-                        current_text_buffer += run.text
-                    if self.chunk_mode == "structure":
-                        para_text += run.text
-                
-                # 2. 检查图片
-                # 查找 run 元素下的 drawing 标签
-                if 'drawing' in run.element.xml:
-                    drawings = run.element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
-                    for drawing in drawings:
-                        # 找到 blip 元素获取 rId
-                        nsmap = {
-                            'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
-                            'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
-                        }
-                        blips = drawing.findall('.//a:blip', namespaces=nsmap)
-                        for blip in blips:
-                            rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
-                            if rId:
-                                try:
-                                    image_part = doc.part.related_parts[rId]
-                                    image_bytes = image_part.blob
-                                    
-                                    # 过滤过小的图片 (小于 2KB)
-                                    if len(image_bytes) < 2048:
-                                        print(f"🔍 [Parser] 跳过过小图片 (Word): {len(image_bytes)} bytes")
-                                        continue
-
-                                    content_type = image_part.content_type
-                                    ext = content_type.split('/')[-1] if '/' in content_type else "png"
-                                    if ext == "jpeg": ext = "jpg"
-                                    
-                                    # 保存图片
-                                    img_idx = len(chunks) + len(page_image_chunks)
-                                    saved_path = self._save_image(image_bytes, file_id, page_num, img_idx, ext)
-                                    
-                                    image_chunk = ParsedChunk(
-                                        content=f"[图片: {saved_path}]",
-                                        page_number=page_num,
-                                        content_type="image",
-                                        image_path=saved_path,
-                                        metadata={
-                                            "timestamp": datetime.now().isoformat(),
-                                            "original_name": f"image_docx_{img_idx}"
-                                        }
-                                    )
-                                    
-                                    if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-                                        # 在 no_split 模式下，图片单独收集，不打断文本流
-                                        page_image_chunks.append(image_chunk)
-                                    elif self.chunk_mode == "structure":
-                                        # 结构化模式：图片直接作为独立块
-                                        chunks.append(image_chunk)
-                                    else:
-                                        # 普通模式：结算前面的文本
-                                        if current_text_buffer:
-                                            chunks.extend(self._process_text_content(current_text_buffer, page_num))
-                                            current_text_buffer = ""
-                                        chunks.append(image_chunk)
-                                        
-                                except Exception as e:
-                                    raise_if_effect_error(e)
-                                    print(f"Word 图片提取失败: {e}")
-            
-            # 处理结构化模式的文本收集和标题提取
-            if self.chunk_mode == "structure":
-                clean_para_text = para_text.strip()
-                if clean_para_text:
-                    # 检查是否是标题
-                    style_name = para.style.name.lower() if para.style and para.style.name else ""
-                    level = None
-                    # Word 标题样式通常是 "Heading 1", "Heading 2" 等
-                    # 中文版可能是 "标题 1"
-                    if 'heading 1' in style_name or style_name == 'heading1' or style_name == '标题 1' or style_name == '标题 1 char': level = 1
-                    elif 'heading 2' in style_name or style_name == 'heading2' or style_name == '标题 2' or style_name == '标题 2 char': level = 2
-                    elif 'heading 3' in style_name or style_name == 'heading3' or style_name == '标题 3' or style_name == '标题 3 char': level = 3
-                    
-                    if level:
-                        start_pos = len(full_text_buffer)
-                        end_pos = start_pos + len(clean_para_text)
-                        headings.append(HeadingInfo(
-                            level=level,
-                            text=clean_para_text,
-                            start_pos=start_pos,
-                            end_pos=end_pos
-                        ))
-                    
-                    full_text_buffer += clean_para_text + "\n\n"
-
-            # 段落结束换行
-            if self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-                page_text_buffer += "\n"
-            elif self.chunk_mode == "structure":
-                pass # 已经在上面处理了
-            else:
-                current_text_buffer += "\n"
-
-        # 遍历文档元素
-        page_num_estimate = 1
-        para_count = 0
-        
-        for element in doc.element.body.iterchildren():
-            # 检查是否需要分页结算 (仅针对 no_split 模式)
-            if (self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk") and para_count > 10:
-                # 不切分模式：仅更新页码估算，结算图片，保留文本
-                if page_image_chunks:
-                    chunks.extend(page_image_chunks)
-                    page_image_chunks = []
-                
-                para_count = 0
-                page_num_estimate += 1
-            
-            # 普通模式的分页估算
-            elif para_count > 10:
-                para_count = 0
-                page_num_estimate += 1
-
-            if element.tag.endswith('p'): # Paragraph
-                process_paragraph(Paragraph(element, doc), page_num_estimate)
-                para_count += 1
-                    
-            elif element.tag.endswith('tbl'): # Table
-                # 提取表格内容
-                table = Table(element, doc)
-                rows_data = []
-                for row in table.rows:
-                    row_cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
-                    rows_data.append(row_cells)
-                
-                if rows_data:
-                    # 优化表格处理：将第一行识别为表头，确保 Markdown 表格格式正确且包含表头信息
-                    if len(rows_data) > 0:
-                        try:
-                            # 使用第一行作为列名 (表头)
-                            headers = rows_data[0]
-                            data = rows_data[1:]
-                            df = pd.DataFrame(data, columns=headers)
-                            # 转换为 Markdown，index=False 隐藏 pandas 索引，默认使用 columns 作为 headers
-                            md_table = df.to_markdown(index=False)
-                        except Exception as e:
-                            raise_if_effect_error(e)
-                            # 降级处理：如果转换失败（如列数不一致），则不指定 columns
-                            print(f"表格转换标准模式失败，降级处理: {e}")
-                            df = pd.DataFrame(rows_data)
-                            # headers="keys" 会显示 0, 1, 2... 作为表头，为了保留原始信息，
-                            # 这里尝试用 tabulate 的 headers="firstrow" 逻辑，但通过 pandas 较难直接实现
-                            # 因此直接生成，第一行数据会变成 Markdown 的数据行，表头为 0, 1, 2...
-                            # 这是一个折衷方案，防止崩溃
-                            md_table = df.to_markdown(index=False)
-                    else:
-                        md_table = ""
-                    
-                    if self.chunk_mode == "structure":
-                        # 结构化模式：表格作为文本的一部分
-                        if md_table:
-                            full_text_buffer += f"\n{md_table}\n\n"
-                    elif self.chunk_mode == "semantic":
-                         # 语义模式：表格也拼接到全文
-                         if md_table:
-                            full_text_buffer += f"\n{md_table}\n\n"
-                    elif self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-                        # no_split 模式：表格作为 Markdown 拼接到文本中
-                        page_text_buffer += f"\n{md_table}\n"
-                    else:
-                        # 普通模式：结算文本，表格单独成块
-                        if current_text_buffer:
-                            chunks.extend(self._process_text_content(current_text_buffer, page_num_estimate))
-                            current_text_buffer = ""
-                        
-                        chunks.append(ParsedChunk(
-                            content=md_table,
-                            page_number=page_num_estimate,
-                            content_type="table",
-                        ))
-
-        # 处理剩余文本
-        if self.chunk_mode == "structure":
-            # 结构化模式：进行最终切分
-            if full_text_buffer:
-                # 生成 ID 的计数器
-                chunk_counter = [0]
-                def generate_id():
-                    chunk_counter[0] += 1
-                    return f"chunk_{chunk_counter[0]}"
-
-                print(f"🔍 [Structure Split] Text Len: {len(full_text_buffer)}, Headings: {len(headings)}")
-                
-                structured_chunks = self.structured_splitter.split_by_headings(
-                    full_text_buffer, headings, generate_id
-                )
-                
-                # 转换为 ParsedChunk
-                text_chunks = [
-                    ParsedChunk(
-                        content=sc.content,
-                        page_number=1, # 结构化模式下页码较难精确对应，暂定 1
-                        content_type="text",
-                        metadata={
-                            "heading_level": sc.heading_level,
-                            "heading_text": sc.heading_text,
-                            "heading_path": sc.heading_path,
-                            "parent_id": sc.parent_id,
-                            "chunk_type": sc.chunk_type,
-                        },
-                        token_count=self.structured_splitter._count_tokens(sc.content)
-                    )
-                    for sc in structured_chunks
-                ]
-                chunks.extend(text_chunks)
-                
-        elif self.chunk_mode == "semantic":
-            # 纯语义切分模式：不关心标题结构，直接对全文进行语义切分
-            if full_text_buffer:
-                # 复用 StructuredSplitter 中的 _split_content 方法（它封装了语义切分逻辑）
-                # 但需要先确保 semantic_splitter 已初始化 (在 __init__ 中已处理)
-                
-                print(f"🔍 [Semantic Split] Processing text length: {len(full_text_buffer)}")
-                semantic_chunks = self.structured_splitter._split_content(full_text_buffer)
-                
-                for idx, content in enumerate(semantic_chunks):
-                    chunks.append(ParsedChunk(
-                        content=content,
-                        page_number=1, # 语义切分难以精确定位页码，暂定 1
-                        content_type="text",
-                        metadata={
-                            "chunk_type": "semantic_content",
-                            "original_index": idx
-                        },
-                        token_count=self.splitter.count_tokens(content)
-                    ))
-            
-            # 同样追加图片
-            if page_image_chunks:
-                chunks.extend(page_image_chunks)
-
-        elif self.chunk_mode == "no_split" or self.chunk_mode == "no_chunk":
-            if page_image_chunks:
-                chunks.extend(page_image_chunks)
-            
-            # 最后统一处理所有文本，作为一个 Chunk 放在最前面
-            if page_text_buffer:
-                text_chunks = self._process_text_content(page_text_buffer, 1)
-                if text_chunks:
-                    chunks.insert(0, text_chunks[0])
-        else:
-            if current_text_buffer:
-                chunks.extend(self._process_text_content(current_text_buffer, page_num_estimate))
-            
-        return chunks
-
-    def _parse_txt(self, file_path: str) -> List[ParsedChunk]:
-        """解析 TXT/MD 文件（支持结构化模式）"""
-        try:
-            with open(file_path, mode='r', encoding='utf-8') as f:
-                content = f.read()
-        except UnicodeDecodeError:
-            with open(file_path, mode='r', encoding='gbk') as f:
-                content = f.read()
-
-        # 结构化模式：提取 Markdown 标题
-        if self.chunk_mode == "structure":
-            headings = StructuredSplitter.extract_markdown_headings(content)
-
-            if headings:
-                # 生成 ID 的计数器
-                chunk_counter = [0]
-
-                def generate_id():
-                    chunk_counter[0] += 1
-                    return f"chunk_{chunk_counter[0]}"
-
-                structured_chunks = self.structured_splitter.split_by_headings(
-                    content, headings, generate_id
-                )
-
-                # 转换为 ParsedChunk
-                return [
-                    ParsedChunk(
-                        content=sc.content,
-                        page_number=1,
-                        content_type="text",
-                        metadata={
-                            "heading_level": sc.heading_level,
-                            "heading_text": sc.heading_text,
-                            "heading_path": sc.heading_path,
-                            "parent_id": sc.parent_id,
-                            "chunk_type": sc.chunk_type,
-                        },
-                        token_count=self.structured_splitter._count_tokens(sc.content)
-                    )
-                    for sc in structured_chunks
-                ]
-            else:
-                print(f"⚠️ [Parser] 文件未识别到 Markdown 标题，降级为普通切分")
-
-        # 普通模式或降级
-        return self._process_text_content(content, 1)
 
     def _parse_image_file(self, file_path: str) -> List[ParsedChunk]:
         """解析单独的图片文件"""
@@ -1524,28 +938,28 @@ class FileParser:
         # we need file_id
         parts = file_name.split("_")
         file_id = parts[0] if parts else "unknown"
-        
+
         ext = os.path.splitext(file_name)[1].lower().lstrip(".")
         if ext == "jpeg": ext = "jpg"
-        
+
         try:
             with open(file_path, "rb") as f:
                 image_bytes = f.read()
-                
+
             # 保存图片到 standalone 图片目录
             # 创建 standalone 目录
             standalone_dir = os.path.join(self.image_dir, "standalone")
             os.makedirs(standalone_dir, exist_ok=True)
-            
+
             image_filename = f"{file_id}.{ext}"
             image_path = os.path.join(standalone_dir, image_filename)
-            
+
             with open(image_path, "wb") as f:
                 f.write(image_bytes)
-            
+
             # 相对路径: kb_id/standalone/filename
             saved_path = f"{self.image_prefix}/standalone/{image_filename}"
-            
+
             chunks.append(ParsedChunk(
                 content=f"[图片: {saved_path}]",
                 page_number=1,
@@ -1562,10 +976,10 @@ class FileParser:
             print(f"Error parsing image file {file_path}: {e}")
             # 如果出错，可能返回空或者抛出异常
             raise e
-            
+
         return chunks
 
-    def _parse_excel(self, file_path: str) -> List[ParsedChunk]:
+    def _extract_excel(self, file_path: str) -> List[ParsedChunk]:
         """Read a workbook and bind locators to the exact bytes parsed."""
         from io import BytesIO
         from pathlib import Path
@@ -1574,9 +988,14 @@ class FileParser:
 
         source = Path(file_path).read_bytes()
         chunks = []
-        with pd.ExcelFile(BytesIO(source)) as workbook:
+        from app.services.excel_rows import prepare_excel_workbook
+        prepared_source = prepare_excel_workbook(source)
+        with pd.ExcelFile(BytesIO(prepared_source)) as workbook:
             for sheet in workbook.sheet_names:
-                df = pd.read_excel(workbook, sheet_name=sheet)
+                df = pd.read_excel(workbook, sheet_name=sheet, header=None, keep_default_na=False, dtype=object)
+                from app.services.excel_rows import prepare_excel_rows
+                df, labels, header_rows = prepare_excel_rows(
+                    prepared_source, sheet, df, self.xlsx_first_row_as_header)
                 # Scan once per sheet; read-only openpyxl rows can contain EmptyCell.
                 sheet_formats = []
                 format_status = "UNKNOWN"
@@ -1584,7 +1003,7 @@ class FileParser:
                     try:
                         worksheet = workbook.book[sheet]
                         for row_number, row in enumerate(worksheet.iter_rows(
-                                min_row=1, max_row=len(df) + 1, max_col=len(df.columns)), start=1):
+                                min_row=1, max_row=len(df) + header_rows, max_col=len(df.columns)), start=1):
                             for column_number, cell in enumerate(row, start=1):
                                 if cell.value is None:
                                     continue
@@ -1605,13 +1024,18 @@ class FileParser:
                         format_status = "AVAILABLE"
                     except Exception:
                         sheet_formats = []
-                for i in range(0, len(df), 20):
-                    rows = df.iloc[i:i + 20]
-                    locator = {"sheet": sheet, "row_start": i + 2, "row_end": i + len(rows) + 1,
-                               "column_start": 1, "column_end": len(rows.columns)}
+                for i in range(len(df)):
+                    row = df.iloc[i]
+                    values = [(labels[j], str(value)) for j, value in enumerate(row)
+                              if pd.notna(value) and value != ""]
+                    if not values:
+                        continue
+                    locator = {"sheet": sheet, "row_start": i + header_rows + 1,
+                               "row_end": i + header_rows + 1,
+                               "column_start": 1, "column_end": len(df.columns)}
                     # Preserve display-format evidence without assigning a currency to
                     # values in other cells or inferring a currency code from a symbol.
-                    formats = [item for item in sheet_formats if item["row"] == 1
+                    formats = [item for item in sheet_formats if (header_rows and item["row"] == 1)
                                or locator["row_start"] <= item["row"] <= locator["row_end"]]
                     format_text = ""
                     if formats:
@@ -1620,30 +1044,22 @@ class FileParser:
                             for item in formats
                         ) + "\n"
                     chunks.append(ParsedChunk(
-                        content=f"[工作表: {sheet}]\n{format_text}{rows.to_markdown(index=False)}",
-                        page_number=i // 20 + 1, content_type="table",
+                        content=",".join(f"{key}: {value}" for key, value in values) + "\n",
+                        page_number=None, content_type="text",
                         metadata={"source_locator": locator, "currency_format_status": format_status,
-                                  "currency_formats": formats},
+                                  "currency_formats": formats, "excel_parse_version": "row-kv-v1",
+                                  "xlsx_first_row_as_header": self.xlsx_first_row_as_header},
                     ))
-        write_manifest(self.settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1", flat=self.audit_flat)
         return chunks
 
-    def _parse_csv(self, file_path: str) -> List[ParsedChunk]:
-        from io import BytesIO
-        from pathlib import Path
-        from app.services.pdf_provenance import digest_bytes, write_manifest
+    def _parse_excel(self, file_path):
+        """Legacy caller adapter; Excel extraction itself only emits row units."""
+        return self.parse(file_path, chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
+                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))
 
-        source = Path(file_path).read_bytes()
-        df = pd.read_csv(BytesIO(source))
-        chunks = []
-        for i in range(0, len(df), 20):
-            rows = df.iloc[i:i + 20]
-            # CSV records may contain embedded newlines. These are data records after the header.
-            locator = {"record_start": i + 1, "record_end": i + len(rows),
-                       "column_start": 1, "column_end": len(rows.columns)}
-            chunks.append(ParsedChunk(
-                content=rows.to_markdown(index=False), page_number=i // 20 + 1,
-                content_type="table", metadata={"source_locator": locator},
-            ))
-        write_manifest(self.settings.PDF_AUDIT_DIR, digest_bytes(source), [], chunks, schema="table-parse-v1", flat=self.audit_flat)
-        return chunks
+
+    def _parse_csv(self, file_path):
+        """Legacy caller adapter; all formats share the same chunking facade."""
+        return self.parse(file_path, chunk_mode=getattr(self, 'chunk_mode', 'legacy'),
+                          chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
+                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))

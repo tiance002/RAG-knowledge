@@ -9,6 +9,7 @@ import json
 import re
 import os
 import math
+import asyncio
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -19,10 +20,27 @@ from app.services.llm import LLMService, is_unknown_provider_error, should_abort
 from app.services.metrics import record_agent_retry_decision
 from app.core.config import get_settings
 from app.tools import search_knowledge_base
+from app.tools.read_knowledge_context import read_knowledge_context
+from app.tools.read_tool_result import read_tool_result
+from app.services.agent_context_budget import EVIDENCE_TOOLS, consolidate_agent_context, request_chars, history_as_sent
+from app.services.agent_source_registry import resolve_source_alias, restore_known_source_aliases
 from app.tools.retrieval_tool import retrieval_attempt
 import uuid
 import hashlib
 from contextlib import nullcontext
+
+
+async def _store_io(operation, *args, **kwargs):
+    """Finish a bounded disk operation before cancellation can close its store."""
+    pending = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    try:
+        return await asyncio.shield(pending)
+    except asyncio.CancelledError:
+        try:
+            await pending
+        finally:
+            raise
+
 
 def _visible_content(content, *, assistant=False):
     """Exclude reasoning blocks even when a provider puts them in content."""
@@ -46,6 +64,8 @@ def _visible_content(content, *, assistant=False):
 
 
 def _observe_model_request(stage, messages, model, provider_model=None):
+    from app.services.conversation_context import record_provider_request
+    record_provider_request(messages, stage)
     # Telemetry must never change the model call or fail the request.
     try:
         if not enabled():
@@ -106,6 +126,8 @@ class AgentState(TypedDict):
     degraded: bool
     fallback_used: bool
     citations: List[dict]
+    history_evidence: List[dict]
+    retain_retrieval_history: bool
     retrieved_docs: List[Any] # 累计召回文档 (暂存)
     search_params: Dict[str, Any] # 前端传递的默认检索参数
     
@@ -129,6 +151,10 @@ class AgentState(TypedDict):
     # LLM 配置 (动态注入)
     model_config: Dict[str, Any]
     source_registry: List[dict]
+    model_evidence_source_ids: List[int]
+    context_delivery: Dict[str, Any]
+    executed_context_reads: List[str]
+    executed_tool_result_reads: List[str]
     executed_retrieval_requests: List[str]
     retrieval_blocked: bool
     grading_status: str
@@ -140,13 +166,57 @@ class AgentState(TypedDict):
 
 
 def _source_key(citation):
+    metadata = citation.get('source_metadata')
+    metadata = metadata if isinstance(metadata, dict) else {}
+    # Identity comes only from explicit server-supplied publication/version
+    # fields. A missing version never implies another source's known version.
+    build = next((value for value in (citation.get('index_build_id'), citation.get('build_id'))
+                  if isinstance(value, str) and value), None)
+    source_hash = next((value for value in (citation.get('source_sha256'), metadata.get('source_sha256'))
+                        if isinstance(value, str) and value), None)
     return (citation.get('fileId') or citation.get('file_id'), citation.get('chunk_id'),
-            citation.get('content'))
+            build, source_hash, citation.get('content'))
 
 
 def _source_context(citations):
     return '\n\n'.join(f"Document {c['source_id']} (Source: {c.get('fileName', 'Unknown File')}):\n{c['content']}"
                        for c in citations)
+
+
+def _prepare_history_evidence(state):
+    """Register opted-in verified references; the model receives a read index.
+
+    Agent history does not use ordinary chat's lexical top-three reuse policy.
+    Every in-scope validated reference remains addressable in this request.
+    """
+    if (not state.get('retain_retrieval_history', False)
+            or state.get('source_registry') or state.get('retrieval_attempt_count')):
+        return {}
+    allowed = set(state.get('kb_ids') or [])
+    candidates = [dict(c) for c in state.get('history_evidence') or []
+                  if c.get('verification_status') == 'VERIFIED'
+                  and c.get('kb_id') in allowed and c.get('origin') == 'HISTORY_REUSE']
+    if not candidates:
+        return {}
+    registry = []
+    data = _register_sources({'citations': candidates, 'retrieval_status': 'SUCCESS',
+                              'source_mapping_status': 'VERIFIED',
+                              'execution_origin': 'history_evidence_reuse'}, registry)
+    if not registry:
+        return {}
+    ident = 'history_' + uuid.uuid4().hex
+    dispatch = AIMessage(content='', tool_calls=[{'name': 'read_knowledge_context',
+        'id': ident, 'args': {'source_id': registry[0]['source_id']}}],
+        additional_kwargs={'execution_origin': 'history_evidence_reuse'})
+    message = ToolMessage(content=json.dumps(data, ensure_ascii=False),
+                          name='read_knowledge_context', tool_call_id=ident,
+                          additional_kwargs={'historical_retrieval': True})
+    event('context.history_reuse', added_count=len(registry), mode='agent_first_turn',
+          execution_origin='history_evidence_reuse')
+    return {'messages': [dispatch, message], 'source_registry': registry,
+            'citations': registry, 'rag_context': data['context'],
+            'last_score': None, 'grading_status': 'NOT_RUN',
+            'retrieval_status': 'SUCCESS', 'source_mapping_status': 'VERIFIED'}
 
 
 _SCORE_NUMBER = re.compile(r'(?<![\w.])[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?![\w.])')
@@ -232,12 +302,17 @@ def _register_sources(data, registry):
         if not citation.get('chunk_id') or not content:
             continue
         citation = {**citation, 'content': content}
+        description_provenance = generated_image_description_provenance(citation)
+        if description_provenance:
+            citation.update(description_provenance)
         existing = next((c for c in registry if _source_key(c) == _source_key(citation)), None)
         if existing is None:
             existing = {**citation, 'source_id': len(registry) + 1}
             registry.append(existing)
         if existing not in selected:
             selected.append(existing)
+    from app.services.conversation_context import register_request_sources
+    register_request_sources(selected)
     return {**data, 'citations': selected + image_sources, 'context': _source_context(selected),
             'source_ids': [c['source_id'] for c in selected], 'omitted_images': omitted_images}
 
@@ -267,11 +342,103 @@ def evidence_text(citation: dict):
     content = citation.get("content")
     if not isinstance(content, str):
         return "", False
+    from app.services.parent_child import IMAGE_DESCRIPTION_LABEL, IMAGE_DESCRIPTION_ORIGIN
+    source = citation.get('source_metadata') or {}
+    origins = source.get('content_origins') if isinstance(source, dict) else None
+    heading = citation.get('heading_text')
+    description_heading = (isinstance(heading, str) and
+        (heading == IMAGE_DESCRIPTION_LABEL or heading.startswith(IMAGE_DESCRIPTION_LABEL + ' ')
+            or heading.startswith(IMAGE_DESCRIPTION_LABEL + '\n')))
+    claimed_description = (isinstance(origins, list) and IMAGE_DESCRIPTION_ORIGIN in origins
+        or description_heading
+        or citation.get('content_origin') == IMAGE_DESCRIPTION_ORIGIN
+        or citation.get('evidence_status') == 'MODEL_GENERATED_IMAGE_DESCRIPTION'
+        or content.startswith(IMAGE_DESCRIPTION_LABEL))
     placeholders = re.compile(r"\[图片\s*[:：][^\]]*\]")
     has_image = bool(placeholders.search(content)) or citation.get("content_type") == "image"
     if citation.get("content_type") == "image":
         return "", True
+    if claimed_description:
+        if generated_image_description_provenance(citation) is None:
+            return '', True
+        body = content
+        if body.startswith(IMAGE_DESCRIPTION_LABEL + '\n'):
+            body = body[len(IMAGE_DESCRIPTION_LABEL)+1:]
+        return (IMAGE_DESCRIPTION_LABEL + '\n' + body, False) if body.strip() else ('', True)
     return placeholders.sub("", content).strip(), has_image
+
+
+def generated_image_description_provenance(citation):
+    """Recognize manifest-backed derived text; geometry locates the image only."""
+    from pathlib import PurePosixPath
+    from app.services.parent_child import IMAGE_DESCRIPTION_ORIGIN, IMAGE_DESCRIPTION_DERIVATION, IMAGE_DESCRIPTION_LABEL
+    if citation.get('content_type') == 'image':
+        return None
+    source = citation.get('source_metadata')
+    origins = source.get('content_origins') if isinstance(source, dict) else None
+    if not isinstance(origins, list) or not origins or any(origin != IMAGE_DESCRIPTION_ORIGIN for origin in origins):
+        return None
+    page = citation.get('page_number')
+    registered = source.get('provenance_schema') == 'registered-image-caption-json-v1'
+    digest = source.get('source_sha256')
+    if (not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest)
+            or (registered and page is not None)
+            or (not registered and (type(page) is not int or page < 1))):
+        return None
+    descriptions, locators = source.get('image_descriptions'), source.get('source_locators')
+    if not isinstance(descriptions, list) or not descriptions or not isinstance(locators, list) or not locators:
+        return None
+    if any(not isinstance(locator, dict) or locator.get('kind') != 'pdf-image-description' for locator in locators):
+        return None
+    if not registered and any(locator.get('page') != page or locator.get('source_sha256') != digest for locator in locators):
+        return None
+    content = citation.get('content')
+    if not isinstance(content, str):
+        return None
+    variants = {hashlib.sha256(content.encode('utf-8')).hexdigest()}
+    if content.startswith(IMAGE_DESCRIPTION_LABEL + '\n'):
+        variants.add(hashlib.sha256(content[len(IMAGE_DESCRIPTION_LABEL)+1:].encode('utf-8')).hexdigest())
+    references = []
+    for value in descriptions:
+        if not isinstance(value, dict):
+            return None
+        path = value.get('source_image_path')
+        if (value.get('status') != 'COMPLETED' or value.get('derivation') != IMAGE_DESCRIPTION_DERIVATION
+                or type(value.get('source_page')) is not int or value['source_page'] < 1
+                or (not registered and value['source_page'] != page)
+                or value.get('indexed_text_sha256') not in variants
+                or not isinstance(value.get('model'), str) or not value['model'].strip()
+                or not isinstance(value.get('image_sha256'), str) or not re.fullmatch('[0-9a-f]{64}', value['image_sha256'])
+                or value.get('requires_original_verification') is not True
+                or not isinstance(path, str) or not path or '\\' in path
+                or PurePosixPath(path).is_absolute() or '..' in PurePosixPath(path).parts):
+            return None
+        if registered:
+            original = value.get('original_source_sha256')
+            identifiers = ('original_file_id', 'original_build_id', 'original_chunk_id')
+            if (not isinstance(original, str) or not re.fullmatch('[0-9a-f]{64}', original)
+                    or any(not isinstance(value.get(key), str) or not value[key] for key in identifiers)
+                    or type(value.get('original_generation')) is not int or value['original_generation'] < 0):
+                return None
+            matching = [locator for locator in locators if locator.get('derivation') == IMAGE_DESCRIPTION_DERIVATION
+                and locator.get('derived_document_sha256') == digest
+                and locator.get('page') == value['source_page']
+                and locator.get('image_sha256') == value['image_sha256']
+                and locator.get('source_image_path') == path
+                and all(locator.get(key) == value.get(key) for key in
+                    (*identifiers, 'original_source_sha256', 'original_generation'))]
+            if not matching or any(not isinstance(locator.get(key), str) or not re.fullmatch('[0-9a-f]{64}', locator[key])
+                for locator in matching for key in ('original_chunk_sha256', 'source_manifest_sha256')):
+                return None
+        reference = {key: value.get(key) for key in ('source_image_path', 'source_page', 'image_sha256',
+            'model', 'prompt_sha256', 'max_tokens', 'effect_key', 'original_source_sha256',
+            'original_file_id', 'original_build_id', 'original_generation', 'original_chunk_id')}
+        if reference not in references:
+            references.append(reference)
+    pages = '、'.join(str(number) for number in sorted({value['source_page'] for value in references}))
+    return dict(content_origin=IMAGE_DESCRIPTION_ORIGIN, evidence_status='MODEL_GENERATED_IMAGE_DESCRIPTION',
+        requires_original_verification=True, source_image_references=references,
+        location=f"{'原 PDF' if registered else 'PDF'} 第 {pages} 页（模型生成图片描述，需核对原图）")
 
 
 def _guard_knowledge_answer(state: AgentState, response: AIMessage):
@@ -281,12 +448,12 @@ def _guard_knowledge_answer(state: AgentState, response: AIMessage):
     seen = set()
     omitted_images = False
     for message in state.get("messages", []):
-        if not isinstance(message, ToolMessage) or message.name != "search_knowledge_base":
+        if not isinstance(message, ToolMessage) or message.name not in EVIDENCE_TOOLS:
             continue
         try:
             data = json.loads(message.content)
             status = data.get("retrieval_status", "RETRIEVAL_ERROR" if data.get("error") else "UNKNOWN")
-            if status not in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"}:
+            if status not in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN", "PARTIAL"}:
                 status = "UNKNOWN"
             statuses.append(status)
             omitted_images |= bool(data.get('omitted_images'))
@@ -304,10 +471,15 @@ def _guard_knowledge_answer(state: AgentState, response: AIMessage):
 
     if state.get('source_registry'):
         citations = [dict(c) for c in state['source_registry']]
-    incomplete = (state.get('retrieval_status') in {'RETRIEVAL_ERROR', 'UNKNOWN'}
-                  or any(status in {"RETRIEVAL_ERROR", "UNKNOWN"} for status in statuses))
+        if 'model_evidence_source_ids' in state:
+            delivered = set(state['model_evidence_source_ids'])
+            citations = [c for c in citations if c.get('source_id') in delivered]
+    incomplete = (state.get('retrieval_status') in {'RETRIEVAL_ERROR', 'UNKNOWN', 'PARTIAL'}
+                  or any(status in {"RETRIEVAL_ERROR", "UNKNOWN", "PARTIAL"} for status in statuses))
     if not citations:
-        if "RETRIEVAL_ERROR" in statuses:
+        if (state.get('context_delivery') or {}).get('omitted_source_ids'):
+            answer = "已找到资料，但完整原文超出本次上下文预算；请缩小问题范围后重试。"
+        elif "RETRIEVAL_ERROR" in statuses:
             answer = "知识库检索发生错误，无法确认是否存在相关资料，请稍后重试。"
         elif not statuses or incomplete:
             answer = "知识库检索状态不确定，无法确认是否存在相关资料，请稍后重试。"
@@ -353,18 +525,22 @@ def _answer_generation_metadata(response: AIMessage, *, generation_ran=True):
 
 def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, include_mode=False, generation_ran=True):
     """Return a complete generated answer when retrieval is usable, else fallback."""
+    response.content, alias_stats = restore_known_source_aliases(
+        response.content, state.get('source_registry'), state.get('model_evidence_source_ids'))
+    if any(alias_stats.values()):
+        event('agent.source_alias_restore', **alias_stats)
     generation_metadata = _answer_generation_metadata(response, generation_ran=generation_ran)
     candidate = response.content
     citations = _guard_knowledge_answer(state, response)
     statuses = []
     omitted_images = False
     for message in state.get("messages", []):
-        if not isinstance(message, ToolMessage) or message.name != "search_knowledge_base":
+        if not isinstance(message, ToolMessage) or message.name not in EVIDENCE_TOOLS:
             continue
         try:
             data = json.loads(message.content)
             status = data.get("retrieval_status", "RETRIEVAL_ERROR" if data.get("error") else "UNKNOWN")
-            statuses.append(status if status in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN"} else "UNKNOWN")
+            statuses.append(status if status in {"SUCCESS", "NO_RESULTS", "LOW_RELEVANCE", "RETRIEVAL_ERROR", "UNKNOWN", "PARTIAL"} else "UNKNOWN")
             omitted_images |= bool(data.get('omitted_images'))
             for item in data.get("citations", []):
                 if isinstance(item, dict):
@@ -375,7 +551,7 @@ def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, includ
         mode = "EXTRACTIVE_FALLBACK"
     elif "RETRIEVAL_ERROR" in statuses:
         mode = "RETRIEVAL_ERROR"
-    elif not statuses or "UNKNOWN" in statuses:
+    elif not statuses or "UNKNOWN" in statuses or "PARTIAL" in statuses:
         mode = "UNKNOWN"
     else:
         mode = "INSUFFICIENT_EVIDENCE"
@@ -401,6 +577,33 @@ def _finalize_knowledge_answer(state: AgentState, response: AIMessage, *, includ
     return (citations, mode) if include_mode else citations
 
 class AgentWorkflow:
+    def _result_store(self, registry):
+        """Lazily allocate one bounded store for this workflow invocation."""
+        if not getattr(self, '_tool_result_store_enabled', False):
+            return None
+        store = getattr(self, '_tool_result_store', None)
+        try:
+            if store is None:
+                from app.services.agent_tool_results import AgentToolResultStore
+                settings = get_settings()
+                store = AgentToolResultStore(registry,
+                    root=getattr(settings, 'AGENT_TOOL_RESULT_STORE_DIR', None),
+                    max_bytes=getattr(settings, 'AGENT_TOOL_RESULT_MAX_BYTES', 8 * 1024 * 1024),
+                    max_entries=getattr(settings, 'AGENT_TOOL_RESULT_MAX_ENTRIES', 32))
+                self._tool_result_store = store
+            store.update_registry(registry)
+            return store
+        except (OSError, ValueError, TypeError):
+            self._tool_result_store_enabled = False
+            event('agent.tool_result_store', status='UNAVAILABLE', fallback='WHOLE_SOURCE_BUDGET')
+            return None
+
+    def close(self):
+        self._tool_result_store_enabled = False
+        store = getattr(self, '_tool_result_store', None)
+        if store is not None:
+            store.close()
+
     def _route_post_retrieval_model(self, state, llm, invocation_messages, *, return_decision=False):
         """Route only post-retrieval Agent execution; auxiliary stages stay fixed."""
         from app.services.grounded_generation import routing_is_off
@@ -431,7 +634,9 @@ class AgentWorkflow:
 
     def __init__(self):
         self.llm_service = LLMService()
-        self.tools = [search_knowledge_base]
+        self.tools = [search_knowledge_base, read_knowledge_context, read_tool_result]
+        self._tool_result_store = None
+        self._tool_result_store_enabled = getattr(get_settings(), 'AGENT_TOOL_RESULT_INLINE_CHARS', 6000) > 0
         
         # 构建图
         workflow = StateGraph(AgentState)
@@ -442,7 +647,6 @@ class AgentWorkflow:
         workflow.add_node("agent", self.agent_node)
         workflow.add_node("tools", self.run_tools)
         workflow.add_node("process_tool_output", self.process_tool_output) # Observation
-        workflow.add_node("grading", self.grade_documents) # Scoring
         workflow.add_node("generate_chat", self.generate_chat)
         
         # 设置入口
@@ -473,11 +677,10 @@ class AgentWorkflow:
         workflow.add_edge("tools", "process_tool_output")
         workflow.add_edge("direct_retrieval", "process_tool_output")
         
-        # Process Output -> Grading
-        workflow.add_edge("process_tool_output", "grading")
-        
-        # Grading -> Agent (Loop back)
-        workflow.add_edge("grading", "agent")
+        # Evidence sufficiency is decided by the Agent over delivered sources.
+        # The historical prefix-only grading method is offline compatibility;
+        # it is deliberately absent from the production graph.
+        workflow.add_edge("process_tool_output", "agent")
         
         workflow.add_edge("generate_chat", END)
         
@@ -544,7 +747,7 @@ class AgentWorkflow:
                 and not state.get("retrieval_attempt_count")
                 and not state.get("executed_retrieval_requests")
                 and not state.get("retrieval_blocked")
-                and len(self.tools) == 1
+                and all(getattr(tool, 'name', None) in EVIDENCE_TOOLS for tool in self.tools)
                 and getattr(self.tools[0], "name", None) == "search_knowledge_base"):
             users = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
             query = state.get("retrieval_query") or state.get("original_query")
@@ -580,6 +783,10 @@ class AgentWorkflow:
     @observe("agent.agent_node")
     async def agent_node(self, state: AgentState, config: RunnableConfig):
         """Agent 思考节点"""
+        history_update = _prepare_history_evidence(state)
+        history_messages = history_update.get('messages', [])
+        if history_update:
+            state = {**state, **history_update, 'messages': [*state['messages'], *history_messages]}
         if state.get('retrieval_blocked'):
             response = AIMessage(content='')
             citations, mode = _finalize_knowledge_answer(state, response, include_mode=True, generation_ran=False)
@@ -637,28 +844,32 @@ class AgentWorkflow:
    - 只需提供 `query` 参数。系统会自动处理知识库 ID 和检索配置。
    - 尽量使用准确的关键词。
    - 如果用户的问题比较复杂，可以拆解为多次查询。
-3. **响应反馈**：
-   - 检索完成后，系统会评估检索结果的相关性。
-   - 如果系统提示 "检索结果相关性评分较低"，**你必须** 尝试改写查询关键词，并再次调用工具。
-   - 在重试时，请改写查询关键词或换一个切入点；检索参数由服务端统一控制，不要在工具参数里调整。
-   - 不要重复使用相同的查询。尝试不同的切入点。
+   - 先搜索命中的原始片段。需要上下文、父块或相邻内容时，再调用 `read_knowledge_context`，将已返回的短别名（例如 `s1`）作为 `source_id` 参数；不要猜测来源。
+   - 历史助手回答本身不是原文证据。历史检索默认省略，应重新搜索；启用保留历史时，可以按索引读取已核实的历史原文。
+   - 大工具结果会返回 `rN` 结果句柄和 `sN` 来源索引；预览是不完整摘录，不能当作已读原文。用 `read_tool_result` 传入句柄及所需来源别名，读取完整来源后再引用；可按来源分页读取。
+3. **检查证据**：
+   - 阅读本轮已提供的来源，判断其是否包含回答所需的信息；不因第一条片段无关而忽略后续来源。
+   - 证据已支持问题时直接作答。缺少必要信息时，选择更准确的关键词继续搜索，或读取已知来源的上下文。
+   - 补充搜索时可以改写关键词或拆分问题；检索参数由服务端统一控制，不要在工具参数里调整。
+   - 不要重复相同查询或反复读取相同上下文。搜索和读取次数由服务端限制。
 4. **生成回答**：
-   - 当检索结果被系统接受，或者系统提示 "已达到最大重试次数" 时，请基于现有的所有搜索结果回答用户的问题。
+   - 基于本轮实际提供的原文证据回答；无需等待额外评分或批准。
    - 仅依据工具返回的文本证据作答；不要补充证据未明确支持的细节、单位、时间或推断。证据只支持部分答案时，说明缺少什么，不要猜测。检索片段未提供某信息时，只说明现有片段未提供，不要据此断言整份文档没有该信息。
-   - 每个依据资料作出的事实陈述旁使用对应来源的编号引用，例如 `[1]`；编号取自工具结果中的 `source_id`（与 context 中的 `Document 1` 对应）。多个来源均支持时可分别引用，例如 `[1][2]`；不要编造来源或编号。
+   - 每个依据资料作出的事实陈述旁使用对应来源的短别名引用，例如 `[s1]`；短别名取自工具结果（与 context 中的 `Document s1` 对应）。多个来源均支持时可分别引用，例如 `[s1][s2]`；不要编造来源或编号。
    - 如果多次尝试后仍无结果，请诚实告知用户。
 
 注意事项：
 - 始终使用中文回答。
 - 优先使用工具获取信息，不要编造事实。
-- 在思考过程中，请明确输出你的决策逻辑 (例如 "Thinking: 收到重试提示，尝试改写关键词为...")。
+- 需要更多证据时选择下一项搜索或读取操作。
 - **重要**：最终回答用户时，**不要**包含 "Thinking: ..." 这样的思考过程块。只输出最终的回答内容。思考过程仅用于中间步骤。""")
         
-        messages = state["messages"]
+        messages = history_as_sent(state["messages"], original_query=state.get('original_query'),
+            retain_retrieval_history=state.get('retain_retrieval_history', False))
         if state.get('retrieval_query') and not state.get('retrieval_attempt_count'):
             system_msg = SystemMessage(content=system_msg.content +
                 '\n\n本轮首轮检索使用已解析的问题：' + state['retrieval_query'] +
-                '\n最终回答仍针对用户原始问题；后续重试由现有证据评分流程决定。')
+                '\n最终回答仍针对用户原始问题；是否补充搜索或读取上下文取决于已有证据是否足够。')
         invocation_messages = [system_msg] + messages
         
         llm = self._get_llm_service(state)
@@ -678,15 +889,36 @@ class AgentWorkflow:
         from app.services.grounded_generation import _routed_chat_model, _routed_response_identity, _router_outcome
         model = _routed_chat_model(llm, self.tools)
         from app.services.grounded_generation import enforce_request_budget
-        projection_mode = os.getenv('RAG_AGENT_EVIDENCE_PROJECTION', 'OFF').strip().upper()
+        from app.services.agent_evidence_projection import VERSION, project_agent_evidence_messages, encode_agent_sources, persist_agent_tool_results
+        projection_mode = os.getenv('RAG_AGENT_EVIDENCE_PROJECTION', VERSION).strip().upper()
+        if projection_mode != 'OFF' and state.get('source_registry'):
+            invocation_messages, result_stats = await _store_io(persist_agent_tool_results, invocation_messages,
+                store=lambda: self._result_store(state.get('source_registry')),
+                canonical_context=_source_context, source_registry=state.get('source_registry'),
+                inline_chars=getattr(get_settings(), 'AGENT_TOOL_RESULT_INLINE_CHARS', 6000))
+            event('agent.tool_result_projection', **result_stats)
         if projection_mode != 'OFF':
-            from app.services.agent_evidence_projection import VERSION, project_agent_evidence_messages
             if projection_mode != VERSION:
                 raise ValueError('Unsupported Agent evidence projection mode')
             invocation_messages, projection_stats = project_agent_evidence_messages(
                 invocation_messages, canonical_context=_source_context,
+                source_registry=state.get('source_registry'),
                 tools=getattr(model, 'kwargs', {}).get('tools'))
             event('agent.evidence_projection', **projection_stats)
+        budget_messages = invocation_messages
+        invocation_messages, delivery = consolidate_agent_context(
+            invocation_messages, canonical_context=_source_context,
+            source_registry=state.get('source_registry'),
+            tools=getattr(model, 'kwargs', {}).get('tools'),
+            limit_chars=get_settings().GROUNDED_REQUEST_MAX_CHARS,
+            original_query=state.get('original_query'),
+            measure_messages=lambda rows: request_chars(
+                encode_agent_sources(rows, state.get('source_registry'))[0],
+                getattr(model, 'kwargs', {}).get('tools')))
+        state = {**state, 'model_evidence_source_ids': delivery['source_ids'], 'context_delivery': delivery}
+        event('agent.context_delivery', **delivery)
+        invocation_messages, alias_stats = encode_agent_sources(invocation_messages, state.get('source_registry'))
+        event('agent.source_alias_encode', **alias_stats)
         enforce_request_budget(invocation_messages, getattr(model, 'kwargs', {}).get('tools'))
         
         _observe_model_request("agent", invocation_messages, llm.model, provider_model=model)
@@ -711,7 +943,9 @@ class AgentWorkflow:
             from app.services.grounded_generation import _reference_range_quality, _role_service
             from app.services.model_router import decide_escalation
             try:
-                quality_status = _reference_range_quality(response.content, len(state.get('source_registry') or state['citations']))
+                numeric_content, _ = restore_known_source_aliases(
+                    response.content, state.get('source_registry'), state.get('model_evidence_source_ids'))
+                quality_status = _reference_range_quality(numeric_content, len(state.get('source_registry') or state['citations']))
             except Exception:
                 quality_status = 'UNKNOWN'
             escalation = decide_escalation(route, completion_status='COMPLETED', quality_status=quality_status,
@@ -722,8 +956,22 @@ class AgentWorkflow:
                       model=escalation.selected_model, retry_count=1, cost={'status': 'UNKNOWN'})
                 upgraded = _role_service('EXPENSIVE', escalation.selected_model)
                 upgraded_model = _routed_chat_model(upgraded, self.tools)
+                invocation_messages, delivery = consolidate_agent_context(
+                    budget_messages, canonical_context=_source_context,
+                    source_registry=state.get('source_registry'),
+                    tools=getattr(upgraded_model, 'kwargs', {}).get('tools'),
+                    limit_chars=get_settings().GROUNDED_REQUEST_MAX_CHARS,
+                    original_query=state.get('original_query'),
+                    measure_messages=lambda rows: request_chars(
+                        encode_agent_sources(rows, state.get('source_registry'))[0],
+                        getattr(upgraded_model, 'kwargs', {}).get('tools')))
+                state = {**state, 'model_evidence_source_ids': delivery['source_ids'], 'context_delivery': delivery}
+                event('agent.context_delivery', **delivery)
+                invocation_messages, alias_stats = encode_agent_sources(invocation_messages, state.get('source_registry'))
+                event('agent.source_alias_encode', **alias_stats)
                 event('memory.delivery', stage='agent_tool_and_answer',
                       preference_policy_applied=bool(state.get('preference_policy') and answer_possible))
+                enforce_request_budget(invocation_messages, getattr(upgraded_model, 'kwargs', {}).get('tools'))
                 _observe_model_request('agent', invocation_messages, upgraded.model, provider_model=upgraded_model)
                 try:
                     response = await invoke_provider_model(upgraded_model, invocation_messages, config=config,
@@ -776,10 +1024,28 @@ class AgentWorkflow:
                     "content": f"调用工具: {function_name}"
                 })
         
-        result = {"messages": [response], "agent_steps": steps, 'model_usage_records': usage_records}
+        result = {**{k: v for k, v in history_update.items() if k != 'messages'},
+                  "messages": [*history_messages, response], "agent_steps": steps,
+                  'model_usage_records': usage_records,
+                  'model_evidence_source_ids': delivery['source_ids'], 'context_delivery': delivery}
+        if delivery['omitted_source_ids']:
+            result['expansion_delivery_status'] = 'PARTIAL'
         if escalation_used:
             result['router_escalations_used'] = escalation_used
         if not response.tool_calls:
+            # Tool binding permits a plain first draft. A QA draft without any
+            # evidence must enter retrieval, rather than be replaced by UNKNOWN
+            # or trigger a second identical model invocation.
+            if (not state.get('source_registry') and not state.get('citations')
+                    and not state.get('retrieval_attempt_count') and state.get('kb_ids')):
+                response.content = ''
+                response.tool_calls = [{'name': 'search_knowledge_base',
+                    'id': 'workflow_' + uuid.uuid4().hex,
+                    'args': {'query': state.get('retrieval_query') or state.get('original_query', '')}}]
+                response.additional_kwargs['execution_origin'] = 'workflow_direct_retrieval'
+                event('agent.first_retrieval', action='NO_EVIDENCE_DRAFT_RETRIEVAL',
+                      origin='workflow_direct_retrieval')
+                return result
             result.update(_answer_generation_metadata(response))
             result["citations"], result["answer_mode"] = _finalize_knowledge_answer(state, response, include_mode=True)
             result['validation_status'] = 'NOT_RUN'
@@ -797,10 +1063,65 @@ class AgentWorkflow:
         tool_outputs = []
         registry = [dict(c) for c in state.get('source_registry', [])]
         executed = list(state.get('executed_retrieval_requests', []))
+        context_reads = list(state.get('executed_context_reads', []))
+        result_reads = list(state.get('executed_tool_result_reads', []))
         blocked = False
         attempt_count = state.get("retrieval_attempt_count", 0)
         last_attempt_id = state.get("retrieval_attempt_id")
         for tool_call in last_message.tool_calls:
+            if tool_call['name'] == 'read_tool_result':
+                args = tool_call.get('args') or {}
+                key = json.dumps([args.get('result_handle'), args.get('source_ids'),
+                    args.get('offset', 0), args.get('limit', 3)], sort_keys=True)
+                data = {'retrieval_status': 'UNKNOWN', 'context': '', 'citations': [],
+                        'source_ids': [], 'execution_status': 'SAVED_RESULT_UNAVAILABLE'}
+                requested_sources = [resolve_source_alias(alias, registry)
+                    for alias in (args.get('source_ids') or [])] if isinstance(args.get('source_ids'), list) else []
+                delivered_ids = set(state.get('model_evidence_source_ids') or [])
+                already_delivered = bool(requested_sources) and all(
+                    source is not None and source.get('source_id') in delivered_ids for source in requested_sources)
+                if (key in result_reads and already_delivered) or len(result_reads) >= 6:
+                    data['execution_status'] = 'TOOL_RESULT_READ_LIMIT'
+                    blocked = True
+                else:
+                    result_reads.append(key)
+                    store = self._result_store(registry)
+                    if store is not None:
+                        try:
+                            data = await _store_io(store.read, args.get('result_handle'), args.get('source_ids'),
+                                offset=args.get('offset', 0), limit=args.get('limit', 3))
+                            data['source_mapping_status'] = 'VERIFIED'
+                        except (OSError, ValueError, TypeError, KeyError):
+                            event('agent.tool_result_read', status='UNAVAILABLE')
+                tool_outputs.append(ToolMessage(content=json.dumps(data, ensure_ascii=False),
+                    name='read_tool_result', tool_call_id=tool_call['id']))
+                continue
+            if tool_call['name'] == 'read_knowledge_context':
+                args = tool_call.get('args') or {}
+                source = resolve_source_alias(args.get('source_id'), registry)
+                window = args.get('window', 1)
+                key = json.dumps([source.get('chunk_id') if source else None, window])
+                data = {'retrieval_status': 'NO_RESULTS', 'context': '', 'citations': [],
+                        'execution_status': 'SOURCE_NOT_AVAILABLE'}
+                if source and type(window) is int and 0 <= window <= 2:
+                    if key in context_reads or len(context_reads) >= 6:
+                        blocked = True
+                        data.update(retrieval_status='UNKNOWN', execution_status='CONTEXT_READ_LIMIT')
+                    else:
+                        context_reads.append(key)
+                        try:
+                            from app.tools.read_knowledge_context import read_registered_context
+                            data = json.loads(await read_registered_context(
+                                source, state.get('kb_ids') or [], window=window))
+                        except Exception as error:
+                            if is_unknown_provider_error(error):
+                                raise
+                            event('agent.context_read_failed', error_type=type(error).__name__)
+                            data = {'retrieval_status': 'RETRIEVAL_ERROR', 'context': '', 'citations': []}
+                data = _register_sources(data, registry)
+                tool_outputs.append(ToolMessage(content=json.dumps(data, ensure_ascii=False),
+                    name='read_knowledge_context', tool_call_id=tool_call['id']))
+                continue
             if tool_call["name"] == "search_knowledge_base":
                 # Only the server state determines scope and requested settings. The
                 # model may choose the query, but cannot override supplied settings.
@@ -815,7 +1136,7 @@ class AgentWorkflow:
                 )
                 query = (state.get('retrieval_query') if attempt_count == 1
                          and state.get('retrieval_query') else agent_args.get('query'))
-                final_args = {"query": query, "kb_ids": state.get("kb_ids", [])}
+                final_args = {"query": query, "kb_ids": state.get("kb_ids", []), 'expand_evidence': False}
                 if state.get("original_query"):
                     final_args["original_query"] = state["original_query"]
                 for name in parameter_names:
@@ -926,7 +1247,9 @@ class AgentWorkflow:
         
         return {"messages": tool_outputs, "retrieval_attempt_id": last_attempt_id,
                 "retrieval_attempt_count": attempt_count, 'source_registry': registry,
-                'executed_retrieval_requests': executed, 'retrieval_blocked': blocked}
+                'executed_retrieval_requests': executed, 'retrieval_blocked': blocked,
+                'executed_context_reads': context_reads,
+                'executed_tool_result_reads': result_reads}
 
     def should_continue(self, state: AgentState):
         """决定是继续调用工具还是结束"""
@@ -943,13 +1266,13 @@ class AgentWorkflow:
     @observe("agent.process_tool_output")
     async def process_tool_output(self, state: AgentState):
         """处理工具输出，解析 JSON，记录 Observation"""
-        # Only this tool round enters the grader. The answer registry remains
-        # cumulative, while the grading scope stays bounded and explicit.
+        # Parse this round's tool results. The answer registry remains cumulative;
+        # the production graph has no independent prefix-only relevance grader.
         batch = []
         for message in reversed(state["messages"]):
             if not isinstance(message, ToolMessage):
                 break
-            if message.name == 'search_knowledge_base':
+            if message.name in EVIDENCE_TOOLS:
                 batch.append(message)
         if not batch:
             return {}
@@ -965,7 +1288,7 @@ class AgentWorkflow:
                 degraded = degraded or data.get('degraded') is True
                 fallback_used = fallback_used or data.get('fallback_used') is True
                 status = data.get('retrieval_status', 'UNKNOWN')
-                statuses.append(status if status in {'SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE', 'RETRIEVAL_ERROR', 'UNKNOWN'} else 'UNKNOWN')
+                statuses.append(status if status in {'SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE', 'RETRIEVAL_ERROR', 'UNKNOWN', 'PARTIAL'} else 'UNKNOWN')
                 contexts.append(data.get('context', ''))
                 mappings.append(data.get('source_mapping_status', 'UNKNOWN'))
                 expansions.append(data.get('expansion_delivery_status', 'UNKNOWN'))
@@ -976,12 +1299,16 @@ class AgentWorkflow:
                 statuses.append('UNKNOWN')
         status = ('RETRIEVAL_ERROR' if 'RETRIEVAL_ERROR' in statuses else
                   'UNKNOWN' if 'UNKNOWN' in statuses else
+                  'PARTIAL' if 'PARTIAL' in statuses and citations else
+                  'UNKNOWN' if 'PARTIAL' in statuses else
                   'LOW_RELEVANCE' if 'LOW_RELEVANCE' in statuses else
                   'SUCCESS' if citations else 'NO_RESULTS')
         if status == 'NO_RESULTS' and degraded:
             status = 'UNKNOWN'
         context = '\n\n'.join(c for c in contexts if isinstance(c, str))
         return {'citations': citations, 'rag_context': context,
+                'last_score': None, 'grading_status': 'NOT_RUN', 'grading_scope': {},
+                'retrieval_retry_scheduled': False,
                 'retrieval_status': status,
                 'degraded': degraded, 'fallback_used': fallback_used,
                 'source_mapping_status': 'UNKNOWN' if 'UNKNOWN' in mappings else 'VERIFIED',
@@ -991,7 +1318,11 @@ class AgentWorkflow:
 
     @observe("agent.grade_documents")
     async def grade_documents(self, state: AgentState, config: RunnableConfig):
-        """文档评分节点，处理重试逻辑"""
+        """Legacy offline compatibility only; never invoked by the production graph.
+
+        Retain historical scoring contracts for direct offline diagnostics. The
+        Agent now decides evidence sufficiency from the delivered sources.
+        """
         citations = state.get("citations", [])
         quality_fallback = False
         score_raw = None
@@ -1081,7 +1412,7 @@ class AgentWorkflow:
                          'context_chars_examined': len(examined),
                          'context_chars_total': len(context), 'context_clipped': len(context) > 2000,
                          'scope': 'CURRENT_TOOL_ROUND_PREFIX', 'max_chars': 2000}
-        if quality_fallback or state.get('retrieval_status') in ('UNKNOWN', 'RETRIEVAL_ERROR'):
+        if quality_fallback or state.get('retrieval_status') in ('UNKNOWN', 'RETRIEVAL_ERROR', 'PARTIAL'):
             event('agent.retry_decision', action='NOT_SCHEDULED', reason_code='QUALITY_OR_RETRIEVAL_UNKNOWN')
             return {'last_score': None, 'grading_status': 'UNKNOWN', 'retrieval_retry_scheduled': False,
                     'grading_scope': grading_scope, 'agent_steps': steps}

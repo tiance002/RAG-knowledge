@@ -158,7 +158,7 @@ class RecallRequest(BaseModel):
     vector_weight: float = Field(default=0.7, ge=0.0, le=1.0)
     bm25_weight: float = Field(default=0.3, ge=0.0, le=1.0)
     rerank_top_k: int = Field(default=20, ge=5, le=50)
-    context_window: int = Field(default=1, ge=0, le=5, description="上下文窗口大小 (0=不扩展)")
+    context_window: int = Field(default=1, ge=0, le=5, description="相邻子块窗口大小（0=不扩展邻块；父块上下文仍按父子映射处理）")
 
 
 class RecallResult(BaseModel):
@@ -166,6 +166,11 @@ class RecallResult(BaseModel):
     chunkId: Optional[str] = None
     seed_child_ids: List[str] = Field(default_factory=list)
     parent_chunk_id: Optional[str] = None
+    context_group_id: Optional[str] = None
+    representative_child_id: Optional[str] = None
+    score_child_id: Optional[str] = None
+    hit_children: List[dict] = Field(default_factory=list)
+    citation_sources: List[dict] = Field(default_factory=list)
     context_group: Optional[dict] = None
     score_origin: Optional[str] = None
     source_mapping_status: Optional[str] = None
@@ -195,6 +200,7 @@ class RecallTestResponse(BaseModel):
     query_time: float
     retrieval_status: Optional[str] = None
     expansion_delivery_status: Optional[str] = None
+    evaluation: Optional[dict] = None
 
 
 # ==================== 对话 ====================

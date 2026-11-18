@@ -18,44 +18,55 @@ from app.schemas import (
     ApiResponse,
 )
 from app.services.chat import ChatService
-from app.services.llm import LLMService
+from app.services.llm import LLMService, close_quietly
 from app.services.memory import get_preference_scope, PreferenceScope
+from app.services.request_admission import acquire_request, AdmittedStreamingResponse
 
 router = APIRouter(tags=["Chat"])
 
 
 @router.post("/chat/rewrite", response_model=ApiResponse[RewriteResponse])
-async def rewrite_query(data: RewriteRequest, session: Session = Depends(get_session)):
+async def rewrite_query(data: RewriteRequest, request: Request, session: Session = Depends(get_session)):
     """问题改写"""
+    lease = await acquire_request(request)
+    llm_service = None
     try:
-        from app.services.model_bindings import resolve_model
-        from app.services.runtime_settings import get_runtime_settings
-        snapshot = get_runtime_settings(session)
-        selected_id = data.model_id if data.model_id is not None else snapshot.default_llm_model
-        binding = resolve_model(session, 'chat', selected_id, use_default=False)
-        llm_service = LLMService(base_url=binding.base_url, api_key=binding.api_key,
-                                 model=binding.model_name)
-        llm_service.history_rounds = snapshot.max_chat_history_rounds
-        understanding = await llm_service.understand_query(
-            data.query,
-            history=[{"role": msg.role.value, "content": msg.content} for msg in data.history],
-            images=data.images,
-        )
-        return ApiResponse(data=RewriteResponse(
-            rewritten_query=understanding.get('rewrite_query') or data.query,
-            intent=understanding.get('intent') or None,
-            image_description=understanding.get('image_description') or None,
-        ))
-    except Exception as e:
-        from app.services.model_bindings import ModelBindingError
-        from app.services.runtime_settings import RuntimeSettingsUnavailable, SettingsConflict
-        from app.services.llm import provider_error_payload
-        if isinstance(e, ModelBindingError):
-            raise HTTPException(status_code=400, detail={'code': 'MODEL_BINDING_INVALID', 'message': str(e)}) from e
-        if isinstance(e, (RuntimeSettingsUnavailable, SettingsConflict)):
-            raise HTTPException(status_code=503, detail={'code': 'SETTINGS_UNAVAILABLE', 'message': '系统设置暂不可用，请先检查设置后再试'}) from e
-        raise HTTPException(status_code=502, detail=provider_error_payload(e, stage='rewrite')) from e
+        try:
+            from app.services.model_bindings import resolve_model
+            from app.services.runtime_settings import get_runtime_settings
+            snapshot = get_runtime_settings(session)
+            selected_id = data.model_id if data.model_id is not None else snapshot.default_llm_model
+            binding = resolve_model(session, 'chat', selected_id, use_default=False)
+            llm_service = LLMService(base_url=binding.base_url, api_key=binding.api_key,
+                                     model=binding.model_name)
+            llm_service.history_rounds = snapshot.max_chat_history_rounds
+            understanding = await llm_service.understand_query(
+                data.query,
+                history=[{"role": msg.role.value, "content": msg.content} for msg in data.history],
+                images=data.images,
+            )
+            return ApiResponse(data=RewriteResponse(
+                rewritten_query=understanding.get('rewrite_query') or data.query,
+                intent=understanding.get('intent') or None,
+                image_description=understanding.get('image_description') or None,
+            ))
+        except Exception as e:
+            from app.services.model_bindings import ModelBindingError
+            from app.services.runtime_settings import RuntimeSettingsUnavailable, SettingsConflict
+            from app.services.llm import provider_error_payload
+            if isinstance(e, ModelBindingError):
+                raise HTTPException(status_code=400, detail={'code': 'MODEL_BINDING_INVALID', 'message': str(e)}) from e
+            if isinstance(e, (RuntimeSettingsUnavailable, SettingsConflict)):
+                raise HTTPException(status_code=503, detail={'code': 'SETTINGS_UNAVAILABLE', 'message': '系统设置暂不可用，请先检查设置后再试'}) from e
+            raise HTTPException(status_code=502, detail=provider_error_payload(e, stage='rewrite')) from e
 
+    finally:
+        try:
+            close = getattr(llm_service, 'aclose', None)
+            if close is not None:
+                await close_quietly(close)
+        finally:
+            lease.release()
 
 @router.post("/chat/completions")
 async def chat_completions(
@@ -73,6 +84,8 @@ async def chat_completions(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": 40401, "message": f"知识库不存在: {kb_id}"},
             )
+
+    lease = await acquire_request(request)
 
     async def generate_sse() -> AsyncGenerator[str, None]:
         """生成 SSE 事件流"""
@@ -124,7 +137,12 @@ async def chat_completions(
             yield f"event: error\n"
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
         finally:
-            await stream.aclose()
+            try:
+                await close_quietly(stream.aclose)
+            finally:
+                close = getattr(chat_service, 'aclose', None)
+                if close is not None:
+                    await close_quietly(close)
 
     async def identified_sse():
         # Explicitly enabled on an evaluation API only. These headers correlate
@@ -147,10 +165,11 @@ async def chat_completions(
             with capture_scope(**identity) if identity else nullcontext():
                 await inner.aclose()
 
-    return StreamingResponse(
-        identified_sse(),
+    return AdmittedStreamingResponse(
+        identified_sse(), lease=lease,
         media_type="text/event-stream",
         headers={
+            "X-Chat-Admission-Wait-Ms": str(round(lease.wait_seconds * 1000, 2)),
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",

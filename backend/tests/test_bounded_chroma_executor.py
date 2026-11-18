@@ -208,6 +208,12 @@ def test_retrieval_sql_session_and_embedding_stay_on_owner_scope_and_results_mat
             FileDocument(id='foreign-file', kb_id='other', name='foreign.txt', local_path='synthetic', size=0)])
         db.add_all([DocumentChunk(id=ident, file_id=file_id, content='SQL evidence '+ident) for ident, file_id in
                     [('seed','legacy'),('active','live'),('retired','old'),('deleted','deleted-file'),('foreign','foreign-file')]])
+        from app.models import FileIndexBuild
+        import hashlib
+        raw = json.dumps({'chunk_ids': ['active'], 'vector_ids': ['active']})
+        db.add(FileIndexBuild(build_id='build-live', file_id='live', kb_id='kb',
+            generation=1, task_id='fixture', attempt_no=1, state='ACTIVE',
+            manifest=raw, manifest_hash=hashlib.sha256(raw.encode()).hexdigest(), chunk_count=1))
         db.commit()
         async def request():
             if mode == 'vector': return await service._vector_search(db, 'q', ['kb'], 5, 0)

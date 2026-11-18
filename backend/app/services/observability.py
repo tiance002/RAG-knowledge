@@ -164,7 +164,7 @@ def sanitize(value, key='', *, final_export=False):
         return value
     if key == 'generation_status' and value in ('NOT_RUN', 'TRUNCATED', 'EMPTY', 'COMPLETED', 'UNKNOWN'):
         return value
-    if key == 'retrieval_status' and value in ('SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE', 'RETRIEVAL_ERROR', 'UNKNOWN'):
+    if key == 'retrieval_status' and value in ('SUCCESS', 'NO_RESULTS', 'LOW_RELEVANCE', 'RETRIEVAL_ERROR', 'UNKNOWN', 'PARTIAL'):
         return value
     safe = ('id', 'qid', 'sha256', 'hash', 'version', 'status', 'outcome', 'mode', 'type', 'reason', 'stage', 'name', 'model', 'finish_reason', 'verdict', 'method', 'format', 'role',
             'operation', 'reason_code', 'rule_version', 'score_kind', 'sort_key', 'input_kind',
@@ -607,12 +607,16 @@ def candidates(name, rows, **metadata):
             identifier = row.get('id', row.get('chunk_id'))
             score_kind = kinds.get(name, metadata.get('score_kind'))
             fallback_origin = ((_current.get() or {}).get('_native_fallback_ids') or {}).get(identifier) if native_enabled() and score_kind == 'rerank' else None
+            if row.get('composite_score') is not None and name in ('rerank.batch_output', 'rerank.filtered', 'rerank.selected'):
+                score_kind = 'composite'
             if fallback_origin:
                 score_kind = 'original_retrieval'
             evidence.append({k: v for k, v in {
                 'rank': rank, 'id': identifier, 'evidence_id': identifier, 'chunk_id': identifier,
                 'source_type': row.get('source_type') or ('indexed_chunk' if identifier else 'other'),
-                'score_kind': score_kind, 'score_value': row.get('rerank_score') if score_kind == 'rerank' else row.get('score'),
+                'score_kind': score_kind, 'score_value': row.get('composite_score') if score_kind == 'composite' else row.get('rerank_score') if score_kind == 'rerank' else row.get('score'),
+                'composite_score': row.get('composite_score'), 'retrieval_base_score': row.get('retrieval_base_score'),
+                'composite_score_status': row.get('composite_score_status'), 'source_weight': row.get('source_weight'),
                 'file_id': row.get('file_id'), 'page_number': row.get('page_number'),
                 'score': row.get('score'), 'vector_score': row.get('vector_score'),
                 'bm25_score': row.get('bm25_score'), 'rerank_score': None if fallback_origin else row.get('rerank_score'),

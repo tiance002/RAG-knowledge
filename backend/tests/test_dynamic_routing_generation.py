@@ -60,6 +60,8 @@ def test_actual_router_cheap_only_selects_role_without_retry(monkeypatch):
 def test_actual_dynamic_router_quality_failure_escalates_once(monkeypatch):
     monkeypatch.setenv('RAG_MODEL_ROUTER_MODE', 'DYNAMIC')
     monkeypatch.setenv('RAG_MODEL_ROUTER_UNKNOWN_POLICY', 'CHEAP')
+    monkeypatch.setenv('RAG_MODEL_ROUTER_SELECTION_POLICY', 'WEIGHTED_V1')
+    monkeypatch.setenv('RAG_MODEL_ROUTER_ESCALATE_ON_QUALITY_FAIL', 'true')
     monkeypatch.setenv('RAG_ROUTER_ALLOW_MODEL_CALLS', 'true')
     baseline, _ = service()
     cheap, cheap_call = service('Qwen/Qwen3.5-4B')
@@ -82,6 +84,8 @@ def test_actual_dynamic_router_quality_failure_escalates_once(monkeypatch):
 def test_opt_in_reference_range_escalates_only_invalid_numbers(monkeypatch, setting, answer, expected):
     monkeypatch.setenv('RAG_MODEL_ROUTER_MODE', 'DYNAMIC')
     monkeypatch.setenv('RAG_MODEL_ROUTER_UNKNOWN_POLICY', 'CHEAP')
+    monkeypatch.setenv('RAG_MODEL_ROUTER_SELECTION_POLICY', 'WEIGHTED_V1')
+    monkeypatch.setenv('RAG_MODEL_ROUTER_ESCALATE_ON_QUALITY_FAIL', 'true')
     monkeypatch.setenv('RAG_ROUTER_ALLOW_MODEL_CALLS', 'true')
     monkeypatch.setenv('RAG_ROUTER_QUALITY_CHECK', setting)
     baseline, _ = service()

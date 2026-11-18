@@ -146,6 +146,7 @@ def test_image_only_never_generates_or_uses_caption(monkeypatch, content):
 def test_spreadsheet_prepared_before_single_generation_and_provenance(monkeypatch):
     from app.services import spreadsheet_grounding
     proof = {'sheet': 'T01', 'row': 11, 'label_col': 1, 'value_col': 2,
+             'title': 'Public libraries', 'source': 'verified table.xlsx T01 row 11',
              'source_sha256': 'a' * 64, 'label': 'Example', 'value': 12,
              'fiscal_year': '2020', 'headers': [(5, 2, 'Number'), (6, 2, 'of public'), (7, 2, 'libraries1')],
              'footnotes': {'1': {'text': '1Administrative entities.', 'row': 12, 'column': 1}},

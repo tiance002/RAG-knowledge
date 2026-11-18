@@ -3,7 +3,7 @@
 """
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import event
+from sqlalchemy import event, Index
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -83,6 +83,9 @@ class FileDocument(SQLModel, table=True):
 class DocumentChunk(SQLModel, table=True):
     """文档切分块模型"""
     __tablename__ = "document_chunks"
+    __table_args__ = (
+        Index("ix_document_chunks_bm25_scope", "id", "file_id", "chunk_type"),
+    )
 
     id: str = Field(default_factory=generate_uuid, primary_key=True)
     file_id: str = Field(foreign_key="file_documents.id", index=True)
@@ -152,6 +155,9 @@ class CustomModel(SQLModel, table=True):
 class ChunkIndex(SQLModel, table=True):
     """每块的词频与长度；也是倒排表的迁移来源。"""
     __tablename__ = "chunk_index"
+    __table_args__ = (
+        Index("ix_chunk_index_bm25_live", "kb_id", "chunk_id", "doc_length", "id"),
+    )
 
     id: str = Field(default_factory=generate_uuid, primary_key=True)
     chunk_id: str = Field(foreign_key="document_chunks.id", index=True)
@@ -186,7 +192,10 @@ class IndexStats(SQLModel, table=True):
     kb_id: str = Field(primary_key=True)
     total_docs: int = Field(default=0)  # 总文档数
     avg_doc_length: float = Field(default=0.0)  # 平均文档长度
-    term_doc_freq: str = Field(default="{}")  # JSON: {"term1": df1, "term2": df2, ...} 文档频率
+    # Historical compatibility snapshot, not maintained by current writers.
+    # Query DF comes from BM25Posting. New business code must not depend on this
+    # JSON; rebuild it from postings before rolling back to legacy writers.
+    term_doc_freq: str = Field(default="{}")
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 

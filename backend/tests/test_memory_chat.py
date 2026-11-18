@@ -309,7 +309,9 @@ def test_real_agent_graph_reuses_snapshot_and_keeps_tool_grade_inputs(monkeypatc
             return [event async for event in service.chat_stream([Message(role=MessageRole.USER, content='Redis实现细节是什么？')], kb_ids=['kb'], mode='agent')]
         events = run(request())
         assert events[-1][0] == 'done' and not any(kind == 'error' for kind,_ in events)
-        assert len(tool_inputs) == 2 and counters == {'agent':3, 'quality':2}
+        # Production graph no longer invokes legacy grade_documents; retain
+        # the two real tool rounds and verify no hidden quality-model calls.
+        assert len(tool_inputs) == 2 and counters == {'agent':3, 'quality':0}
         all_runs.append((calls, tool_inputs))
     assert store.get_preferences.await_count == 2  # one read per entire graph request
     assert all_runs[0][1] == all_runs[1][1]
@@ -317,9 +319,9 @@ def test_real_agent_graph_reuses_snapshot_and_keeps_tool_grade_inputs(monkeypatc
         assert [rows for name,rows in all_runs[0][0] if name == stage] == [rows for name,rows in all_runs[1][0] if name == stage]
     preferred_agent_calls = [rows for name,rows in all_runs[0][0] if name == 'agent']
     assert len(preferred_agent_calls) == 3
-    # Forced initial retrieval and mandatory retry receive no display segment;
-    # the same request-level policy is retained for final composition.
-    assert [any(row['type'] == 'system' and '回答表达偏好' in row['content'] for row in rows) for rows in preferred_agent_calls] == [False, False, True]
+    # Only forced initial retrieval omits the display segment. Later model-led
+    # tool decisions/composition retain it; no grade-driven retry is scheduled.
+    assert [any(row['type'] == 'system' and '回答表达偏好' in row['content'] for row in rows) for rows in preferred_agent_calls] == [False, True, True]
 
 
 @pytest.mark.parametrize('mode', ['chat', 'agent'])

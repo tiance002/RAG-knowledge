@@ -244,7 +244,8 @@ def test_capability_failure_preserves_hybrid_bm25_fallback_and_diagnostic(monkey
     service.vector_store=SimpleNamespace(query_async=AsyncMock(side_effect=executor.ChromaExecutorCapabilityError('UNSUPPORTED_CHROMA_HTTP_TIMEOUT_ADAPTER_VERSION')))
     service._embed_query_for_kb=AsyncMock(return_value=[1.])
     service._vector_scope=lambda session,kb: (['allowed'], ['live'])
-    service._expanded_bm25_results=lambda *args, **kwargs: ([{'id':'c1','chunk_id':'c1','kb_id':'kb','bm25_score':1.}], {'expansion_failed':False})
+    service.bm25_index=SimpleNamespace(search=lambda **kwargs: [{'chunk_id':'c1','bm25_score':1.}])
+    service._authorized_route_rows=lambda session,rows,kb: rows
     service._enrich_results=lambda session,rows,kb: rows
     service._log_retrieval=lambda *args: None
     async def run():

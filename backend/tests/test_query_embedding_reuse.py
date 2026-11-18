@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 import json
+import hashlib
 import math
 import threading
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlalchemy.pool import StaticPool
 
-from app.models import CustomModel, DocumentChunk, FileDocument, KnowledgeBase, ModelType
+from app.models import CustomModel, DocumentChunk, FileDocument, FileIndexBuild, KnowledgeBase, ModelType
 from app.services import embedding, llm, retrieval
 from app.services.bm25 import BM25Index
 from app.services.model_bindings import ModelBinding, ModelBindingError
@@ -65,8 +66,13 @@ def fixture_db():
             model_name='public-embedding', context_length=4096) for ident in ('m1', 'm2')])
         for kb in ('a', 'b', 'outside'):
             db.add(KnowledgeBase(id=kb, name='KB '+kb, embedding_model='m1', vlm_model=''))
-            db.add(FileDocument(id='file-'+kb, kb_id=kb, name=kb+'.txt', local_path='public-fixture', size=0))
+            db.add(FileDocument(id='file-'+kb, kb_id=kb, name=kb+'.txt', local_path='public-fixture', size=0,
+                                active_build_id='build-'+kb))
             db.add(DocumentChunk(id='chunk-'+kb, file_id='file-'+kb, content='public evidence '+kb))
+            raw = json.dumps({'chunk_ids': ['chunk-'+kb], 'vector_ids': ['chunk-'+kb], 'dimension': 3})
+            db.add(FileIndexBuild(build_id='build-'+kb, file_id='file-'+kb, kb_id=kb,
+                generation=1, task_id='fixture', attempt_no=1, state='ACTIVE', manifest=raw,
+                manifest_hash=hashlib.sha256(raw.encode()).hexdigest(), chunk_count=1))
         db.commit()
         for kb in ('a', 'b', 'outside'):
             index.index_chunk(db, 'chunk-'+kb, 'public evidence '+kb, kb)
@@ -134,8 +140,9 @@ def test_actual_mocktransport_two_vs_one_posts_preserves_vectors_scopes_evidence
     assert wire.records == [expected_wire]
     assert calls == old_calls
     assert [row['kb_id'] for row in calls] == ['a', 'b']
-    assert [row['allowed_ids'] for row in calls] == [['chunk-a'], ['chunk-b']]
-    assert all(row['query_vector'] == VECTOR and row['allowed_build_ids'] == [] for row in calls)
+    assert [row['allowed_ids'] for row in calls] == [[], []]
+    assert [row['allowed_build_ids'] for row in calls] == [['build-a'], ['build-b']]
+    assert all(row['query_vector'] == VECTOR for row in calls)
     assert actual == expected and {row['id'] for row in actual} == {'chunk-a', 'chunk-b'}
     for field in ('vector_count', 'bm25_count', 'merged_count', 'final_count', 'fallback_used', 'degraded', 'retrieval_status'):
         assert new_metrics[field] == old_metrics[field]

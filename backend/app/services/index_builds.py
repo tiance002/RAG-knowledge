@@ -23,6 +23,23 @@ from app.services.parent_child import remap_and_validate_graph
 _SQL_BATCH_SIZE = 500
 
 
+def _commit_index_transaction(session):
+    """A failed DBAPI commit must not leave dirty state on a pooled connection.
+
+    Rollback is cleanup, not evidence that a possibly dispatched commit failed
+    durably. Preserve the original exception for the task's UNKNOWN handling.
+    """
+    try:
+        session.commit()
+    except BaseException:
+        try:
+            session.rollback()
+        except BaseException as rollback_error:
+            import logging
+            logging.getLogger(__name__).error('Index rollback also failed: %s', type(rollback_error).__name__)
+        raise
+
+
 @contextmanager
 def _publication_phase(stage, **counts):
     """Content-free timings; measurement failures never change publication."""
@@ -103,6 +120,11 @@ def _write_verified_vectors(service, kb_id, documents, embeddings, vector_ids):
             write_service.validate_dimension(kb_id, embeddings[0])
             write_service.add_documents(kb_id, documents, embeddings)
         with _publication_phase('index_build_vector_verify', vector_count=len(embeddings)):
+            verify = getattr(write_service, 'verify_documents', None)
+            if callable(verify):
+                verify(kb_id, documents, embeddings, vector_ids)
+                return
+            # Legacy service substitutes retain the complete readback contract.
             actual = write_service.get_documents(kb_id, vector_ids, include=['documents', 'metadatas', 'embeddings'])
             observed = {key: (content, metadata, vector) for key, content, metadata, vector in zip(
                 actual['ids'], actual['documents'], actual['metadatas'], actual['embeddings'])}
@@ -154,7 +176,6 @@ def retire_file_builds(session, file_id):
     doc = session.get(FileDocument, file_id)
     if doc is None:
         return []
-    ids = list(session.exec(select(DocumentChunk.id).where(DocumentChunk.file_id == file_id)).all())
     retired = []
     if doc.active_build_id:
         build = session.get(FileIndexBuild, doc.active_build_id)
@@ -162,15 +183,19 @@ def retire_file_builds(session, file_id):
             build.state, build.retired_at = "RETIRED", datetime.utcnow()
             session.add(build)
             retired.append(build.build_id)
-    elif ids:
-        # Historical IDs are the actual SQL projection, never inferred from names.
-        raw, digest = _manifest({"vector_ids": ids, "legacy": True})
-        build = FileIndexBuild(build_id=str(uuid4()), file_id=file_id, kb_id=doc.kb_id,
-            generation=doc.desired_generation or 0, task_id="legacy", attempt_no=0,
-            state="RETIRED", manifest=raw, manifest_hash=digest, chunk_count=len(ids),
-            retired_at=datetime.utcnow())
-        session.add(build)
-        retired.append(build.build_id)
+    else:
+        # An active build already owns its cleanup manifest; SQL IDs are used
+        # only to repair the legacy/no-active-build cleanup record.
+        ids = list(session.exec(select(DocumentChunk.id).where(DocumentChunk.file_id == file_id)).all())
+        if ids:
+            # Historical IDs are the actual SQL projection, never inferred from names.
+            raw, digest = _manifest({"vector_ids": ids, "legacy": True})
+            build = FileIndexBuild(build_id=str(uuid4()), file_id=file_id, kb_id=doc.kb_id,
+                generation=doc.desired_generation or 0, task_id="legacy", attempt_no=0,
+                state="RETIRED", manifest=raw, manifest_hash=digest, chunk_count=len(ids),
+                retired_at=datetime.utcnow())
+            session.add(build)
+            retired.append(build.build_id)
     doc.active_build_id = None
     session.add(doc)
     return retired
@@ -248,6 +273,10 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
         kb_id, file_name, source_path = doc.kb_id, doc.name, doc.local_path
         prior_provenance = _prior_chunk_provenance(session, claim.file_id, chunks_data, rows)
         checkpoint = manifest or {}
+        from app.services.image_caption_derivatives import (
+            caption_dependencies, guard_caption_dependencies, guard_caption_artifact_identities)
+        caption_sources = caption_dependencies(doc, prior_provenance, checkpoint.get('source_sha256'), rows)
+        caption_artifacts = guard_caption_dependencies(session, doc, caption_sources)
         payload = {"vector_ids": [r["id"] for r in searchable], "chunk_ids": [r["id"] for r in rows],
                    "embedding_model": vector_model, "dimension": len(embeddings[0]) if embeddings else 0,
                    "checkpoint_ref": claim.checkpoint_ref if hasattr(claim, 'checkpoint_ref') else None,
@@ -256,12 +285,15 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
                    "embedding_sha256": hashlib.sha256(json.dumps(embeddings, separators=(',', ':'),
                        allow_nan=False).encode('utf-8')).hexdigest(),
                    "content_sha256": [hashlib.sha256(r.get('content', '').encode('utf-8')).hexdigest() for r in searchable]}
+        if caption_sources:
+            payload['image_caption_dependencies'] = caption_sources
+            payload['image_caption_source_artifacts'] = caption_artifacts
         raw, digest = _manifest(payload)
         build = FileIndexBuild(build_id=build_id, file_id=claim.file_id, kb_id=kb_id,
             generation=claim.target_generation, task_id=claim.task_id, attempt_no=claim.attempt_no,
             state="STAGING", manifest=raw, manifest_hash=digest, chunk_count=len(rows))
         session.add(build)
-        session.commit()  # ownership record precedes any external write
+        _commit_index_transaction(session)  # ownership record precedes any external write
 
     from app.services.pdf_provenance import index_provenance
     provenances = {**prior_provenance, **verified_provenance(checkpoint, rows)}
@@ -304,6 +336,8 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
         if not doc or doc.deleted_at is not None or doc.desired_generation != claim.target_generation:
             session.rollback()
             raise RuntimeError("BUILD_GENERATION_CHANGED")
+        guard_caption_dependencies(session, doc, caption_sources, verify_files=False)
+        guard_caption_artifact_identities(caption_artifacts)
         kb = session.get(KnowledgeBase, kb_id)
         if vector_model and kb and kb.embedding_model != vector_model:
             other_indexed = session.exec(select(DocumentChunk.id).join(FileDocument).where(
@@ -327,6 +361,10 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
         kb = session.get(KnowledgeBase, kb_id)
         if kb:
             session.flush()
+            # Exact current SQL projection: all chunks (including parents),
+            # only undeleted files, independent of file/index status. Other
+            # writers can leave legacy/drifting counts, so a local delta is
+            # not an authoritative replacement for this fenced recount.
             with _publication_phase('index_build_recount') as recount:
                 kb.chunk_count = session.exec(select(func.count(DocumentChunk.id)).join(FileDocument).where(
                     FileDocument.kb_id == kb_id, FileDocument.deleted_at.is_(None))).one()
@@ -340,7 +378,7 @@ def publish_index_build(claim, chunks_data, embeddings, vector_model=None, manif
             session.rollback()
             raise RuntimeError("BUILD_CLAIM_LOST")
         with _publication_phase('index_build_commit'):
-            session.commit()
+            _commit_index_transaction(session)
         publication['publication_committed'] = True
     # Retired vectors stay available for in-flight readers until the sweeper grace elapses.
     return result

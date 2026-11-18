@@ -48,14 +48,15 @@ def test_stale_writer_after_successor_or_cancel_delete(tmp_path, monkeypatch, re
     old = dispatch.claim_task('task', 'index', 'old-worker')
     assert old and old.attempt_no == 1
     written, release = threading.Event(), threading.Event()
-    original_add = VectorStoreService.add_documents
+    # Observe the actual SDK write used by operation-scoped publication too.
+    original_add = VectorStoreService._ingest_add
     def blocked_add(self, *args, **kwargs):
         original_add(self, *args, **kwargs)
         if threading.current_thread().name == 'stale-publisher':
             written.set()
             if not release.wait(timeout=20):
                 raise RuntimeError('TEST_BARRIER_TIMEOUT')
-    monkeypatch.setattr(VectorStoreService, 'add_documents', blocked_add)
+    monkeypatch.setattr(VectorStoreService, '_ingest_add', blocked_add)
     failures = []
     def stale_run():
         try:

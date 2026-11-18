@@ -25,6 +25,9 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    from app.services.bm25 import require_jieba
+    tokenizer = require_jieba()  # Fail before directory/schema writes if deployment is incomplete.
+    print(f"[BM25] analyzer=jieba version={tokenizer.__version__} automatic_fallback=disabled")
     # 启动时执行
     ensure_directories()
     init_db()
@@ -47,10 +50,12 @@ async def lifespan(app: FastAPI):
 
     from app.services.provider_http import managed_provider_http
     from app.services.bounded_chroma_executor import managed_chroma_executor
+    from app.services.bounded_lexical_executor import managed_lexical_executor
     try:
         async with managed_provider_http(preinitialize=True):
             async with managed_chroma_executor():
-                yield
+                async with managed_lexical_executor():
+                    yield
     finally:
         # Drain after requests and their outer spans have closed. The SDK does
         # not guarantee an overall timeout for this flush.

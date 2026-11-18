@@ -269,7 +269,7 @@ def test_sdk_stream_cancel_releases_managed_provider_slot(monkeypatch, tmp_path,
     monkeypatch.setenv('RAG_TRACE_SCHEMA', 'e12')
     monkeypatch.setenv('RAG_OBSERVATION_LOG', str(tmp_path / 'events'))
     monkeypatch.setattr(observability, '_sdk', lambda: None)
-    monkeypatch.setattr(provider_http, '_MAX_IN_FLIGHT', 1)
+    monkeypatch.setenv('RAG_PROVIDER_MAX_IN_FLIGHT', '1')
     closed = []
     class ProviderStream(httpx.AsyncByteStream):
         async def __aiter__(self):
@@ -284,7 +284,8 @@ def test_sdk_stream_cancel_releases_managed_provider_slot(monkeypatch, tmp_path,
     async def run():
         async with provider_http.managed_provider_http() as manager:
             inner = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-            key = ('https://example.invalid/v1', hashlib.sha256(b'fake').digest(), 60.0, True, False)
+            # Match the real SDK's phase-aware 120s transport pool identity.
+            key = provider_http._pool_key('https://example.invalid/v1', 'fake', 120.0, True, False)
             manager.clients[key] = inner
             llm = LLMService(base_url='https://example.invalid/v1', api_key='fake', model='synthetic')
             service = make_service(llm)

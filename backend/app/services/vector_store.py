@@ -6,8 +6,13 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from typing import List, Dict, Any, Optional
 import functools
+import hashlib
+import heapq
+import json
 import importlib.metadata
+import math
 import threading
+import time
 
 import httpx
 
@@ -17,6 +22,16 @@ from app.services.performance_timing import timed_stage
 settings = get_settings()
 
 
+def _chroma_stage(stage, started, status):
+    # Content-free telemetry must never replace the original result/exception.
+    try:
+        print("CHROMA_STAGE " + json.dumps(dict(stage=stage,
+            wall_ms=(time.perf_counter() - started) * 1000, status=status),
+            sort_keys=True), flush=True)
+    except Exception:
+        pass
+
+
 def _ingest_counts(operation, **counts):
     """Content-free companion counters for the existing synchronous timings."""
     try:
@@ -24,6 +39,24 @@ def _ingest_counts(operation, **counts):
         event('ingestion.chroma.counts', operation=operation, **counts)
     except Exception:
         pass
+
+
+class VectorBudgetCapabilityError(RuntimeError):
+    """An active request budget cannot enforce physical vector limits."""
+    provider_status = 'UNKNOWN'
+
+
+class VectorPageBudgetExceeded(RuntimeError):
+    """Physical vector work cap stopped complete scope coverage."""
+    def __init__(self, kb_id, partial_results):
+        super().__init__('VECTOR_PAGE_BUDGET_EXCEEDED')
+        self.kb_id = kb_id
+        self.partial_results = partial_results
+
+
+class VectorPageReconciliationError(RuntimeError):
+    """A selected query-time body could not be verified after bounded retention."""
+    provider_status = 'UNKNOWN'
 
 
 class _CollectionOperation:
@@ -71,6 +104,12 @@ class _CollectionOperation:
         if collection is None:
             raise RuntimeError('Collection disappeared while verifying vectors')
         return self._service._get_documents_from_collection(collection, ids, include)
+
+    def verify_documents(self, kb_id, documents, embeddings, ids):
+        collection = self._resolve(kb_id)
+        if collection is None:
+            raise RuntimeError('Collection disappeared while verifying vectors')
+        return self._service._verify_documents_in_collection(collection, documents, embeddings, ids)
 
 
 class VectorStoreService:
@@ -150,16 +189,19 @@ class VectorStoreService:
         return self._add_documents_to_collection(collection, documents, embeddings)
 
     def _add_documents_to_collection(self, collection, documents, embeddings):
-        ids = [doc["id"] for doc in documents]
-        contents = [doc["content"] for doc in documents]
-        metadatas = [doc.get("metadata", {}) for doc in documents]
-
+        # Preserve the public API's pre-write failure on malformed documents,
+        # without retaining complete parallel ID/content/metadata lists.
+        for doc in documents:
+            _ = doc['id'], doc['content'], doc.get('metadata', {})
         try:
             size = self._batch_size()
-            for start in range(0, len(ids), size):
+            for start in range(0, len(documents), size):
                 end = start + size
-                self._ingest_add(collection, ids=ids[start:end], documents=contents[start:end],
-                                 embeddings=embeddings[start:end], metadatas=metadatas[start:end])
+                batch = documents[start:end]
+                self._ingest_add(collection, ids=[doc['id'] for doc in batch],
+                                 documents=[doc['content'] for doc in batch],
+                                 embeddings=embeddings[start:end],
+                                 metadatas=[doc.get('metadata', {}) for doc in batch])
         except Exception as exc:
             if "dimension" in str(exc).lower():
                 raise ValueError("Embedding dimension is incompatible with the existing collection; explicit migration is required") from exc
@@ -174,6 +216,50 @@ class VectorStoreService:
         if collection is None:
             raise RuntimeError('Collection disappeared while verifying vectors')
         return self._get_documents_from_collection(collection, ids, include)
+
+    def verify_documents(self, kb_id, documents, embeddings, ids):
+        """Read and verify every expected field without retaining all responses."""
+        collection = self._existing_collection(kb_id)
+        if collection is None:
+            raise RuntimeError('Collection disappeared while verifying vectors')
+        return self._verify_documents_in_collection(collection, documents, embeddings, ids)
+
+    def _verify_documents_in_collection(self, collection, documents, embeddings, ids):
+        # Check the complete manifest first; each expected document is then read
+        # once, even when the manifest order differs from the document order.
+        expected_ids = {doc['id'] for doc in documents}
+        if (len(documents) != len(embeddings) or len(ids) != len(documents) or
+                len(expected_ids) != len(documents) or set(ids) != expected_ids):
+            raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
+        del expected_ids
+        size = self._batch_size()
+        for start in range(0, len(documents), size):
+            batch = documents[start:start + size]
+            page = self._ingest_get(collection, ids=[doc['id'] for doc in batch],
+                                    include=['documents', 'metadatas', 'embeddings'])
+            self._verify_document_batch(page, batch, embeddings[start:start + size])
+            # Chroma returns materialized embeddings. Release this response
+            # before requesting the next batch, rather than aggregating them.
+            del page
+
+    @staticmethod
+    def _verify_document_batch(actual, documents, embeddings):
+        try:
+            if any(actual.get(key) is None or len(actual[key]) != len(documents)
+                   for key in ('ids', 'documents', 'metadatas', 'embeddings')):
+                raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
+            observed = {key: (content, metadata, vector) for key, content, metadata, vector in zip(
+                actual['ids'], actual['documents'], actual['metadatas'], actual['embeddings'])}
+            if len(observed) != len(documents) or any(
+                d['id'] not in observed or observed[d['id']][0] != d['content'] or
+                observed[d['id']][1] != d['metadata'] or
+                len(observed[d['id']][2]) != len(vector) or
+                any(not math.isclose(float(a), float(b), rel_tol=1e-6, abs_tol=1e-7)
+                    for a, b in zip(observed[d['id']][2], vector))
+                for d, vector in zip(documents, embeddings)):
+                raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED')
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            raise RuntimeError('BUILD_VECTOR_VERIFICATION_FAILED') from exc
 
     def _get_documents_from_collection(self, collection, ids, include=None):
         include = include or ['documents', 'metadatas']
@@ -262,6 +348,11 @@ class VectorStoreService:
         Returns:
             检索结果列表
         """
+        from app.services.retrieval_budget import active_retrieval_budget
+        budget = active_retrieval_budget.get()
+        if budget is not None and not callable(getattr(budget, 'reserve_vector_page', None)):
+            raise VectorBudgetCapabilityError('VECTOR_BUDGET_CAPABILITY_UNAVAILABLE')
+
         if self.client is None:
             # Preserve the synchronous path if the process-level experiment is
             # disabled after this retrieval object was created.
@@ -270,48 +361,159 @@ class VectorStoreService:
                     self.client = self.get_client()
         collection_name = self._get_collection_name(kb_id)
 
+        def record_result(count):
+            recorder = getattr(budget, 'record_vector_result', None)
+            if callable(recorder):
+                recorder(count)
+        def consistency_failure():
+            recorder = getattr(budget, 'record_vector_consistency_unknown', None)
+            if callable(recorder):
+                recorder()
+            return VectorPageReconciliationError('VECTOR_PAGE_RECONCILIATION_FAILED')
+
         collection = self._existing_collection(kb_id)
         if collection is None:
+            record_result(0)
             return []
-
-        pages = []
-        if allowed_build_ids is None and allowed_ids is None:
-            pages.append({})
-        else:
+        work_limited = False
+        def reserve(stage, depth):
+            nonlocal work_limited
+            reservation = getattr(budget, 'reserve_vector_page', None)
+            if callable(reservation) and not reservation(kb_id, depth, stage=stage):
+                work_limited = True
+                return False
+            return True
+        def record_get(stage, requested, returned):
+            recorder = getattr(budget, 'record_vector_get', None)
+            if callable(recorder):
+                recorder(stage=stage, requested_count=requested, returned_count=returned)
+        def scope_get(ids):
+            if not reserve('scope_get', len(ids)):
+                return None
+            present = collection.get(ids=ids, include=[])['ids']
+            record_get('scope_get', len(ids), len(present))
+            return present
+        def pages():
+            # Keep just one finite scope page, instead of copying every legacy
+            # ID page and its Chroma response before any KNN work starts.
+            if allowed_build_ids is None and allowed_ids is None:
+                yield {}
+                return
             size = self._batch_size()
+            # Preserve the legacy first-page existence preflight ordering;
+            # later pages stay lazy and never accumulate copied ID lists.
+            first_legacy = None
+            if allowed_ids and (budget is None or budget.remaining()):
+                first_legacy = scope_get(allowed_ids[:size])
+                if work_limited:
+                    return
             for start in range(0, len(allowed_build_ids or []), size):
+                if budget is not None and not budget.remaining():
+                    return
                 group = allowed_build_ids[start:start + size]
-                pages.append({'where': {'build_id': {'$in': group}}})
+                yield {'where': {'build_id': {'$in': group}}}
             for start in range(0, len(allowed_ids or []), size):
-                # Chroma's ID-constrained KNN can fail when even one requested
-                # legacy SQL ID has no vector (e.g. an unindexed preview).
-                present = collection.get(ids=allowed_ids[start:start + size], include=[])['ids']
+                if budget is not None and not budget.remaining():
+                    return
+                # An unindexed legacy/preview ID must not break scoped KNN.
+                present = (first_legacy if start == 0 else
+                    scope_get(allowed_ids[start:start + size]))
+                if work_limited:
+                    return
                 if present:
-                    pages.append({'ids': present})
+                    yield {'ids': present}
 
-        # 处理结果
-        output = []
-        for query_args in pages:
+        # Only retain top-k document bodies. Compact per-ID score and body
+        # digests preserve last qualifying occurrence semantics across pages.
+        # With arbitrary duplicate downgrades, an evicted winner may need an
+        # exact readback after all pages have completed.
+        def digest_body(content, metadata):
+            raw = json.dumps([content, metadata], sort_keys=True, ensure_ascii=True,
+                             separators=(',', ':'), allow_nan=True).encode('utf-8')
+            return hashlib.sha256(raw).digest()
+
+        records = {}
+        retained = {}
+        unbounded = [] if top_k < 0 else None
+        for query_args in pages():
+            if budget is not None and not budget.remaining():
+                break
+            if not reserve('knn_query', top_k):
+                break
             results = collection.query(query_embeddings=[query_vector], n_results=top_k,
                 include=['documents', 'metadatas', 'distances'], **query_args)
-            if not results or not results['ids'] or not results['ids'][0]:
-                continue
-            for i, doc_id in enumerate(results["ids"][0]):
-                # ChromaDB 返回的是距离，转换为相似度
-                distance = results["distances"][0][i] if results["distances"] else 0
-                # 使用余弦距离转相似度: similarity = 1 - distance/2
+            ids = results['ids'][0] if results and results['ids'] and results['ids'][0] else []
+            for i, doc_id in enumerate(ids):
+                distance = results['distances'][0][i] if results['distances'] else 0
                 score = 1 - distance / 2
+                # The legacy code filters before deduplication: a later
+                # below-threshold row cannot erase a qualifying earlier one.
+                if not score >= score_threshold:
+                    continue
+                row = {'id': doc_id,
+                       'content': results['documents'][0][i] if results['documents'] else '',
+                       'metadata': results['metadatas'][0][i] if results['metadatas'] else {},
+                       'score': score}
+                if unbounded is not None:
+                    unbounded.append(row)
+                    continue
+                if not top_k:
+                    continue
+                records[doc_id] = (score, digest_body(row['content'], row['metadata']))
+                if doc_id in retained:
+                    retained[doc_id] = row
+                elif len(retained) < top_k:
+                    retained[doc_id] = row
+                else:
+                    worst = max(retained, key=lambda key: (-retained[key]['score'], key))
+                    if (-score, doc_id) < (-retained[worst]['score'], worst):
+                        del retained[worst]
+                        retained[doc_id] = row
+            recorder = getattr(budget, 'record_vector_page', None)
+            if callable(recorder):
+                recorder(requested_depth=top_k, returned_count=len(ids),
+                         retained_count=len(retained) if unbounded is None else len(unbounded))
 
-                if score >= score_threshold:
-                    output.append({
-                        "id": doc_id,
-                        "content": results["documents"][0][i] if results["documents"] else "",
-                        "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                        "score": score,
-                    })
-
-        deduplicated = {item['id']: item for item in output}
-        return sorted(deduplicated.values(), key=lambda item: (-item['score'], item['id']))[:top_k]
+        if unbounded is not None:
+            deduplicated = {item['id']: item for item in unbounded}
+            output = sorted(deduplicated.values(), key=lambda item: (-item['score'], item['id']))[:top_k]
+            if work_limited:
+                raise VectorPageBudgetExceeded(kb_id, output)
+            record_result(len(output))
+            return output
+        selected = heapq.nsmallest(top_k, records, key=lambda key: (-records[key][0], key))
+        missing = [key for key in selected if key not in retained]
+        retained = {key: retained[key] for key in selected if key in retained}
+        for start in range(0, len(missing), self._batch_size()):
+            if budget is not None and not budget.remaining():
+                raise consistency_failure()
+            batch = missing[start:start + self._batch_size()]
+            if not reserve('reconcile_get', len(batch)):
+                partial = [retained[key] for key in selected if key in retained]
+                raise VectorPageBudgetExceeded(kb_id, partial)
+            try:
+                page = collection.get(ids=batch, include=['documents', 'metadatas'])
+                record_get('reconcile_get', len(batch), len(page['ids']))
+                ids = page['ids']
+                contents = page['documents']
+                metadatas = page['metadatas']
+                if (len(ids) != len(batch) or len(set(ids)) != len(ids) or set(ids) != set(batch)
+                        or contents is None or metadatas is None
+                        or len(contents) != len(ids) or len(metadatas) != len(ids)):
+                    raise ValueError('invalid reconciliation result')
+                for key, content, metadata in zip(ids, contents, metadatas):
+                    score, expected_digest = records[key]
+                    if digest_body(content, metadata) != expected_digest:
+                        raise ValueError('changed reconciliation result')
+                    retained[key] = {'id': key, 'content': content,
+                                     'metadata': metadata, 'score': score}
+            except Exception as exc:
+                raise consistency_failure() from exc
+        output = [retained[key] for key in selected]
+        if work_limited:
+            raise VectorPageBudgetExceeded(kb_id, output)
+        record_result(len(output))
+        return output
 
     def _prepare_query_timeout_adapter(self):
         """Bound only worker read requests for the pinned REST adapter.
@@ -354,25 +556,41 @@ class VectorStoreService:
                 self.client = None
 
     def _query_with_bootstrap(self, **kwargs):
-        from app.services.bounded_chroma_executor import chroma_http_timeout_seconds, register_chroma_cleanup
-        if self.client is None:
-            with self._lazy_lock:
-                if self.client is None:
-                    host = getattr(settings, "CHROMA_HOST", "")
-                    if host:
-                        from app.services.bounded_chroma_bootstrap import OwnedChromaHTTP
-                        register_chroma_cleanup(self, self._cleanup_owned_http)
-                        if self._owned_http is None:
-                            self._owned_http = OwnedChromaHTTP(host, getattr(settings, "CHROMA_PORT", 8000), chroma_http_timeout_seconds())
-                        self.client = self._owned_http.create()
-                    else:
-                        # Persistent Chroma systems are shared by path; retain the
-                        # existing shared owner rather than closing another user.
-                        self.client = self.get_client()
-        if getattr(self, '_owned_http', None) is not None:
-            register_chroma_cleanup(self, self._cleanup_owned_http)
-        self._prepare_query_timeout_adapter()
-        return self.query(**kwargs)
+        started = time.perf_counter()
+        status = "RETURNED"
+        try:
+            from app.services.bounded_chroma_executor import chroma_http_timeout_seconds, register_chroma_cleanup
+            if self.client is None:
+                with self._lazy_lock:
+                    if self.client is None:
+                        host = getattr(settings, "CHROMA_HOST", "")
+                        if host:
+                            from app.services.bounded_chroma_bootstrap import OwnedChromaHTTP
+                            register_chroma_cleanup(self, self._cleanup_owned_http)
+                            if self._owned_http is None:
+                                self._owned_http = OwnedChromaHTTP(host, getattr(settings, "CHROMA_PORT", 8000), chroma_http_timeout_seconds())
+                            self.client = self._owned_http.create()
+                        else:
+                            # Persistent Chroma systems are shared by path; retain the
+                            # existing shared owner rather than closing another user.
+                            self.client = self.get_client()
+            if getattr(self, '_owned_http', None) is not None:
+                register_chroma_cleanup(self, self._cleanup_owned_http)
+            self._prepare_query_timeout_adapter()
+        except BaseException:
+            status = "FAILED"
+            raise
+        finally:
+            _chroma_stage("bootstrap", started, status)
+        started = time.perf_counter()
+        status = "RETURNED"
+        try:
+            return self.query(**kwargs)
+        except BaseException:
+            status = "FAILED"
+            raise
+        finally:
+            _chroma_stage("query", started, status)
 
     async def query_async(self, **kwargs):
         """Submit bootstrap and the unchanged query as one bounded worker job."""

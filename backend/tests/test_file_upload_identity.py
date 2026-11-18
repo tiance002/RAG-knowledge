@@ -183,7 +183,7 @@ def test_upload_streams_hash_and_cleans_rejected_staging(store, monkeypatch):
     assert list((store[1] / "uploads" / "kb").iterdir()) == paths
 
 
-def test_sql_failure_preserves_existing_and_cleans_new_source(store, monkeypatch):
+def test_sql_commit_unknown_preserves_existing_and_retains_new_source(store, monkeypatch):
     import app.api.files as files
     add(store, "one", "a.txt")
     monkeypatch.setattr(files.settings, "UPLOAD_DIR", str(store[1] / "failed-uploads"))
@@ -191,9 +191,11 @@ def test_sql_failure_preserves_existing_and_cleans_new_source(store, monkeypatch
         def fail_commit():
             raise OSError("synthetic commit rejection")
         monkeypatch.setattr(session, "commit", fail_commit)
-        with pytest.raises(OSError, match="synthetic commit rejection"):
+        from app.services.file_uploads import UploadCommitUnknown
+        with pytest.raises(UploadCommitUnknown):
             asyncio.run(files.upload_file("kb", UploadFile(filename="a.txt", file=BytesIO(b"new bytes")), session=session, action="new", target_file_id=None))
-    assert list((store[1] / "failed-uploads" / "kb").iterdir()) == []
+    retained = list((store[1] / "failed-uploads" / "kb").glob("*.txt"))
+    assert len(retained) == 1 and retained[0].read_bytes() == b"new bytes"
     assert (store[1] / "one.txt").read_bytes() == b"original bytes"
     with Session(store[0]) as session:
         assert [row.id for row in session.exec(select(FileDocument)).all()] == ["one"]
