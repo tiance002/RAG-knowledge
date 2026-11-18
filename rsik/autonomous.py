@@ -24,7 +24,7 @@ from run_rsi_loop import selector
 
 def proposer_model(history):
     """Escalate coding failures only; no escalation merely for absent gains."""
-    return 'gpt-6.1-sol' if len(history)>=2 and all(h['outcome'] in {'PATCH_INVALID','UNIT_FAILED'} for h in history[-2:]) else 'gpt-6-luna'
+    return 'gpt-6.2-sol' if len(history)>=2 and all(h['outcome'] in {'PATCH_INVALID','UNIT_FAILED'} for h in history[-2:]) else 'gpt-6-luna'
 
 
 def history_item(proposal,outcome,reasons=(),counts=None,*,quality_verdict=None,execution_status=None,failure_origin=None):

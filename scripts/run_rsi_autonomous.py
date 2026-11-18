@@ -53,7 +53,7 @@ def main():
     fixed.append(learning.initial)
     strategy={'profile':a.profile,'role_profile':a.role_profile,'handbook_format':a.handbook_format,
         'handbook_features':features,'handbook_fingerprint_override':a.handbook_fingerprint,
-        'models':{'default':'gpt-6-luna','coding_failure_escalation':'gpt-6.1-sol'},
+        'models':{'default':'gpt-6-luna','coding_failure_escalation':'gpt-6.2-sol'},
         'initial_memory_sha256':bytes_hash(learning.initial.read_bytes()),'no_external_learning':True}
     atomic_write(a.directory/'strategy-config.json',canonical(strategy),exclusive=True)
     fixed.append(a.directory/'strategy-config.json')

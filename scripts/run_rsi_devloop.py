@@ -1,4 +1,4 @@
-"""Offline DEV_DEBUG loop. Archived provider results are never new model calls."""
+"""Isolated DEV_DEBUG loop for archival replay or an explicitly approved live round."""
 from collections import Counter
 from decimal import Decimal
 import argparse
@@ -94,10 +94,13 @@ def safe_output(path):
 
 def _args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--live', action='store_true', help='Run one owner-authorized live DEV_DEBUG round (six calls max)')
     parser.add_argument('--cases', type=Path, required=True, help='Frozen DEV-only case bundle')
     parser.add_argument('--archive', type=Path, required=True, help='Bound historical role receipts')
-    parser.add_argument('--ledger', type=Path, default=BUDGET_PATH, help='Original cumulative ledger, read-only')
+    parser.add_argument('--ledger', type=Path, default=BUDGET_PATH, help='Original cumulative ledger')
     parser.add_argument('--out', type=Path, required=True, help='Fresh directory below var/devloop')
+    parser.add_argument('--key-file', type=Path, help='OPENAI_API_KEY file; required only with --live')
+    parser.add_argument('--approval-id', help='Explicit one-round approval identifier for --live')
     return parser.parse_args(argv)
 
 
@@ -261,7 +264,17 @@ def run(args):
 
 
 def main(argv=None):
-    result = run(_args(argv))
+    args = _args(argv)
+    if args.live:
+        if args.key_file is None:
+            raise SystemExit('--key-file is required with --live')
+        from rsik.dev_debug_live import run_live
+        result = run_live(args)
+        print(json.dumps({k:result.get(k) for k in (
+            'status','planned_cases','completed_replays','request_count','new_cost_usd_upper','stop_reason')},
+            ensure_ascii=False))
+        return 0 if result.get('status') == 'DEV_DEBUG_LIVE_COMPLETE' else 2
+    result = run(args)
     print(json.dumps({k:result[k] for k in (
         'status','planned_cases','proposal_count','static_valid_count','complete_replay_count','latency_seconds')},
         ensure_ascii=False))

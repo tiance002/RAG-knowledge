@@ -58,7 +58,7 @@ def prepare(*, registry, training, verification, fixtures, handbook, budget_ledg
         'budget': {'ledger': str(budget), 'ledger_sha256_at_preparation': bytes_hash(budget.read_bytes()),
             'cumulative_limit_usd': '5', 'reset': False, 'reserve': '0',
             'call_or_round_cap': None, 'last_single_request_may_cross_limit': True,
-            'model_policy': {'default': 'gpt-6-luna', 'coding_failure_escalation': 'gpt-6.1-sol', 'astra': False},
+            'model_policy': {'default': 'gpt-6-luna', 'coding_failure_escalation': 'gpt-6.2-sol', 'astra': False},
             'include': ['Diagnosis','P1','P2','P3','Curator','Meta','format_repairs','failures','UNKNOWN']},
         'design': {'main': 'parallel/K3', 'comparison': 'matched K1 and frozen-old-role control',
             'planned_independent_repetitions_per_group': 3, 'no_posttrial_memory_sharing': True,

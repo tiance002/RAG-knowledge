@@ -11,8 +11,8 @@ import rsi_roles
 from rsi_candidates import canonical, read_json, sha
 
 ROOT = Path(__file__).resolve().parents[1]
-ROLE_MODELS = {'diagnosis': ('gpt-6-luna', 'max'), 'analysis': ('gpt-6.1-sol', 'high'),
-               'implementation': ('gpt-6.1-sol', 'medium'), 'judge': ('gpt-6-luna', 'max'),
+ROLE_MODELS = {'diagnosis': ('gpt-6-luna', 'max'), 'analysis': ('gpt-6.2-sol', 'medium'),
+               'implementation': ('gpt-6-luna', 'max'), 'judge': ('gpt-6-luna', 'max'),
                'evaluation': ('gpt-6-luna', 'max'), 'experience': ('gpt-6.1-terra', 'xhigh')}
 TASKS = {
     'diagnosis': 'Diagnose quality and efficiency opportunities from DEV black-box questions, final answers and observed labels only. Return JSON with diagnosis and evidence (text or lists). Do not invent a failure when all labels pass.',

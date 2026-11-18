@@ -18,8 +18,9 @@ NANO = 1_000_000_000
 # input rate is used if the provider doesn't expose cache-write accounting.
 PRICES = {'gpt-6-luna': {'input': 100, 'cached': 10, 'write': 125, 'output': 500},
           'gpt-6.1-sol': {'input': 2000, 'cached': 100, 'write': 2500, 'output': 10000},
+          'gpt-6.2-sol': {'input': 2000, 'cached': 100, 'write': 2500, 'output': 10000},
           'gpt-6.1-terra': {'input': 1000, 'cached': 50, 'write': 1250, 'output': 5000}}
-PRICE_VERSION = 'official-model-pages-2026-11-15-standard-short-context'
+PRICE_VERSION = 'official-model-pages-2026-11-17-standard-short-context'
 
 
 class Budget:

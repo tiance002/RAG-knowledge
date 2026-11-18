@@ -12,8 +12,8 @@ from rsi_candidates import canonical, sha
 
 ROLES = {
     "diagnosis": ("gpt-6-luna", "max"),
-    "analysis": ("gpt-6.1-sol", "high"),
-    "implementation": ("gpt-6.1-sol", "medium"),
+    "analysis": ("gpt-6.2-sol", "medium"),
+    "implementation": ("gpt-6-luna", "max"),
     "evaluation": ("gpt-6-luna", "max"),
     "experience": ("gpt-6.1-terra", "xhigh"),
 }
