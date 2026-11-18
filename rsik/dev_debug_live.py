@@ -15,6 +15,7 @@ from .query_aware import apply_patch, autonomy_interface_contract
 from .redact import LeakScanner, make_visible, project_summary
 from .role_profiles import M1_SPECIALIZED_V1, roles_for
 from .state import canonical, digest
+from .token_budget import APPROVED_DEV_V0, role_limit
 from .workflow import full_worker_identity
 from run_rsi_loop import selector
 
@@ -26,9 +27,7 @@ MAX_BODY_BYTES = 16_384
 MAX_COST_NANO = 20_000_000
 SLOTS = roles_for(PROFILE)
 ROLES = ('diagnose', *SLOTS.values(), 'curator', 'meta')
-OUTPUT_LIMITS = {role: 4096 if role in SLOTS.values() else 1024 for role in ROLES}
-DECODE = {role: {'max_output_tokens': limit, **({'reasoning_effort': 'max'} if role in SLOTS.values() else {})}
-          for role, limit in OUTPUT_LIMITS.items()}
+OUTPUT_LIMITS = {role: role_limit(APPROVED_DEV_V0, role) for role in ROLES}
 
 
 def _upper_bound():
@@ -140,9 +139,10 @@ def run_live(args):
     # projection reaches the role contract and then the provider.
     scanner = LeakScanner(case['query'] for case in cases)
     models = dict.fromkeys(ROLES, MODEL)
-    identity = runtime_profile_identity(PROFILE, models, SEAM, DECODE, 'default')
+    identity = runtime_profile_identity(PROFILE, models, SEAM, service_tier='default',
+                                        token_budget_profile=APPROVED_DEV_V0)
     runner = OpenAIRoles(budget, roles_dir, args.key_file, scanner, transport=dev_transport,
-                         models=models, decode_overrides=DECODE, max_attempts=1, service_tier='default',
+                         models=models, token_budget_profile=APPROVED_DEV_V0, max_attempts=1, service_tier='default',
                          request_guard=_guard, seam_profile=SEAM, role_profile=PROFILE)
     write(directory/'plan.json', {'approval_id': APPROVAL, 'round_id': round_id, 'profile': identity,
                                   'request_limit': len(ROLES), 'retries': 0, 'cost_nano_upper': rates_upper,
@@ -208,7 +208,14 @@ def run_live(args):
                             comparison=paired['comparison'])
         except ContractError as error:
             entry.update(status='DEV_CONTRACT_FAILED', reason=error.code)
-        except (StageFailure, OSError, ValueError, TimeoutError, RuntimeError) as error:
+        except StageFailure as error:
+            from .response_audit import NON_STRATEGY_OUTPUT_FAILURES
+            if not error.global_stop and error.reason_code in NON_STRATEGY_OUTPUT_FAILURES:
+                entry.update(status=error.reason_code, reason=error.reason_code)
+            else:
+                stopped = error.reason_code
+                entry.update(status='DEV_STOPPED', reason=stopped)
+        except (OSError, ValueError, TimeoutError, RuntimeError) as error:
             stopped = str(error)
             entry.update(status='DEV_STOPPED', reason=stopped)
         finally:

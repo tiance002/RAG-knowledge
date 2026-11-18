@@ -96,6 +96,9 @@ def main():
         # Never echo provider errors or headers containing request data.
         emit_receipt({'transport_identity': identity, 'transport_status': 'HTTP_ERROR', 'http_status': error.code,
                           'provider_request_id': error.headers.get('x-request-id')},request.get('response_path'))
+    except (TimeoutError, urllib.error.URLError) as error:
+        kind = 'TIMEOUT' if isinstance(getattr(error, 'reason', error), TimeoutError) else 'UNKNOWN'
+        emit_receipt({'transport_identity': identity, 'transport_status': kind},request.get('response_path'))
     except Exception:
         emit_receipt({'transport_identity': identity, 'transport_status': 'UNKNOWN'},request.get('response_path'))
 

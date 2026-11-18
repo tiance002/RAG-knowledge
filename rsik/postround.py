@@ -43,7 +43,17 @@ def run_advisory(roles, directories, output, *, handbook=None, evidence_context=
     result={'curator_status':None,'meta_status':None,'committed_entries':[],
             'evaluation_modified':False,'judgments_modified':False,'production_changed':False}
     for role in ('curator','meta'):
-        response=roles.call(role,visible)
+        from .errors import StageFailure
+        from .response_audit import NON_STRATEGY_OUTPUT_FAILURES
+        try:
+            response=roles.call(role,visible)
+        except StageFailure as error:
+            if error.global_stop or error.reason_code not in NON_STRATEGY_OUTPUT_FAILURES:
+                raise
+            atomic_write(output/(role+'.json'),canonical({'status':'UNAVAILABLE',
+                'reason':error.reason_code}),exclusive=True)
+            result[role+'_status']=error.reason_code
+            continue
         atomic_write(output/(role+'.json'),canonical(response),exclusive=True)
         body=unwrap_response(response)
         result[role+'_status']=response['status']

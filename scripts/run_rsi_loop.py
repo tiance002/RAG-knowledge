@@ -4,8 +4,10 @@ import ast
 import json
 from pathlib import Path
 import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import rsi_candidates as registry
+from rsik.response_audit import inspect as audit_response
 from rsi_decision import review_run
 from rsi_proposal_agent import FIELDS, ProposalAgent
 from run_rsi_offline import ROOT, run, save
@@ -179,19 +181,21 @@ def execute(config_path, out, approved, preflight=False, approved_model_calls=0,
                 receipt.update(agent_status="PROVIDER_ERROR")
                 raise ValueError(f"Provider HTTP {wire['http_status']}")
             response = json.loads(wire["body"])
-            choice = response["choices"][0]
             usage = response.get("usage") or {}
+            completion, proposal = audit_response({'transport_status':'RECEIVED', 'response':response})
             receipt.update(agent_status="RETURNED", model=response.get("model"), provider_id=response.get("id"),
                            input_tokens=usage.get("prompt_tokens"), output_tokens=usage.get("completion_tokens"),
-                           usage=usage, finish=choice.get("finish_reason"))
-            if response.get("model") != cfg["model"] or receipt["finish"] != "stop":
+                           usage=usage, finish=completion['provider_finish_reason'], **{
+                               k:v for k,v in completion.items() if k not in {'input_tokens','output_tokens'}})
+            if response.get("model") != cfg["model"] or completion['output_classification'] != 'COMPLETE':
+                receipt["agent_status"] = completion['output_classification'] if response.get("model") == cfg["model"] else 'API_ERROR'
+                save(step / "receipt.json", receipt)
                 raise ValueError("Incomplete response or unexpected proposal model")
             try:
-                proposal = json.loads(choice["message"]["content"])
                 save(step / "proposal.json", proposal)
                 child_bytes = apply_proposal(code, proposal)
             except (ValueError, SyntaxError, TypeError) as exc:
-                previous = {"validation_failure": str(exc), "returned": choice["message"]["content"][:800]}
+                previous = {"validation_failure": str(exc), "returned": json.dumps(proposal,ensure_ascii=False)[:800]}
                 receipt.update(action="REJECT_PROPOSAL", reason=str(exc))
                 save(step / "receipt.json", receipt)
                 continue

@@ -164,20 +164,21 @@ def _call_json_once(role, info, cfg, out, state, limit, *, retry_of=None):
             receipt['status'] = 'PROVIDER_ERROR'
             raise ValueError('role HTTP ' + str(status))
         response = json.loads(body)
+        completion, value = rsi_roles.audit_response({'transport_status':'RECEIVED', 'response':response}, combine_text=True)
         receipt.update(returned_model=response.get('model'), response_status=response.get('status'),
-                       usage=response.get('usage'), provider_id=response.get('id'))
-        if response.get('status') != 'completed':
+                       usage=response.get('usage'), provider_id=response.get('id'),
+                       output_classification=completion['output_classification'])
+        if completion['output_classification'] != 'COMPLETE':
             receipt['incomplete_details'] = response.get('incomplete_details')
-            if (response.get('incomplete_details') or {}).get('reason') == 'max_output_tokens':
+            if completion['output_classification'] == 'OUTPUT_TRUNCATED':
                 receipt['status'] = 'TRUNCATED'
+            elif completion['output_classification'] == 'INCOMPLETE_STRUCTURED_OUTPUT':
+                receipt['status'] = 'INVALID_OUTPUT'
             raise ValueError('role response incomplete; no automatic retry')
         if not rsi_roles.matches_model(model, response.get('model')):
             receipt['model_identity_status'] = 'MISMATCH'
             raise ValueError('returned model mismatch')
         receipt['status'] = 'INVALID_OUTPUT'
-        raw = ''.join(c['text'] for item in response.get('output', []) if item.get('type') == 'message'
-                      for c in item.get('content', []) if c.get('type') == 'output_text')
-        value = json.loads(raw)
         if not isinstance(value, dict):
             raise ValueError('role output must be a JSON object')
         if role == 'judge' and not isinstance(value.get('scores'), list):
@@ -223,7 +224,12 @@ def call_json(role, info, cfg, out, state, limit):
                 receipt = read_json(path)
                 logical['attempts'].append({'attempt': attempt, 'directory': directory.name,
                     'status': receipt['status'], 'receipt_sha256': sha(path.read_bytes())})
-                if attempt == 2 or receipt['status'] not in ('UNKNOWN', 'PROVIDER_ERROR', 'TRUNCATED', 'INVALID_OUTPUT'):
+                usage = receipt.get('usage') or {}
+                authorized_recovery = (role == 'judge' and receipt['status'] == 'TRUNCATED'
+                    and (cfg['budget'].get('retry_max_output_tokens') or 0) > cfg['budget'].get('max_output_tokens', 8192)
+                    and all(type(usage.get(field)) is int and usage[field] >= 0
+                            for field in ('input_tokens', 'output_tokens')))
+                if attempt == 2 or not authorized_recovery:
                     raise
                 prior = receipt
                 delay = cfg.get('retry_delay_seconds', 0)

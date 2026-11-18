@@ -27,6 +27,7 @@ new_state from_state to_state source_event_id source_event_type event_key action
 selected_entry_ids retrieved_entry_ids learning_frontier schema_version metric_contract_version transport_status
 fallback_profile fallback_version dispatch_sha256 catalog_sha256 dispatcher_version mode task_type task_id task_contract_hash
 stage_attempt_id operation_id input_hash output_hash checkpoint_id failure_category recoverable error_type recovery_attempt_id recovery_operation_id original_operation_id actual_execution_id action_id error_hash http_status repair_of request_attempt relation lineage_state count total duration_ms
+token_budget_profile token_budget_sha256 requested_output_tokens output_classification provider_response_status provider_finish_reason provider_incomplete_reason input_tokens output_tokens reasoning_tokens visible_output_tokens visible_output_tokens_upper visible_message_received structured_json_complete
 '''.split())
 _IDENTIFIER = re.compile(r'[A-Za-z0-9_.:/+@=-]{1,256}\Z')
 
@@ -96,6 +97,7 @@ class InvocationObservation(AbstractContextManager):
         self.observer = observer
         self.payload = dict(payload)
         self.started = False
+        self.response_observed = False
         self.outcome = 'INFRA_FAILURE'
         self.failure_origin = 'INFRASTRUCTURE'
         self.contract_result = 'NOT_EVALUATED'
@@ -123,6 +125,7 @@ class InvocationObservation(AbstractContextManager):
             from .errors import StageFailure
             raise StageFailure('STORAGE_ERROR', 'OBSERVATION_STORAGE_UNAVAILABLE') from error
         kinds = {e['event_type'] for e in events}
+        self.response_observed = 'RESPONSE_RECEIVED' in kinds
         if 'INVOCATION_FINISHED' in kinds and receipt.get('transport_status') == 'RECEIVED':
             response_hash = digest(receipt.get('response', {}))
             if not any(e['event_type'] == 'RESPONSE_RECEIVED' and
@@ -131,15 +134,24 @@ class InvocationObservation(AbstractContextManager):
                 raise StageFailure('STORAGE_ERROR', 'OBSERVATION_RESPONSE_EVIDENCE_MISSING')
         self.started = 'INVOCATION_STARTED' in kinds and 'INVOCATION_FINISHED' not in kinds
 
-    def received(self, receipt):
+    def received(self, receipt, output=None):
         if not self.started: return
         status = receipt.get('transport_status')
         if status == 'RECEIVED':
             self.payload['response_hash'] = digest(receipt.get('response', {}))
-            self._emit('RESPONSE_RECEIVED', response_hash=self.payload['response_hash'])
+            if output is not None:
+                self.payload.update(output)
+            if not self.response_observed:
+                self._emit('RESPONSE_RECEIVED')
+                self.response_observed = True
         elif status == 'TIMEOUT': self.outcome, self.failure_origin = 'TIMEOUT', 'TRANSPORT'
         elif status == 'HTTP_ERROR': self.outcome, self.failure_origin = 'API_ERROR', 'PROVIDER'
         elif status == 'CANCELLED': self.outcome, self.failure_origin = 'CANCELLED', 'CANCELLATION'
+
+    def output_failure(self, reason, *, origin='PROVIDER'):
+        if self.started:
+            self.outcome, self.failure_origin = reason, origin
+            self.payload['output_classification'] = reason
 
     def validated(self, valid, *, abstained=False):
         if not self.started: return
