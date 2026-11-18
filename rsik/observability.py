@@ -27,7 +27,7 @@ new_state from_state to_state source_event_id source_event_type event_key action
 selected_entry_ids retrieved_entry_ids learning_frontier schema_version metric_contract_version transport_status
 fallback_profile fallback_version dispatch_sha256 catalog_sha256 dispatcher_version mode task_type task_id task_contract_hash
 stage_attempt_id operation_id input_hash output_hash checkpoint_id failure_category recoverable error_type recovery_attempt_id recovery_operation_id original_operation_id actual_execution_id action_id error_hash http_status repair_of request_attempt relation lineage_state count total duration_ms
-token_budget_profile token_budget_sha256 requested_output_tokens output_classification provider_response_status provider_finish_reason provider_incomplete_reason input_tokens output_tokens reasoning_tokens visible_output_tokens visible_output_tokens_upper visible_message_received structured_json_complete
+token_budget_profile token_budget_sha256 requested_output_tokens output_classification provider_response_status provider_finish_reason provider_incomplete_reason reasoning_tokens visible_output_tokens visible_output_tokens_upper visible_message_received structured_json_complete
 '''.split())
 _IDENTIFIER = re.compile(r'[A-Za-z0-9_.:/+@=-]{1,256}\Z')
 
@@ -137,10 +137,11 @@ class InvocationObservation(AbstractContextManager):
     def received(self, receipt, output=None):
         if not self.started: return
         status = receipt.get('transport_status')
+        if output is not None:
+            # Billed input/output totals remain in the cost ledger.
+            self.payload.update({k: v for k, v in output.items() if k not in {'input_tokens', 'output_tokens'}})
         if status == 'RECEIVED':
             self.payload['response_hash'] = digest(receipt.get('response', {}))
-            if output is not None:
-                self.payload.update(output)
             if not self.response_observed:
                 self._emit('RESPONSE_RECEIVED')
                 self.response_observed = True

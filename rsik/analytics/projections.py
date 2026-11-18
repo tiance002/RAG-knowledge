@@ -239,7 +239,7 @@ OBSERVATION_SAFE = SAFE | {
     'population_count', 'returned_count', 'filtered_count', 'pair_entry_ids',
     'token_budget_profile', 'token_budget_sha256', 'requested_output_tokens', 'output_classification',
     'provider_response_status', 'provider_finish_reason', 'provider_incomplete_reason',
-    'input_tokens', 'output_tokens', 'reasoning_tokens', 'visible_output_tokens',
+    'reasoning_tokens', 'visible_output_tokens',
     'visible_output_tokens_upper', 'visible_message_received', 'structured_json_complete', 'repair_of'}
 
 

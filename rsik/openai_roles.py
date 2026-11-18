@@ -373,6 +373,7 @@ class OpenAIRoles:
                 observation['repair_of'] = public['round_id'] + '-' + role + '-0'
             self._observation_local.invocation = dict(observation)
             with self.observer.invocation(observation) as observed:
+                local_timeout = False
                 remaining = 90 if self.deadline is None else min(90, self.deadline - time.monotonic())
                 if remaining <= 0:
                     raise TimeoutError('AGENT_TIMEOUT')
@@ -410,7 +411,8 @@ class OpenAIRoles:
                     except StageFailure:
                         raise
                     except TimeoutError:
-                        receipt = {'transport_status': 'TIMEOUT'}
+                        receipt = {'transport_status': 'UNKNOWN'}
+                        local_timeout = True
                         observed.outcome, observed.failure_origin = 'TIMEOUT', 'TRANSPORT'
                     except Exception:
                         receipt = {'transport_status': 'UNKNOWN'}
@@ -421,6 +423,8 @@ class OpenAIRoles:
                 response = response if isinstance(response, dict) else {}
                 usage = response.get('usage') if receipt.get('transport_status') == 'RECEIVED' else None
                 output, value = audit_response(receipt)
+                if local_timeout:
+                    output['output_classification'] = 'TIMEOUT'
                 output_kind = output['output_classification']
                 state = self.budget.complete(key, usage, status=receipt['transport_status'],
                                              provider_request_id=receipt.get('provider_request_id'))
@@ -429,8 +433,8 @@ class OpenAIRoles:
                 # unknown/free usage or trigger another network request.
                 observed.received(receipt, output)
                 if self.before_request:self.before_request()
-                if output_kind not in {'COMPLETE', INCOMPLETE_STRUCTURED_OUTPUT}:
-                    observed.output_failure(output_kind, origin='TRANSPORT' if output_kind == 'TIMEOUT' else 'PROVIDER')
+                if receipt.get('transport_status') == 'RECEIVED' and output_kind not in {'COMPLETE', INCOMPLETE_STRUCTURED_OUTPUT}:
+                    observed.output_failure(output_kind)
                 if state['unbounded_usage_requests']:
                     raise StageFailure('AGENT_ERROR', 'BILLING_OR_REQUEST_STATUS_UNKNOWN', global_stop=True)
                 if response.get('model') != model and not str(response.get('model', '')).startswith(model+'-'):
