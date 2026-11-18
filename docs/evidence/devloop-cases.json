@@ -1,0 +1,174 @@
+{
+  "schema": "rsi-dev-debug-case-freeze/v1",
+  "status": "FROZEN_NATIVE_DIAGNOSTIC_INPUTS",
+  "private_bundle": {
+    "path": "E:\\rsi-devloop\\var\\devloop\\cases.native-dev14.json",
+    "sha256": "712fe9c4f68b9b647af69f8aabc1e639b7a97f8c2b3994fb6d851363ad0d8341",
+    "bytes": 2217431
+  },
+  "source_bindings": [
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-qa300-selected-20261116\\gold-native-literal-r5\\main\\manifest.json",
+      "sha256": "cae3a497470116d2a0779afb009093cfe0c1a74876e7aa4aece1632a3e843b34",
+      "bytes": 10404
+    },
+    {
+      "path": "E:\\codex_workspace\\2026-11-03\\task\\rsi-work\\var\\rsi-v23-qa300-selected-20261116\\gold-native-literal-r5\\main\\cases.json",
+      "sha256": "40151970252bd58905f2a7e91b63e4e2f7f2a3b048d4d7ce9d4a76c391131bdc",
+      "bytes": 945801
+    },
+    {
+      "path": "D:\\RAG knowledge\\var\\qa500-full300-20261115\\selection-20261116\\DEV_20_question_ids.csv",
+      "sha256": "807b4d284dd53ffdaf31df4cfcd3ed21c931566449b39356de13793888d1abd2",
+      "bytes": 1330
+    }
+  ],
+  "partition": "DEV",
+  "case_count": 14,
+  "failed_cases": 8,
+  "correct_cases": 6,
+  "retrieval_case_pool": 17,
+  "business_controls_excluded": 3,
+  "member_universe": "ARCHIVED_NATIVE_FIXTURE_CHUNK_POOL",
+  "original_historical_sse_pool_reproduction": false,
+  "audited_atom_retention": "UNKNOWN",
+  "holdout_content_reads": 0,
+  "mixed_gold_table_reads": 0,
+  "model_calls": 0,
+  "production_changed": false,
+  "cases": [
+    {
+      "case_id": "terra-ecs-b4-014",
+      "cohort": "failed",
+      "historical_label": "INCORRECT",
+      "members": 2,
+      "seeds": 1,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "terra-ecs-b11-005",
+      "cohort": "failed",
+      "historical_label": "INCORRECT",
+      "members": 1,
+      "seeds": 1,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "legacy-session2-v5-s1-t02",
+      "cohort": "failed",
+      "historical_label": "PARTIAL",
+      "members": 3,
+      "seeds": 1,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "qst_0621",
+      "cohort": "failed",
+      "historical_label": "PARTIAL",
+      "members": 21,
+      "seeds": 2,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "qst_0744",
+      "cohort": "failed",
+      "historical_label": "PARTIAL",
+      "members": 122,
+      "seeds": 5,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "qst_0150",
+      "cohort": "failed",
+      "historical_label": "PARTIAL",
+      "members": 70,
+      "seeds": 3,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "qst_0942",
+      "cohort": "failed",
+      "historical_label": "PARTIAL",
+      "members": 45,
+      "seeds": 3,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "qst_0131",
+      "cohort": "failed",
+      "historical_label": "PARTIAL",
+      "members": 79,
+      "seeds": 2,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "legacy-session3-v5-s1-t02",
+      "cohort": "correct",
+      "historical_label": "CORRECT",
+      "members": 2,
+      "seeds": 1,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "forward-session14-v7-s1-t10",
+      "cohort": "correct",
+      "historical_label": "CORRECT",
+      "members": 2,
+      "seeds": 2,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "terra-ecs-b8-006",
+      "cohort": "correct",
+      "historical_label": "CORRECT",
+      "members": 1,
+      "seeds": 1,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "terra-ecs-b6-019",
+      "cohort": "correct",
+      "historical_label": "CORRECT",
+      "members": 1,
+      "seeds": 1,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "terra-ecs-b4-009",
+      "cohort": "correct",
+      "historical_label": "CORRECT",
+      "members": 2,
+      "seeds": 1,
+      "native_seed_members_present": true
+    },
+    {
+      "case_id": "qst_0840",
+      "cohort": "correct",
+      "historical_label": "CORRECT",
+      "members": 39,
+      "seeds": 2,
+      "native_seed_members_present": true
+    }
+  ],
+  "resources": {
+    "reused": [
+      "existing DEV native fixture and DEV selection CSV",
+      "existing Python runtime"
+    ],
+    "created": [
+      "E:\\rsi-devloop\\var\\devloop\\cases.native-dev14.json",
+      "E:\\rsi-devloop\\docs\\evidence\\devloop-cases.json"
+    ],
+    "deleted": [],
+    "new_database_index_environment_container": false,
+    "retention_reason": "Frozen DEV diagnostic payload and auditable provenance",
+    "free_bytes_before": 55658700800,
+    "free_bytes_after": 55656480768
+  },
+  "limitations": [
+    "Native chunk pool, not historical SSE expansion or original selector pool.",
+    "Historical answer labels are cohort labels only.",
+    "Source relation review is not admitted Gold atom retention authority; retention UNKNOWN.",
+    "No current retrieval coverage, generation correctness, or production qualification claim."
+  ]
+}
