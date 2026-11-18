@@ -18,8 +18,8 @@ def main():
     for name in ('parent-id', 'observation-id', 'host'):
         parser.add_argument('--'+name, required=True)
     parser.add_argument('--profile', choices=('single', 'parallel'), default='single')
-    parser.add_argument('--dedup-model', choices=('gpt-6-luna','gpt-6.1-sol'), default='gpt-6-luna')
-    parser.add_argument('--budget-model', choices=('gpt-6-luna','gpt-6.1-sol'), default='gpt-6-luna')
+    parser.add_argument('--dedup-model', choices=('gpt-6-luna','gpt-6.1-sol','gpt-6.2-sol'), default='gpt-6-luna')
+    parser.add_argument('--budget-model', choices=('gpt-6-luna','gpt-6.1-sol','gpt-6.2-sol'), default='gpt-6-luna')
     parser.add_argument('--single-angle',choices=SLOTS,default='P1_DEDUP')
     parser.add_argument('--experiment-intent',choices=sorted(INTENTS),default='STRUCTURAL_POLICY_SEARCH')
     parser.add_argument('--robustness-fixture',type=Path,help='frozen same-source stress hard gate before training adoption')

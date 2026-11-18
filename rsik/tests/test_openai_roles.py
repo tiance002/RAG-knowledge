@@ -39,6 +39,7 @@ def test_real_send_shape_and_abstain_usage(tmp_path):
     assert client.diagnose(public())['status'] == 'ABSTAIN'
     assert seen[0]['model'] == 'gpt-6-luna'
     assert seen[0]['reasoning'] == {'effort': 'none'} and seen[0]['temperature'] == 0
+    assert 'service_tier' not in seen[0]
     assert 'tools' not in seen[0] and not seen[0]['store']
     state = client.budget.snapshot()
     assert state['attempts'] == state['completed'] == 1

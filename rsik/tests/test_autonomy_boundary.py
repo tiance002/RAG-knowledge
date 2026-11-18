@@ -56,7 +56,7 @@ def test_no_gain_does_not_stop_search_or_trigger_expensive_coding_model():
     history=[history_item({'hypothesis':'h','change':'c'},'NO_GAIN',['NO_GAIN']) for _ in range(12)]
     assert proposer_model(history)=='gpt-6-luna'
     history.extend([history_item({'hypothesis':'h','change':'c'},'PATCH_INVALID',['AST_PATCH_INVALID']) for _ in range(2)])
-    assert proposer_model(history)=='gpt-6.1-sol'
+    assert proposer_model(history)=='gpt-6.2-sol'
     history.append(history_item({'hypothesis':'h','change':'c'},'OBSERVED',['STATISTICAL_EVIDENCE_INSUFFICIENT']))
     assert proposer_model(history)=='gpt-6-luna'
 

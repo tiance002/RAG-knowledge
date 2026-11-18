@@ -1,0 +1,251 @@
+{
+  "schema": "rsi-dev-debug-live-public/v1",
+  "mode": "DEV_DEBUG",
+  "profile": "M1_SPECIALIZED_V1",
+  "request_count": 6,
+  "actual_retries": 0,
+  "role_results": [
+    {
+      "role": "diagnose",
+      "contract_outcome": "DEV_ABSTAINED",
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "service_tier": "default",
+      "reasoning_effort": "none",
+      "output_limit": 1024,
+      "http": 200,
+      "response_status": "completed",
+      "incomplete_reason": null,
+      "abstention_reason": "The sole observation reports aggregate context-selection counts (363 delivered members, 337 nonseed members, 14 paired questions) but provides no outcome or comparison evidence supporting a selection-policy hypothesis. It does not establish a code defect, gain, fact regression, infrastructure failure, statistical insufficiency, or evaluation-coverage issue. Missing evidence includes frozen replay outcomes and a baseline comparison; a falsifier would be replay showing no reproducible improvement under the applicable gates.",
+      "input_tokens": 1724,
+      "output_tokens": 113,
+      "reasoning_tokens": 0,
+      "elapsed_seconds_including_local_validation": 6.012,
+      "ledger_cost_nano_upper": 271925,
+      "request_sha256": "80a8ce1168f78d692df603e040569becce8f8abc74e60c0794dbd609f2b5ce05",
+      "transport_sha256": "efe2d17a14b52e28d0a8fe5d6972e3126ba9725449de4244d290187213681d3c"
+    },
+    {
+      "role": "P1_DEDUP",
+      "contract_outcome": "DEV_CONTRACT_FAILED",
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "service_tier": "default",
+      "reasoning_effort": "max",
+      "output_limit": 4096,
+      "http": 200,
+      "response_status": "incomplete",
+      "incomplete_reason": "max_output_tokens",
+      "abstention_reason": null,
+      "input_tokens": 1747,
+      "output_tokens": 4096,
+      "reasoning_tokens": 4096,
+      "elapsed_seconds_including_local_validation": 46.612,
+      "ledger_cost_nano_upper": 2266300,
+      "request_sha256": "cb48184f0e98759a59898b1096fd358e72389fac701c68487e4a9d8c6b149846",
+      "transport_sha256": "d7f0d506357f7d1e8943e6b9a83e1b57bb7f8e9343cab2d2d39ca3cd8c8d1eb4"
+    },
+    {
+      "role": "P2_BUDGET",
+      "contract_outcome": "DEV_CONTRACT_FAILED",
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "service_tier": "default",
+      "reasoning_effort": "max",
+      "output_limit": 4096,
+      "http": 200,
+      "response_status": "incomplete",
+      "incomplete_reason": "max_output_tokens",
+      "abstention_reason": null,
+      "input_tokens": 1749,
+      "output_tokens": 4096,
+      "reasoning_tokens": 4096,
+      "elapsed_seconds_including_local_validation": 39.388,
+      "ledger_cost_nano_upper": 2266550,
+      "request_sha256": "25f03ad6a49a909288d4bce53d1dc829a8b78fe365f3d6bb01cc9df457217461",
+      "transport_sha256": "27a1c380e4fa26ec680941f5b124cb6090795520e1d1a33304f5daaed624dd3d"
+    },
+    {
+      "role": "P3_DEPENDENCY",
+      "contract_outcome": "DEV_CONTRACT_FAILED",
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "service_tier": "default",
+      "reasoning_effort": "max",
+      "output_limit": 4096,
+      "http": 200,
+      "response_status": "incomplete",
+      "incomplete_reason": "max_output_tokens",
+      "abstention_reason": null,
+      "input_tokens": 1758,
+      "output_tokens": 4096,
+      "reasoning_tokens": 4096,
+      "elapsed_seconds_including_local_validation": 36.214,
+      "ledger_cost_nano_upper": 2267675,
+      "request_sha256": "b2efd3c4523e62115c65ecc974adc3752867c8b6f4b0c715a5cf3f21e8cded1c",
+      "transport_sha256": "5f820cb3bb47f951bf061fcaf16534ccbc1b100b49d31cadbe9e920c8910c3fe"
+    },
+    {
+      "role": "curator",
+      "contract_outcome": "DEV_ABSTAINED",
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "service_tier": "default",
+      "reasoning_effort": "none",
+      "output_limit": 1024,
+      "http": 200,
+      "response_status": "completed",
+      "incomplete_reason": null,
+      "abstention_reason": "No completed candidate experiment or qualified proposal is evidenced. The replay summary reports paired=0 and proposal_instances=0, so it cannot support a selection-rule change.",
+      "input_tokens": 1438,
+      "output_tokens": 55,
+      "reasoning_tokens": 0,
+      "elapsed_seconds_including_local_validation": 3.089,
+      "ledger_cost_nano_upper": 207175,
+      "request_sha256": "f7e5ea1d4641356af4b1831befdde703c72bb14026c689f1840707973c23167c",
+      "transport_sha256": "57166a5d91502a192de3216057bbb8755c8806e4527ecc6d10f0071619787b18"
+    },
+    {
+      "role": "meta",
+      "contract_outcome": "DEV_CONTRACT_VALID",
+      "model": "gpt-6-luna",
+      "returned_model": "gpt-6-luna",
+      "service_tier": "default",
+      "reasoning_effort": "none",
+      "output_limit": 1024,
+      "http": 200,
+      "response_status": "completed",
+      "incomplete_reason": null,
+      "abstention_reason": null,
+      "input_tokens": 1115,
+      "output_tokens": 332,
+      "reasoning_tokens": 0,
+      "elapsed_seconds_including_local_validation": 4.131,
+      "ledger_cost_nano_upper": 305300,
+      "request_sha256": "d9b911ed052db5281a8a169fd40abebd701265d5063901d0c66e7dbcee85e7ae",
+      "transport_sha256": "ed295937bb2a16ed49fad078d6bad3e05ad4db9d0d30eb4d4c15f38f60d79d3a"
+    }
+  ],
+  "diagnostic_baseline": {
+    "pairs": 14,
+    "chars_per_arm": 195469,
+    "cases": [
+      {
+        "case_id": "terra-ecs-b4-014",
+        "selected_chars": 629,
+        "selected_members": 2,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "terra-ecs-b11-005",
+        "selected_chars": 295,
+        "selected_members": 1,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "legacy-session2-v5-s1-t02",
+        "selected_chars": 1533,
+        "selected_members": 3,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "qst_0621",
+        "selected_chars": 9768,
+        "selected_members": 17,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "qst_0744",
+        "selected_chars": 60219,
+        "selected_members": 107,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "qst_0150",
+        "selected_chars": 34317,
+        "selected_members": 65,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "qst_0942",
+        "selected_chars": 24416,
+        "selected_members": 45,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "qst_0131",
+        "selected_chars": 40693,
+        "selected_members": 76,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "legacy-session3-v5-s1-t02",
+        "selected_chars": 1047,
+        "selected_members": 2,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "forward-session14-v7-s1-t10",
+        "selected_chars": 694,
+        "selected_members": 2,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "terra-ecs-b8-006",
+        "selected_chars": 268,
+        "selected_members": 1,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "terra-ecs-b6-019",
+        "selected_chars": 338,
+        "selected_members": 1,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "terra-ecs-b4-009",
+        "selected_chars": 748,
+        "selected_members": 2,
+        "paired_candidate": "N/A_NO_PATCH"
+      },
+      {
+        "case_id": "qst_0840",
+        "selected_chars": 20504,
+        "selected_members": 39,
+        "paired_candidate": "N/A_NO_PATCH"
+      }
+    ]
+  },
+  "candidate_patch_count": 0,
+  "candidate_replays": 0,
+  "reviewed_failure_repairs": "UNKNOWN",
+  "reviewed_regressions": "UNKNOWN",
+  "latency_seconds": 138.818,
+  "cost": {
+    "increment_usd_upper": "0.007584925",
+    "cumulative_usd_upper_before": "1.370204365",
+    "cumulative_usd_upper_after": "1.37778929",
+    "remaining_usd_at_upper": "3.62221071",
+    "original_limit_usd": "5",
+    "round_limit_usd": "0.02",
+    "planned_upper_usd": "0.019968",
+    "ledger_events_before": 668,
+    "ledger_events_after": 680,
+    "ledger_file_sha256_before": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+    "ledger_file_sha256_after": "6b9bbace89243236d7a92467b9a588ad37d6033d8b1c7b1ed8829c7bd41ec5db",
+    "pending": 0,
+    "unbounded": 0,
+    "prior_bounded_UNKNOWN": 5,
+    "provider_invoiced_charge": "UNKNOWN"
+  },
+  "protected_file_sha256": {
+    "scripts/rsi_candidates.py": "2f537753f740ce832790f25b2af2de6d3e96563e6b18d50b2d5108d25beb36a4",
+    "scripts/run_rsi_offline.py": "9b58b19149c08768ea865314fc0431d1ec0bbd8f46291ba2099ce18dfbe8c81f",
+    "scripts/rsi_feedback.py": "5e16f1d153ac936cff3a54530f87b1bc8708544cd2481ea3b359a254383942cb",
+    "scripts/rsi_delivery_worker.py": "a5f793b9f8f6ad7908c78580a670c0cc5c909898dc8e4c36d05fdbc2a330d3da",
+    "scripts/replay_source_preparation.py": "484274d899761eb0641a2ccc15886b8ae6b70dd242a0fb53f6f5adef9c49c020",
+    "scripts/rsi_decision.py": "b8f0d28211aca4ffb01b9f0c3bb66bc4ffd4669193430ac49a5acd86a1512fa1"
+  },
+  "raw_round_report_sha256": "c1cecc66dc740de7c50e63926a483acdf7e62a7964e4f3cb76cf32a23ad90769",
+  "cli_exit_code": 0
+}

@@ -9,11 +9,12 @@ import urllib.request
 import urllib.error
 
 from rsi_candidates import canonical, sha
+from rsik.response_audit import inspect as audit_response
 
 ROLES = {
     "diagnosis": ("gpt-6-luna", "max"),
-    "analysis": ("gpt-6.1-sol", "high"),
-    "implementation": ("gpt-6.1-sol", "medium"),
+    "analysis": ("gpt-6.2-sol", "medium"),
+    "implementation": ("gpt-6-luna", "max"),
     "evaluation": ("gpt-6-luna", "max"),
     "experience": ("gpt-6.1-terra", "xhigh"),
 }
@@ -156,6 +157,7 @@ def call(role, info, cfg, step, state, limit, root, save, reuse=None, expected_r
             receipt["status"] = "PROVIDER_ERROR"
             raise ValueError("Responses HTTP " + str(status))
         response = json.loads(body)
+        completion, value = audit_response({'transport_status':'RECEIVED', 'response':response}, combine_text=True)
         usage = response.get("usage") or {}
         receipt.update(returned_model=response.get("model"), provider_id=response.get("id"),
                        response_status=response.get("status"))
@@ -164,7 +166,8 @@ def call(role, info, cfg, step, state, limit, root, save, reuse=None, expected_r
                            reused_output_tokens=usage.get("output_tokens"), usage_accounting="REUSED_NO_NEW_TOKENS")
         else:
             receipt.update(usage=usage, input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"))
-        if response.get("status") != "completed":
+        if completion["output_classification"] != "COMPLETE":
+            receipt["output_classification"] = completion["output_classification"]
             receipt["unknown_reason"] = "INCOMPLETE_RESPONSE"
             receipt["incomplete_details"] = response.get("incomplete_details")
             raise ValueError("Incomplete response")
@@ -172,9 +175,7 @@ def call(role, info, cfg, step, state, limit, root, save, reuse=None, expected_r
             receipt["unknown_reason"] = "UNEXPECTED_MODEL"
             raise ValueError("Unexpected returned model")
         receipt["status"] = "INVALID_OUTPUT"
-        content = [c["text"] for item in response.get("output", []) if item.get("type") == "message"
-                   for c in item.get("content", []) if c.get("type") == "output_text"]
-        value = normalize_output(role, json.loads("".join(content)))
+        value = normalize_output(role, value)
         receipt["status"] = "REUSED" if reused else "RETURNED"
         save(directory / "output.json", value)
         return value

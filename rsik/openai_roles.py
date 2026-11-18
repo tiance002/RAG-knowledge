@@ -20,6 +20,9 @@ from .contracts import (ANGLES, ContractError, role_schema, unwrap_response,
 from .errors import StageFailure
 from .locking import atomic_write
 from .state import canonical, digest
+from .response_audit import (INCOMPLETE_PATCH, INCOMPLETE_STRUCTURED_OUTPUT,
+                             inspect as audit_response, patch_output_incomplete)
+from .token_budget import LEGACY as LEGACY_TOKEN_BUDGET, APPROVED_DEV_V0, profile_identity, role_limit
 
 
 POLICY = '''You are one isolated role in a deterministic Context Selection experiment.
@@ -58,6 +61,38 @@ TASKS['curator'] += ' completed_candidate, when present, is a trusted workflow a
 
 
 from .role_profiles import LEGACY, DEPENDENCY, DEPENDENCY_TASK, roles_for, profile_manifest
+
+ALLOWED_MODELS = frozenset({'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.2-sol'})
+MODEL_REASONING_EFFORT = {'gpt-6-luna': 'none', 'gpt-6.1-sol': 'low', 'gpt-6.2-sol': 'medium'}
+
+
+def reasoning_effort(model):
+    try:
+        return MODEL_REASONING_EFFORT[model]
+    except KeyError as exc:
+        raise ValueError('MODEL_NOT_ALLOWED') from exc
+
+
+def _validate_decode_overrides(models, overrides, *, launch=None, max_attempts=2):
+    """Validate bounded DEV decode controls without opening the formal launch path."""
+    if type(max_attempts) is not int or max_attempts not in (1, 2):
+        raise ValueError('MODEL_ATTEMPT_LIMIT_NOT_ALLOWED')
+    overrides = dict(overrides or {})
+    if launch is not None and (overrides or max_attempts != 2):
+        raise ValueError('DEV_DECODE_OVERRIDES_NOT_ALLOWED_WITH_FORMAL_LAUNCH')
+    if set(overrides) - set(TASKS):
+        raise ValueError('MODEL_DECODE_OVERRIDE_NOT_ALLOWED')
+    for role, settings in overrides.items():
+        if not isinstance(settings, dict) or not settings or set(settings) - {'reasoning_effort', 'max_output_tokens'}:
+            raise ValueError('MODEL_DECODE_OVERRIDE_NOT_ALLOWED')
+        model = models.get(role, 'gpt-6-luna')
+        if 'reasoning_effort' in settings and (model, settings['reasoning_effort']) != ('gpt-6-luna', 'max'):
+            raise ValueError('MODEL_DECODE_OVERRIDE_NOT_ALLOWED')
+        if 'max_output_tokens' in settings and type(settings['max_output_tokens']) is not int:
+            raise ValueError('MODEL_DECODE_OVERRIDE_NOT_ALLOWED')
+        if 'max_output_tokens' in settings and settings['max_output_tokens'] not in {1024, 2048, 3072, 4096}:
+            raise ValueError('MODEL_DECODE_OVERRIDE_NOT_ALLOWED')
+    return overrides
 TASKS['P3_DEPENDENCY'] = DEPENDENCY_TASK
 from .role_profiles import M1_ADAPTIVE_V1, M1_INDEPENDENT_GENERALIST_V1, M1_PROFILES, M1_SAFETY_POLICY, m1_tasks
 for _profile in M1_PROFILES:
@@ -91,7 +126,7 @@ def single_request(body, key_file, timeout, *, response_path=None):
 
 
 class OpenAIRoles:
-    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None, launch=None, observer=None, runtime_identity=None):
+    def __init__(self, budget, directory, key_file, scanner, *, deadline=None, transport=single_request, models=None, decode_overrides=None, max_attempts=2, service_tier=None, request_guard=None, seam_profile='legacy', before_request=None, role_profile=LEGACY, strategy_context=None, launch=None, observer=None, runtime_identity=None, token_budget_profile=LEGACY_TOKEN_BUDGET):
         self.budget, self.directory = budget, Path(directory)
         self.key_file, self.scanner = Path(key_file), scanner
         self.deadline, self.transport = deadline, transport
@@ -103,13 +138,30 @@ class OpenAIRoles:
         self.launch=launch
         roles_for(role_profile)
         self.models = dict(models or {})
-        if set(self.models)-set(TASKS) or any(model not in {'gpt-6-luna','gpt-6.1-sol'} for model in self.models.values()):
+        if set(self.models)-set(TASKS) or any(model not in ALLOWED_MODELS for model in self.models.values()):
             raise ValueError('MODEL_NOT_ALLOWED')
+        self.max_attempts = max_attempts
+        self.decode_overrides = _validate_decode_overrides(
+            self.models, decode_overrides, launch=launch, max_attempts=max_attempts)
+        if service_tier not in (None, 'default') or (launch is not None and service_tier is not None):
+            raise ValueError('DEV_SERVICE_TIER_NOT_ALLOWED_WITH_FORMAL_LAUNCH')
+        self.service_tier = service_tier
+        if request_guard is not None and (not callable(request_guard) or launch is not None):
+            raise ValueError('DEV_REQUEST_GUARD_NOT_ALLOWED_WITH_FORMAL_LAUNCH')
+        self.request_guard = request_guard
+        self.token_budget = profile_identity(token_budget_profile)
+        if token_budget_profile != LEGACY_TOKEN_BUDGET and (
+                launch is not None or service_tier != 'default' or request_guard is None or self.decode_overrides):
+            raise ValueError('TOKEN_BUDGET_PROFILE_REQUIRES_EXPLICIT_PREFLIGHT')
+        if token_budget_profile == APPROVED_DEV_V0 and max_attempts != 1:
+            raise ValueError('TOKEN_BUDGET_PROFILE_FORBIDS_REPAIR')
         self.runtime_identity = None
         if role_profile in M1_PROFILES:
-            self.runtime_identity = (runtime_profile_identity(role_profile, self.models, seam_profile)
+            self.runtime_identity = (runtime_profile_identity(role_profile, self.models, seam_profile,
+                                                               self.decode_overrides, self.service_tier, token_budget_profile)
                                      if runtime_identity is None else deepcopy(runtime_identity))
-            validate_runtime_profile_identity(self.runtime_identity, role_profile, self.models, seam_profile)
+            validate_runtime_profile_identity(self.runtime_identity, role_profile, self.models, seam_profile,
+                                              self.decode_overrides, self.service_tier, token_budget_profile)
         self.directory.mkdir(parents=True, exist_ok=True)
         self._observer = observer
         self._observer_lock = threading.RLock()
@@ -154,7 +206,8 @@ class OpenAIRoles:
     def _call(self, role, public, diagnosis=None, *, assignment=None):
         self._observation_local.invocation = {}
         if self.role_profile in M1_PROFILES:
-            validate_runtime_profile_identity(self.runtime_identity, self.role_profile, self.models, self.seam_profile)
+            validate_runtime_profile_identity(self.runtime_identity, self.role_profile, self.models, self.seam_profile,
+                                              self.decode_overrides, self.service_tier, self.token_budget['version'])
         if (self.role_profile in M1_PROFILES or role.endswith('_GENERALIST')) and role not in (
                 'diagnose', 'curator', 'meta', *roles_for(self.role_profile).values()):
             raise ValueError('ROLE_PROFILE_REQUIRED')
@@ -218,7 +271,7 @@ class OpenAIRoles:
                 raise ContractError('UNAUTHORIZED_ASSIGNMENT')
         elif self.role_profile == M1_ADAPTIVE_V1 and role in roles_for(self.role_profile).values():
             raise ContractError('ADAPTIVE_ASSIGNMENT_REQUIRED')
-        for attempt in range(2):
+        for attempt in range(self.max_attempts):
             if self.transport is single_request:
                 from .launch import validate_launch
                 options = ({'role_profile': self.role_profile, 'runtime_identity': self.runtime_identity}
@@ -251,15 +304,15 @@ class OpenAIRoles:
                 prompt_profile = (M1_INDEPENDENT_GENERALIST_V1 if assignment is not None
                     and assignment['assignment_reason'] == 'EXPLICIT_FROZEN_GENERALIST_FALLBACK' else self.role_profile)
                 policy, task = effective_role_prompt(prompt_profile, role, self.seam_profile)
-            body = {'model': model, 'store': False, 'reasoning': {'effort': 'none' if model=='gpt-6-luna' else 'low'},
-                    'max_output_tokens': 1024 if role == 'diagnose' else 3072 if role in ANGLES else 2048,
+            body = {'model': model, 'store': False, **decode_settings(
+                        role, model, self.decode_overrides.get(role), token_budget_profile=self.token_budget['version'],
+                        repair=bool(attempt)),
                     'input': [{'role': 'system', 'content': policy + '\n' + task},
                               {'role': 'user', 'content': canonical(context).decode('utf-8')}],
                     'text': {'format': {'type': 'json_schema', 'name': 'rsi_role',
                                        'strict': True, 'schema': role_schema(role, adaptive=self.role_profile == M1_ADAPTIVE_V1)}}}
-            if model == 'gpt-6-luna': body['temperature'] = 0
-            if self.role_profile in M1_PROFILES:
-                body.update(decode_settings(role, model))
+            if self.service_tier is not None:
+                body['service_tier'] = self.service_tier
             projection=None
             if self.seam_profile=='query-autonomous-v1':
                 visible=context['public']
@@ -286,6 +339,11 @@ class OpenAIRoles:
             # UTF-8 byte count is a conservative bound on byte-level token count.
             if len(canonical(body)) > 16_384:
                 raise ContractError('INPUT_TOO_LARGE')
+            if self.request_guard is not None:
+                guarded = deepcopy(body)
+                self.request_guard(guarded, role)
+                if guarded != body:
+                    raise ContractError('REQUEST_GUARD_MUTATED_BODY')
             key = public['round_id'] + '-' + role + '-' + str(attempt)
             path = self.directory / (key + '.json')
             request_path = self.directory / (key + '.request.json')
@@ -306,10 +364,16 @@ class OpenAIRoles:
                            'prompt_hash': digest(body['input'][0]), 'role_profile': self.role_profile,
                            'role_profile_hash': (self.runtime_identity['sha256'] if self.runtime_identity
                                                  else digest(profile_manifest(self.role_profile))),
-                           'request_hash': digest(body), 'seam_profile': self.seam_profile}
+                           'request_hash': digest(body), 'seam_profile': self.seam_profile,
+                           'requested_output_tokens': body['max_output_tokens'],
+                           'token_budget_profile': self.token_budget['version'],
+                           'token_budget_sha256': self.token_budget['sha256']}
             observation['attempt_id'] = observation['invocation_id']
+            if attempt:
+                observation['repair_of'] = public['round_id'] + '-' + role + '-0'
             self._observation_local.invocation = dict(observation)
             with self.observer.invocation(observation) as observed:
+                local_timeout = False
                 remaining = 90 if self.deadline is None else min(90, self.deadline - time.monotonic())
                 if remaining <= 0:
                     raise TimeoutError('AGENT_TIMEOUT')
@@ -348,36 +412,43 @@ class OpenAIRoles:
                         raise
                     except TimeoutError:
                         receipt = {'transport_status': 'UNKNOWN'}
+                        local_timeout = True
                         observed.outcome, observed.failure_origin = 'TIMEOUT', 'TRANSPORT'
                     except Exception:
                         receipt = {'transport_status': 'UNKNOWN'}
                     # Persist before billing receipt; recovery can reconcile the
                     # actual saved usage without sending another request.
                     atomic_write(path, canonical(receipt), exclusive=True)
-                response = receipt.get('response', {})
+                response = receipt.get('response')
+                response = response if isinstance(response, dict) else {}
                 usage = response.get('usage') if receipt.get('transport_status') == 'RECEIVED' else None
+                output, value = audit_response(receipt)
+                if local_timeout:
+                    output['output_classification'] = 'TIMEOUT'
+                output_kind = output['output_classification']
                 state = self.budget.complete(key, usage, status=receipt['transport_status'],
                                              provider_request_id=receipt.get('provider_request_id'))
                 # Record actual usage before optional downstream processing can
                 # fail. Telemetry failure must not turn a saved response into
                 # unknown/free usage or trigger another network request.
-                observed.received(receipt)
+                observed.received(receipt, output)
                 if self.before_request:self.before_request()
+                if receipt.get('transport_status') == 'RECEIVED' and output_kind not in {'COMPLETE', INCOMPLETE_STRUCTURED_OUTPUT}:
+                    observed.output_failure(output_kind)
                 if state['unbounded_usage_requests']:
                     raise StageFailure('AGENT_ERROR', 'BILLING_OR_REQUEST_STATUS_UNKNOWN', global_stop=True)
                 if response.get('model') != model and not str(response.get('model', '')).startswith(model+'-'):
                     observed.outcome, observed.failure_origin = 'API_ERROR', 'PROVIDER'
                     raise StageFailure('AGENT_ERROR', 'MODEL_NOT_ALLOWED', global_stop=True)
+                if output_kind not in {'COMPLETE', INCOMPLETE_STRUCTURED_OUTPUT}:
+                    raise StageFailure('TIMEOUT' if output_kind == 'TIMEOUT' else 'AGENT_ERROR',
+                                       output_kind, global_stop=False)
+                if output_kind == 'COMPLETE' and role in ANGLES and patch_output_incomplete(value):
+                    observed.output_failure(INCOMPLETE_PATCH, origin='CONTRACT')
+                    raise StageFailure('AGENT_ERROR', INCOMPLETE_PATCH, global_stop=False)
                 try:
-                    if response.get('status') != 'completed':
-                        raise ContractError('INCOMPLETE_RESPONSE')
-                    messages = response.get('output', [])
-                    parts = [part['text'] for message in messages if message.get('type') == 'message'
-                             and message.get('phase') in (None, 'final_answer')
-                             for part in message.get('content', []) if part.get('type') == 'output_text']
-                    if len(parts) != 1:
-                        raise ContractError('CONTRACT_ERROR')
-                    value = json.loads(parts[0])
+                    if output_kind == INCOMPLETE_STRUCTURED_OUTPUT:
+                        raise ContractError(INCOMPLETE_STRUCTURED_OUTPUT)
                     self.scanner.check(value)
                     result = unwrap_response(value)
                     if result is not None:
@@ -388,8 +459,13 @@ class OpenAIRoles:
                     return value
                 except (ContractError, ValueError, TypeError, KeyError):
                     observed.validated(False)
-                    if attempt:
-                        return {'status': 'ABSTAIN', 'result': None, 'reason': 'CONTRACT_ERROR_AFTER_ONE_REPAIR'}
+                    if output_kind == INCOMPLETE_STRUCTURED_OUTPUT:
+                        observed.output_failure(INCOMPLETE_STRUCTURED_OUTPUT, origin='CONTRACT')
+                    if attempt + 1 == self.max_attempts:
+                        if output_kind == INCOMPLETE_STRUCTURED_OUTPUT:
+                            raise StageFailure('AGENT_ERROR', INCOMPLETE_STRUCTURED_OUTPUT, global_stop=False)
+                        reason = 'CONTRACT_ERROR_AFTER_ONE_REPAIR' if self.max_attempts == 2 else 'CONTRACT_ERROR_NO_REPAIR'
+                        return {'status': 'ABSTAIN', 'result': None, 'reason': reason}
         raise AssertionError('unreachable')
 
 
@@ -402,14 +478,28 @@ def effective_role_prompt(profile, role, seam_profile):
     return M1_SAFETY_POLICY, tasks[role]
 
 
-def decode_settings(role, model):
-    value = {'reasoning': {'effort': 'none' if model == 'gpt-6-luna' else 'low'},
-             'max_output_tokens': 1024 if role == 'diagnose' else 3072 if role in ANGLES else 2048}
-    if model == 'gpt-6-luna': value['temperature'] = 0
+def decode_settings(role, model, overrides=None, *, token_budget_profile=LEGACY_TOKEN_BUDGET, repair=False):
+    overrides = dict(overrides or {})
+    if set(overrides) - {'reasoning_effort', 'max_output_tokens'}:
+        raise ValueError('MODEL_DECODE_OVERRIDE_NOT_ALLOWED')
+    effort = reasoning_effort(model)
+    if token_budget_profile != LEGACY_TOKEN_BUDGET and model == 'gpt-6-luna' and role in ANGLES and not repair:
+        effort = 'max'
+    if 'reasoning_effort' in overrides:
+        if (model, overrides['reasoning_effort']) != ('gpt-6-luna', 'max'):
+            raise ValueError('MODEL_REASONING_OVERRIDE_NOT_ALLOWED')
+        effort = overrides['reasoning_effort']
+    value = {'reasoning': {'effort': effort},
+             'max_output_tokens': overrides.get('max_output_tokens', role_limit(token_budget_profile, role, repair=repair))}
+    if (type(value['max_output_tokens']) is not int
+            or ('max_output_tokens' in overrides and value['max_output_tokens'] not in {1024, 2048, 3072, 4096})):
+        raise ValueError('MODEL_DECODE_OVERRIDE_NOT_ALLOWED')
+    if model == 'gpt-6-luna' and effort != 'max': value['temperature'] = 0
     return value
 
 
-def runtime_profile_identity(profile, models, seam_profile):
+def runtime_profile_identity(profile, models, seam_profile, decode_overrides=None, service_tier=None,
+                             token_budget_profile=LEGACY_TOKEN_BUDGET):
     """Freeze effective prompts/tasks/decode/schema/models/seam/implementation for M1.
 
     Suitable for launch and paired-run locks; no private context or credentials.
@@ -417,19 +507,24 @@ def runtime_profile_identity(profile, models, seam_profile):
     from .query_workflow import implementation_hashes
     roles = ('diagnose',) + tuple(roles_for(profile).values()) + ('curator', 'meta')
     if profile not in M1_PROFILES: raise ValueError('M1_ROLE_PROFILE_REQUIRED')
+    if service_tier not in (None, 'default'):
+        raise ValueError('DEV_SERVICE_TIER_NOT_ALLOWED')
     actual_models = {r:models.get(r, 'gpt-6-luna') for r in roles}
-    if set(models) - set(roles) or any(m not in {'gpt-6-luna','gpt-6.1-sol'} for m in actual_models.values()):
+    if set(models) - set(roles) or any(m not in ALLOWED_MODELS for m in actual_models.values()):
         raise ValueError('MODEL_NOT_ALLOWED')
+    effective_overrides = _validate_decode_overrides(actual_models, decode_overrides)
     specs = {}
     for role in roles:
         policy, task = effective_role_prompt(profile, role, seam_profile)
         specs[role] = {'policy':policy, 'task':task, 'system_prompt':policy + '\n' + task,
                        'prompt_sha256': digest(policy + '\n' + task), 'task_sha256': digest(task),
-                       'model':actual_models[role], 'decode':decode_settings(role,actual_models[role]),
+                       'model':actual_models[role], 'decode':decode_settings(role,actual_models[role],effective_overrides.get(role), token_budget_profile=token_budget_profile),
                        'response_schema':role_schema(role, adaptive=profile == M1_ADAPTIVE_V1)}
     binding = {'schema':'rsi-m1-runtime-profile/v1', 'role_profile':profile_manifest(profile),
                'seam_profile':seam_profile, 'models':actual_models, 'roles':specs,
-               'implementation':implementation_hashes()}
+               'implementation':implementation_hashes(), 'token_budget':profile_identity(token_budget_profile)}
+    if service_tier is not None:
+        binding['service_tier'] = service_tier
     if profile == M1_ADAPTIVE_V1:
         from .adaptive_dispatch import catalog_identity
         binding['dispatcher'] = catalog_identity()
@@ -438,7 +533,7 @@ def runtime_profile_identity(profile, models, seam_profile):
             policy, task = effective_role_prompt(M1_INDEPENDENT_GENERALIST_V1, role, seam_profile)
             fallback_specs[role] = {'policy': policy, 'task': task,
                 'system_prompt': policy + '\n' + task, 'prompt_sha256': digest(policy + '\n' + task),
-                'model': actual_models[role], 'decode': decode_settings(role, actual_models[role]),
+                'model': actual_models[role], 'decode': decode_settings(role, actual_models[role], effective_overrides.get(role), token_budget_profile=token_budget_profile),
                 'response_schema': role_schema(role), 'capability': 'fixed_selection_seam_only'}
         binding['fallback'] = {'profile': 'M1_ADAPTIVE_FROZEN_GENERALIST_FALLBACK_V1',
             'roles': fallback_specs, 'activation': ['DISPATCH_UNAVAILABLE'],
@@ -446,7 +541,8 @@ def runtime_profile_identity(profile, models, seam_profile):
     return {**binding, 'sha256':digest(binding)}
 
 
-def validate_runtime_profile_identity(binding, profile, models, seam_profile):
-    expected = runtime_profile_identity(profile, models, seam_profile)
+def validate_runtime_profile_identity(binding, profile, models, seam_profile, decode_overrides=None, service_tier=None,
+                                      token_budget_profile=LEGACY_TOKEN_BUDGET):
+    expected = runtime_profile_identity(profile, models, seam_profile, decode_overrides, service_tier, token_budget_profile)
     if binding != expected: raise ValueError('M1_RUNTIME_PROFILE_IDENTITY_CHANGED')
     return expected

@@ -24,7 +24,7 @@ from run_rsi_loop import selector
 
 def proposer_model(history):
     """Escalate coding failures only; no escalation merely for absent gains."""
-    return 'gpt-6.1-sol' if len(history)>=2 and all(h['outcome'] in {'PATCH_INVALID','UNIT_FAILED'} for h in history[-2:]) else 'gpt-6-luna'
+    return 'gpt-6.2-sol' if len(history)>=2 and all(h['outcome'] in {'PATCH_INVALID','UNIT_FAILED'} for h in history[-2:]) else 'gpt-6-luna'
 
 
 def history_item(proposal,outcome,reasons=(),counts=None,*,quality_verdict=None,execution_status=None,failure_origin=None):
@@ -136,6 +136,10 @@ def remember_round(memory,history,result,worker,round_number):
         entry=remember(memory,key,round_number,item)
         history.append(item);items.append({'slot':slot,**entry})
     if not items:
+        from .response_audit import NON_STRATEGY_OUTPUT_FAILURES
+        reasons = set(result.get('agent_call_results', {}).values()) | {result.get('stop_reason')}
+        if reasons & NON_STRATEGY_OUTPUT_FAILURES:
+            return items
         stopped=result.get('execution_state')=='FAILED' or result.get('stop_reason') in {'OWNER_REQUESTED_STOP','TEST_INVALIDATED_BY_ENGINEER','FROZEN_SYSTEM_CHANGED'}
         item=history_item(None,'STOPPED' if stopped else 'ABSTAIN',[result.get('stop_reason') or 'NO_PROPOSAL_RETURNED'],
             execution_status='STOPPED' if stopped else 'NOT_STARTED',failure_origin='GLOBAL_STOP' if stopped else 'NONE')

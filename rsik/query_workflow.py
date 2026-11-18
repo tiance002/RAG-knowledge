@@ -562,6 +562,9 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
                 if error.global_stop:
                     raise
                 advisory_failures.append({'role': role, 'reason_code': error.reason_code})
+                from .response_audit import NON_STRATEGY_OUTPUT_FAILURES
+                if error.reason_code in NON_STRATEGY_OUTPUT_FAILURES:
+                    raise
                 return {'status': 'ABSTAIN', 'result': None, 'reason': error.reason_code}
             except TimeoutError:
                 advisory_failures.append({'role': role, 'reason_code': 'AGENT_TIMEOUT'})
