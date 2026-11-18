@@ -1,0 +1,212 @@
+{
+  "schema": "s3-v24-s33-dev20-r2-feasibility/v1",
+  "status": "BLOCKED_DATA",
+  "DEV20_R2_status": "NOT_FROZEN_NOT_QUALIFIED",
+  "draft_status": "DRAFT_UNGRADED_NOT_ADMITTED",
+  "denominators": {
+    "fixed_selected_DEV20": {
+      "total": 20,
+      "retrieval_cases": 17,
+      "business_controls": 3,
+      "immutable": true
+    },
+    "old_v23_DEV20": {
+      "total": 20,
+      "merge_with_selected_DEV20": false
+    },
+    "original12_drafts": {
+      "total": 12,
+      "DSM": 8,
+      "JZG": 4,
+      "graded": 0,
+      "admitted": 0
+    },
+    "candidate_source_groups": {
+      "total": 2,
+      "admitted_independent_families": 0,
+      "unknown_families": 2
+    }
+  },
+  "source_eligibility_counts": {
+    "denominator_unit": "unique_existing_DEV_raw_source_sha256",
+    "total": 31,
+    "eligible": 0,
+    "blocked": 0,
+    "unknown": 31
+  },
+  "class_gate": {
+    "minimum_positive_examples_per_class": 2,
+    "minimum_positive_independent_families_per_class": 2,
+    "every_positive_example_needs_matched_negative": true,
+    "every_positive_family_needs_matched_negative": true,
+    "MULTI_SOURCE_SUPPORT": "Each qualifying supporting design must contain at least two independently proven supporting families; two file IDs are insufficient.",
+    "policy_refs": [
+      "rsik/source_relations.py:135-142,566",
+      "rsik/fixed_history_coverage.py:475"
+    ]
+  },
+  "class_deficits": [
+    {
+      "category": "NONSEED_NECESSITY",
+      "admitted_positive_families": 0,
+      "qualified_positive_examples": 0,
+      "verified_current_negative_controls": 0,
+      "minimum_additional_qualified_families_for_class": 2,
+      "minimum_additional_qualified_examples_for_class": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "CROSS_MEMBER_RELATION",
+      "admitted_positive_families": 0,
+      "qualified_positive_examples": 0,
+      "verified_current_negative_controls": 0,
+      "minimum_additional_qualified_families_for_class": 2,
+      "minimum_additional_qualified_examples_for_class": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "NEGATION_CONDITION",
+      "admitted_positive_families": 0,
+      "qualified_positive_examples": 0,
+      "verified_current_negative_controls": 0,
+      "minimum_additional_qualified_families_for_class": 2,
+      "minimum_additional_qualified_examples_for_class": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "UNIT_SCOPE_OWNERSHIP",
+      "admitted_positive_families": 0,
+      "qualified_positive_examples": 0,
+      "verified_current_negative_controls": 0,
+      "minimum_additional_qualified_families_for_class": 2,
+      "minimum_additional_qualified_examples_for_class": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "MULTI_SOURCE_SUPPORT",
+      "admitted_positive_families": 0,
+      "qualified_positive_examples": 0,
+      "verified_current_negative_controls": 0,
+      "minimum_additional_qualified_families_for_class": 2,
+      "minimum_additional_qualified_examples_for_class": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "CITATION_SUPPORT",
+      "admitted_positive_families": 0,
+      "qualified_positive_examples": 0,
+      "verified_current_negative_controls": 0,
+      "minimum_additional_qualified_families_for_class": 2,
+      "minimum_additional_qualified_examples_for_class": 2,
+      "status": "BLOCKED_DATA"
+    }
+  ],
+  "lower_bounds": {
+    "newly_qualified_distinct_families_global_at_least": 2,
+    "family_category_incidences_at_least": 12,
+    "qualified_example_category_incidences_at_least": 12,
+    "interpretation": "A shared pair could support all classes only if every class meets its real evidence and paired-control gate. This is a logical lower bound, not a sufficient acquisition plan or a guarantee that two sources suffice. Newly qualified families may come from resolved existing provenance or new sources.",
+    "minimum_newly_acquired_sources": "UNKNOWN; no policy requires 20 independent source families",
+    "required_distinct_families_for_20_slots": "NOT_SPECIFIED_BY_EXISTING_POLICY",
+    "four_structural_case_replacement_minimum": 4,
+    "four_structural_cases_atoms": 9,
+    "new_distinct_families_implied_by_four_replacements": "UNKNOWN; replacing a case does not prove independent provenance"
+  },
+  "draft_structural_control_feasibility": {
+    "denominator": 12,
+    "eligible": 0,
+    "blocked": 4,
+    "unknown": 8,
+    "basis": "DSM 8 target headings are outside mapped native spans, binding UNKNOWN. JZG has two overlapping native rows, but all four target spans are supported only by member0; deleting the mandatory seed is illegal. Thus effective single-seed necessity blocks four drafts; do not claim the document has only one physical chunk.",
+    "family_admission_is_separate": true
+  },
+  "remaining_requirements": [
+    "DEV-only admissible source projection with versions/upstream/derivative/permission provenance",
+    "opaque FINAL family intersection decision, not hash-only clearance",
+    "separate development exposure registration before actual use",
+    "necessary atom semantic review and exact source evidence binding",
+    "real native member/seed mapping and every-atom legal negative controls",
+    "independent cross-family multi-source supporting examples",
+    "freeze separate DEV20-R2 only after qualification; retain old20 and original12 denominators",
+    "new real A/A baseline after all data gates; not run now"
+  ],
+  "inputs": [
+    {
+      "path": "HISTORICAL_VAR/rsi-qa500-selected-dev-20261116/audit-r2/audit.restricted.json",
+      "bytes": 387244,
+      "sha256": "56c6343f1628a3cba0e325b392f899fb40176ee71d7e6d0f8f426427c4ab787c"
+    },
+    {
+      "path": "HISTORICAL_VAR/rsi-v23-qa300-selected-20261116/source-catalog/selected40_source_catalog.v2.json",
+      "bytes": 551669,
+      "sha256": "32f2a182d51141caf7b58c3f5793535851161399fdff9540d48e7dd4415584a9"
+    },
+    {
+      "path": "HISTORICAL_VAR/rsi-v23-qa300-selected-20261116/exposure-audit/selected40_exposure_join.v2.json",
+      "bytes": 32561,
+      "sha256": "7e2ef1761c1df60693752ada220699995f1932d8ddccf12153e8d1ac3f5d89a4"
+    },
+    {
+      "path": "HISTORICAL_VAR/rsi-v23-qa300-selected-20261116/firewall-planning/plan-r1/firewall-plan.restricted.json",
+      "bytes": 89694,
+      "sha256": "130e27da9ed8174d9017bbbf30f403b2c359a226c248e7a39066f81dd5c7f138"
+    },
+    {
+      "path": "WORKTREE/docs/evidence/rsi-v24-s32-data-audit.json",
+      "bytes": 2675,
+      "sha256": "2e104280bb5f8a0d13175280d032cc7dccaba4ed8d71928c23ace57e218e6868"
+    },
+    {
+      "path": "WORKTREE/rsik/source_relations.py",
+      "bytes": 42709,
+      "sha256": "3b2b00e9a46fdc1947e9592b089e3d1bf94964e00e1153fa81e2aa5a4290e5c1"
+    },
+    {
+      "path": "WORKTREE/rsik/fixed_history_coverage.py",
+      "bytes": 34653,
+      "sha256": "ace950ed9b0c012f082155e50c143634444712456af6a2d5bc9d613a3ed5305d"
+    },
+    {
+      "path": "HISTORICAL_VAR/rsi-v23-qa300-selected-20261116/gold-native-capture/capture.restricted.json",
+      "bytes": 32183,
+      "sha256": "2545dee8a4a2248ef64cf756a9a0c1cc4712d4ad184e8677bf93b7dfc4404528",
+      "usage": "draft33 native topology audit; no new source extraction"
+    },
+    {
+      "path": "HISTORICAL_VAR/rsi-v23-qa300-selected-20261116/dev-parsed-capture/capture.stdout.restricted.json",
+      "bytes": 932912,
+      "sha256": "f666610241dd576c2ed6b0ee3aa7d192dc3b5d76f8c882ed93bc2943360f2a34",
+      "usage": "draft33 native topology audit; no new source extraction"
+    }
+  ],
+  "execution": {
+    "real_baseline": "NOT_RUN",
+    "models": 0,
+    "replays": 0,
+    "Gold_written": false,
+    "FINAL_read": false,
+    "fixture_replaced": false
+  },
+  "historical_prepare_gap_denominators": {
+    "fixture_atom_missing_control_incidences": 92,
+    "by_fixture": {
+      "main": 25,
+      "question-paraphrase": 25,
+      "forward-seed": 27,
+      "backward-seed": 15
+    },
+    "distinct_question_atom_pairs": 32,
+    "structural_distinct_atoms": 9,
+    "structural_questions": 4,
+    "structural_fixture_atom_incidences": 36,
+    "other_geometry_distinct_atoms": 23,
+    "other_geometry_fixture_atom_incidences": 56,
+    "source": "independent gap33 audit of native frozen suites; artifact gap matrix remains canonical",
+    "warning": "These are distinct atom and suite-incidence denominators, not new independent families or added questions."
+  },
+  "path_roots": {
+    "DEV_SNAPSHOT": "qa500-ecs-sources-20261116 frozen local snapshot root, provided by local operator",
+    "HISTORICAL_VAR": "rsi-work/var historical artifacts root, provided by local operator",
+    "WORKTREE": "repository checkout"
+  }
+}
