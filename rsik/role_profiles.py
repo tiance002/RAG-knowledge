@@ -4,8 +4,10 @@ LEGACY = 'legacy/v1'
 DEPENDENCY = 'query-k3-dependency/v1'
 M1_SPECIALIZED_V1 = 'M1_SPECIALIZED_V1'
 M1_INDEPENDENT_GENERALIST_V1 = 'M1_INDEPENDENT_GENERALIST_V1'
-M1_PROFILES = (M1_SPECIALIZED_V1, M1_INDEPENDENT_GENERALIST_V1)
+M1_ADAPTIVE_V1 = 'M1_ADAPTIVE_V1'
+M1_PROFILES = (M1_SPECIALIZED_V1, M1_INDEPENDENT_GENERALIST_V1, M1_ADAPTIVE_V1)
 PROFILES = {
+ M1_ADAPTIVE_V1: {'P1_DEDUP':'P1_GENERALIST','P2_BUDGET':'P2_GENERALIST','P3_ORDER':'P3_GENERALIST'},
  M1_SPECIALIZED_V1: {'P1_DEDUP':'P1_DEDUP','P2_BUDGET':'P2_BUDGET','P3_ORDER':'P3_DEPENDENCY'},
  M1_INDEPENDENT_GENERALIST_V1: {'P1_DEDUP':'P1_GENERALIST','P2_BUDGET':'P2_GENERALIST','P3_ORDER':'P3_GENERALIST'},
  LEGACY: {'P1_DEDUP':'P1_DEDUP','P2_BUDGET':'P2_BUDGET','P3_ORDER':'P3_ORDER'},
@@ -57,4 +59,9 @@ M1_SPECIALIZED_TASKS = {
 def m1_tasks(profile):
  if profile not in M1_PROFILES: raise ValueError('M1_ROLE_PROFILE_REQUIRED')
  proposals = M1_SPECIALIZED_TASKS if profile == M1_SPECIALIZED_V1 else {r:M1_GENERALIST_TASK for r in roles_for(profile).values()}
- return {**M1_SHARED_TASKS, **proposals}
+ tasks = {**M1_SHARED_TASKS, **proposals}
+ if profile == M1_ADAPTIVE_V1:
+  tasks['diagnose'] += ' Return structured task_signals for DEDUP, BUDGET or DEPENDENCY only when supported by exact public evidence_refs. Mark contradictory evidence CONFLICT. Empty task_signals is valid. Do not assign slots or select algorithms.'
+  for role in roles_for(profile).values():
+   tasks[role] = 'Independently propose only the supplied assignment task. Honor its preconditions, forbidden_actions and falsification_requirement. The assignment is a deterministic hypothesis allocation, not evidence of gain. Do not infer peer assignments. ABSTAIN if its constraints cannot be met.'
+ return tasks

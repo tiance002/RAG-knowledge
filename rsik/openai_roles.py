@@ -59,7 +59,7 @@ TASKS['curator'] += ' completed_candidate, when present, is a trusted workflow a
 
 from .role_profiles import LEGACY, DEPENDENCY, DEPENDENCY_TASK, roles_for, profile_manifest
 TASKS['P3_DEPENDENCY'] = DEPENDENCY_TASK
-from .role_profiles import M1_PROFILES, M1_SAFETY_POLICY, m1_tasks
+from .role_profiles import M1_ADAPTIVE_V1, M1_INDEPENDENT_GENERALIST_V1, M1_PROFILES, M1_SAFETY_POLICY, m1_tasks
 for _profile in M1_PROFILES:
     for _role, _task in m1_tasks(_profile).items():
         if _role not in TASKS: TASKS[_role] = _task
@@ -138,18 +138,20 @@ class OpenAIRoles:
     def diagnose(self, public):
         return self.call('diagnose', public)
 
-    def propose(self, angle, public, diagnosis):
-        return self.call(angle, public, diagnosis)
+    def propose(self, angle, public, diagnosis, *, assignment=None):
+        if assignment is None:
+            return self.call(angle, public, diagnosis)
+        return self.call(angle, public, diagnosis, assignment=assignment)
 
-    def call(self, role, public, diagnosis=None):
+    def call(self, role, public, diagnosis=None, *, assignment=None):
         try:
-            return self._call(role, public, diagnosis)
+            return self._call(role, public, diagnosis, assignment=assignment)
         except TimeoutError:
             raise
         except (OSError, sqlite3.Error) as error:
             raise StageFailure('STORAGE_ERROR', 'MODEL_EVIDENCE_STORAGE_UNAVAILABLE') from error
 
-    def _call(self, role, public, diagnosis=None):
+    def _call(self, role, public, diagnosis=None, *, assignment=None):
         self._observation_local.invocation = {}
         if self.role_profile in M1_PROFILES:
             validate_runtime_profile_identity(self.runtime_identity, self.role_profile, self.models, self.seam_profile)
@@ -205,7 +207,17 @@ class OpenAIRoles:
                 or public['evidence_quotes'] != rebuilt['evidence_quotes']):
             raise ContractError('UNAUTHORIZED_PROJECTION_FIELD')
         if diagnosis is not None:
-            validate_diagnosis(diagnosis, public)
+            validate_diagnosis(diagnosis, public, adaptive=self.role_profile == M1_ADAPTIVE_V1)
+        if assignment is not None:
+            from .adaptive_dispatch import validate_assignment
+            if self.role_profile != M1_ADAPTIVE_V1 or role not in roles_for(self.role_profile).values():
+                raise ContractError('UNAUTHORIZED_ASSIGNMENT')
+            validate_assignment(assignment, public, diagnosis)
+            expected_role = roles_for(self.role_profile)[assignment['slot']]
+            if role != expected_role or assignment['task_type'] == 'ABSTAIN':
+                raise ContractError('UNAUTHORIZED_ASSIGNMENT')
+        elif self.role_profile == M1_ADAPTIVE_V1 and role in roles_for(self.role_profile).values():
+            raise ContractError('ADAPTIVE_ASSIGNMENT_REQUIRED')
         for attempt in range(2):
             if self.transport is single_request:
                 from .launch import validate_launch
@@ -214,6 +226,7 @@ class OpenAIRoles:
                 validate_launch(self.launch, boundary="MODEL_REQUEST", **options)
             if self.before_request:self.before_request()
             context = {'public': deepcopy(public), 'diagnosis': diagnosis}
+            if assignment is not None: context['assignment'] = deepcopy(assignment)
             if attempt:
                 context['repair_instruction'] = 'Previous output violated the local contract. Return a valid response or ABSTAIN.'
             model = self.models.get(role, 'gpt-6-luna')
@@ -235,13 +248,15 @@ class OpenAIRoles:
                 policy+=' For QUERY_OVERLAP_ZERO_MATCH_FALLBACK, retain seeds plus two-character query-overlap members as in the ablation, BUT if no member at all (including seeds) contains any two-character substring of query, retain ALL members. This explicit uncertainty fallback tests the hypothesis that lexical evidence is unavailable, rather than treating absence of a lexical match as proof of irrelevance. Compute a fresh private list of boolean matches, test not any(matches), then return all indices or the seed/match indices. Keep the mandatory len(query)<2 fallback. This new intent is an adaptive training hypothesis; no guaranteed safety claim.'
                 policy+=' For QUERY_SEED_MATCH_FALLBACK, retain all when no SEED member contains a query bigram; otherwise seeds plus matching members. For QUERY_NONSEED_MATCH_FALLBACK, retain all when no NONSEED member contains a query bigram; otherwise seeds plus matching members. For QUERY_TRIGRAM_ZERO_MATCH_FALLBACK use three-character substrings, keep all if len(query)<3 or no member matches any trigram, otherwise seeds plus matching members. For QUERY_BIGRAM_RATIO count distinct query bigrams per member, retain all if every score is zero, otherwise seeds plus members whose score added to itself is at least the highest seed score AND whose score is positive. Always keep all seeds, all members for len(query)<2, and original order. These are separate diagnostic hypotheses, not combinations unless the named intent says so.'
             if self.role_profile in M1_PROFILES:
-                policy, task = effective_role_prompt(self.role_profile, role, self.seam_profile)
+                prompt_profile = (M1_INDEPENDENT_GENERALIST_V1 if assignment is not None
+                    and assignment['assignment_reason'] == 'EXPLICIT_FROZEN_GENERALIST_FALLBACK' else self.role_profile)
+                policy, task = effective_role_prompt(prompt_profile, role, self.seam_profile)
             body = {'model': model, 'store': False, 'reasoning': {'effort': 'none' if model=='gpt-6-luna' else 'low'},
                     'max_output_tokens': 1024 if role == 'diagnose' else 3072 if role in ANGLES else 2048,
                     'input': [{'role': 'system', 'content': policy + '\n' + task},
                               {'role': 'user', 'content': canonical(context).decode('utf-8')}],
                     'text': {'format': {'type': 'json_schema', 'name': 'rsi_role',
-                                       'strict': True, 'schema': role_schema(role)}}}
+                                       'strict': True, 'schema': role_schema(role, adaptive=self.role_profile == M1_ADAPTIVE_V1)}}}
             if model == 'gpt-6-luna': body['temperature'] = 0
             if self.role_profile in M1_PROFILES:
                 body.update(decode_settings(role, model))
@@ -366,7 +381,7 @@ class OpenAIRoles:
                     self.scanner.check(value)
                     result = unwrap_response(value)
                     if result is not None:
-                        if role == 'diagnose': validate_diagnosis(result, public)
+                        if role == 'diagnose': validate_diagnosis(result, public, adaptive=self.role_profile == M1_ADAPTIVE_V1)
                         elif role in ANGLES: validate_proposal(result, public, role)
                         else: validate_readonly(result, public, role)
                     observed.validated(True, abstained=value.get('status') == 'ABSTAIN')
@@ -411,10 +426,23 @@ def runtime_profile_identity(profile, models, seam_profile):
         specs[role] = {'policy':policy, 'task':task, 'system_prompt':policy + '\n' + task,
                        'prompt_sha256': digest(policy + '\n' + task), 'task_sha256': digest(task),
                        'model':actual_models[role], 'decode':decode_settings(role,actual_models[role]),
-                       'response_schema':role_schema(role)}
+                       'response_schema':role_schema(role, adaptive=profile == M1_ADAPTIVE_V1)}
     binding = {'schema':'rsi-m1-runtime-profile/v1', 'role_profile':profile_manifest(profile),
                'seam_profile':seam_profile, 'models':actual_models, 'roles':specs,
                'implementation':implementation_hashes()}
+    if profile == M1_ADAPTIVE_V1:
+        from .adaptive_dispatch import catalog_identity
+        binding['dispatcher'] = catalog_identity()
+        fallback_specs = {}
+        for role in roles_for(profile).values():
+            policy, task = effective_role_prompt(M1_INDEPENDENT_GENERALIST_V1, role, seam_profile)
+            fallback_specs[role] = {'policy': policy, 'task': task,
+                'system_prompt': policy + '\n' + task, 'prompt_sha256': digest(policy + '\n' + task),
+                'model': actual_models[role], 'decode': decode_settings(role, actual_models[role]),
+                'response_schema': role_schema(role), 'capability': 'fixed_selection_seam_only'}
+        binding['fallback'] = {'profile': 'M1_ADAPTIVE_FROZEN_GENERALIST_FALLBACK_V1',
+            'roles': fallback_specs, 'activation': ['DISPATCH_UNAVAILABLE'],
+            'diagnosis_schema': role_schema('diagnose', adaptive=True)}
     return {**binding, 'sha256':digest(binding)}
 
 

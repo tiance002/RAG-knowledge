@@ -1,11 +1,11 @@
 """Synthetic-only M1 runtime identities and isolated fixed-slot proposals."""
 from copy import deepcopy
 import pytest
-from rsik.role_profiles import (M1_PROFILES, M1_SPECIALIZED_V1, M1_INDEPENDENT_GENERALIST_V1,
+from rsik.role_profiles import (M1_ADAPTIVE_V1, M1_PROFILES, M1_SPECIALIZED_V1, M1_INDEPENDENT_GENERALIST_V1,
     M1_GENERALIST_TASK, m1_tasks, roles_for, profile_manifest, LEGACY, DEPENDENCY)
 from rsik.openai_roles import (OpenAIRoles, runtime_profile_identity, validate_runtime_profile_identity,
                               effective_role_prompt, decode_settings)
-from rsik.contracts import ContractError, role_schema
+from rsik.contracts import ADAPTIVE_DIAGNOSIS_VERSION, ContractError, role_schema
 from rsik.budgets import Budget
 from rsik.redact import LeakScanner
 from rsik.tests.test_openai_roles import public, response
@@ -27,7 +27,14 @@ def test_six_effective_prompts_and_decode_are_bound_at_mock_send(tmp_path, profi
     for role in roles:
         # Read-only projections deliberately contain no search intent/history.
         supplied = public() if role in ('curator','meta') else context
-        assert client.call(role, supplied)['status']=='ABSTAIN'
+        kwargs = {}
+        if profile == M1_ADAPTIVE_V1 and role in roles_for(profile).values():
+            from rsik.adaptive_dispatch import build_dispatch_plan
+            diagnosis = FakeRoles().diagnose(supplied)['result']
+            diagnosis.update(schema_version=ADAPTIVE_DIAGNOSIS_VERSION, task_signals=[])
+            kwargs = {'diagnosis': diagnosis, 'assignment': next(a for a in build_dispatch_plan(supplied, diagnosis)['assignments']
+                if roles_for(profile)[a['slot']] == role)}
+        assert client.call(role, supplied, **kwargs)['status']=='ABSTAIN'
         body = seen[-1]; spec = binding['roles'][role]
         assert body['input'][0]['content'] == spec['system_prompt']
         assert {k:body[k] for k in spec['decode']} == spec['decode']
@@ -56,17 +63,22 @@ def test_generalists_have_distinct_identities_same_neutral_task():
     assert len({str(role_schema(r)) for r in roles}) == 3
 
 @pytest.mark.parametrize('profile', M1_PROFILES)
-def test_all_three_instances_use_same_review_replay_gates(profile):
+def test_all_three_instances_use_same_review_replay_gates(profile, tmp_path):
     mapping=roles_for(profile)
     class Roles(FakeRoles):
-        def propose(self, role, context, diagnosis):
+        def diagnose(self, context):
+            value = super().diagnose(context)
+            if profile == M1_ADAPTIVE_V1:
+                value['result'].update(schema_version=ADAPTIVE_DIAGNOSIS_VERSION, task_signals=[])
+            return value
+        def propose(self, role, context, diagnosis, *, assignment=None):
             slot=next(s for s,r in mapping.items() if r==role)
             value=super().propose(slot,context,diagnosis)
             value['result']['angle']=role
             return value
     roles=Roles(same_patch=True,barrier=True)
     review,replay,reviewed,replayed=callbacks()
-    outcome=execute_round(public_context(),roles,review,replay,role_profile=profile)
+    outcome=execute_round(public_context(),roles,review,replay,role_profile=profile,dispatch_directory=tmp_path)
     assert reviewed==replayed==list(SLOTS)
     assert len(outcome['qualified'])==3 and outcome['family_size']==3
     assert {v['angle'] for v in outcome['raw_role_proposals'].values()}==set(mapping.values())

@@ -16,7 +16,8 @@ COUNTS = {'questions', 'source_groups', 'delivered_members', 'seed_members', 'no
           'context_chars', 'paired', 'blocked', 'failed', 'favorable', 'unfavorable', 'ties',
           'rounds', 'proposal_instances', 'qualified_proposals', 'abstentions', 'adoptions', 'validated', 'verified', 'unknown',
           'pdf_members','other_members','duplicate_key_eligible_members','exact_content_duplicate_pairs',
-          'seed_content_chars','nonseed_content_chars','nonseed_members_le100','nonseed_members_le200','nonseed_members_gt200'}
+          'seed_content_chars','nonseed_content_chars','nonseed_members_le100','nonseed_members_le200','nonseed_members_gt200',
+          'dependency_edges','related_member_pairs'}
 CATEGORIES = {'CONTEXT_LENGTH', 'NONSEED_EXPANSION', 'REPLAY_SUMMARY', 'UNKNOWN'}
 FORMATS = {'PDF', 'DOCX', 'XLSX', 'OTHER'}
 

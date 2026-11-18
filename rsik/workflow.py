@@ -9,7 +9,7 @@ import time
 import hashlib
 import ast
 
-from .role_profiles import LEGACY, roles_for, profile_manifest
+from .role_profiles import LEGACY, M1_ADAPTIVE_V1, roles_for, profile_manifest
 from .events import digest
 from .adjudicate import SLOTS, adjudicate_round
 from .contracts import ContractError, unwrap_response, validate_diagnosis, validate_proposal
@@ -39,7 +39,7 @@ def full_worker_identity(artifact):
     return identity
 
 
-def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadline=None, role_profile=LEGACY, observer=None):
+def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadline=None, role_profile=LEGACY, observer=None, dispatch_directory=None):
     """Every statically qualified instance reaches replay, including duplicates.
 
     A confirmed global integrity failure stops further side effects and forbids
@@ -79,11 +79,12 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
     try:
         diagnosis_raw = roles.diagnose(deepcopy(public))
         diagnosis = unwrap_response(diagnosis_raw)
-        if diagnosis is None:
+        if diagnosis is None and role_profile != M1_ADAPTIVE_V1:
             record.update(execution_state='COMPLETED', verdict='NO_ADOPTION', stop_reason='DIAGNOSIS_ABSTAIN',
                           adopted_proposal_id=None, adopted_candidate_id=None)
             return record
-        validate_diagnosis(diagnosis, public)
+        if diagnosis is not None:
+            validate_diagnosis(diagnosis, public, adaptive=role_profile == M1_ADAPTIVE_V1)
     except (ContractError, StageFailure, TimeoutError) as error:
         reason = error.code if isinstance(error, ContractError) else error.reason_code if isinstance(error, StageFailure) else 'AGENT_TIMEOUT'
         failure('DIAGNOSIS', error.category if isinstance(error, StageFailure) else 'AGENT_ERROR',
@@ -98,18 +99,36 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
         record.update(execution_state='FAILED', verdict='ROUND_ABORTED', stop_reason='ROUND_DEADLINE',
                       adopted_proposal_id=None, adopted_candidate_id=None)
         return record
-    if diagnosis['problem_layer'] != 'SELECTION' or not diagnosis['fixable_within_seam']:
+    if role_profile != M1_ADAPTIVE_V1 and (diagnosis['problem_layer'] != 'SELECTION' or not diagnosis['fixable_within_seam']):
         record.update(execution_state='COMPLETED', verdict='NO_ADOPTION', stop_reason='BLOCKED_BY_SEAM_OR_DATA',
                       adopted_proposal_id=None, adopted_candidate_id=None)
         return record
     if any(slot not in SLOTS for slot in enabled_slots):
         raise ValueError('unknown proposer slot')
+    assignments = {}
+    if role_profile == M1_ADAPTIVE_V1:
+        dispatch_directory = dispatch_directory or getattr(roles, 'directory', None)
+        if dispatch_directory is None:
+            raise ValueError('ADAPTIVE_DISPATCH_DIRECTORY_REQUIRED')
+        if observer is None:
+            from .observability import observation_for
+            observer = observation_for(dispatch_directory)
+        plan = prepare_dispatch(public, diagnosis, directory=dispatch_directory, observer=observer)
+        record['dispatch_plan'] = plan
+        assignments = {a['slot']: a for a in plan['assignments']}
     # Separate deep-copied contexts and requests; collection occurs only after
     # all initial proposers were dispatched. No candidate result feeds a peer.
     def propose(slot):
         try:
             actual_role=mapping[slot]
-            raw = roles.propose(actual_role, deepcopy(public), deepcopy(diagnosis))
+            if slot in assignments:
+                assignment = assignments[slot]
+                if assignment['task_type'] == 'ABSTAIN':
+                    return None, None
+                raw = roles.propose(actual_role, deepcopy(public), deepcopy(diagnosis),
+                                    assignment=deepcopy(assignment))
+            else:
+                raw = roles.propose(actual_role, deepcopy(public), deepcopy(diagnosis))
             proposal = unwrap_response(raw)
             if proposal is not None:
                 # Observe the instance before validation; never merge identical patch bytes.
@@ -208,3 +227,49 @@ def execute_round(public, roles, review, replay, *, enabled_slots=SLOTS, deadlin
         return record
     record.update(outcome, execution_state='COMPLETED')
     return record
+
+
+def prepare_dispatch(public, diagnosis, *, directory=None, observer=None):
+    """Persist and verify the immutable allocation before any proposer side effect.
+
+    Only an explicitly typed dispatcher outage permits frozen generalist fallback.
+    Contract, storage, security and checkpoint defects propagate without downgrade.
+    Caller owns the same round lock used for model/replay side effects.
+    """
+    import json
+    from pathlib import Path
+    from .adaptive_dispatch import (build_dispatch_plan, validate_dispatch_plan,
+                                    generalist_fallback, DispatchUnavailable)
+    from .locking import atomic_write
+    from .state import canonical
+    target = Path(directory) / 'dispatch-plan.json' if directory is not None else None
+    if target is not None and target.exists():
+        plan = json.loads(target.read_bytes())
+        validate_dispatch_plan(plan, public, diagnosis)
+    else:
+        try:
+            plan = build_dispatch_plan(public, diagnosis)
+        except (DispatchUnavailable, TimeoutError):
+            plan = generalist_fallback(public, reason='DISPATCH_UNAVAILABLE', diagnosis=diagnosis)
+        validate_dispatch_plan(plan, public, diagnosis)
+        if target is not None:
+            atomic_write(target, canonical(plan), exclusive=True)
+            # Verify durable bytes before any downstream call, including first use.
+            if json.loads(target.read_bytes()) != plan:
+                raise StageFailure('RECOVERY_ERROR', 'DISPATCH_DURABLE_ASSIGNMENT_CHANGED')
+    if observer is not None:
+        if plan['mode'] == 'FROZEN_GENERALIST_FALLBACK':
+            observer.emit('DISPATCH_FALLBACK', {'round_id': public['round_id'],
+                'dispatch_sha256': plan['dispatch_sha256'], 'reason': plan['fallback_reason'],
+                'fallback_profile': plan['fallback_profile'], 'fallback_version': plan['fallback_version']},
+                key='dispatch-fallback:' + public['round_id'])
+        observer.emit('DISPATCH_ASSIGNED', {'round_id': public['round_id'],
+            'dispatch_sha256': plan['dispatch_sha256'], 'catalog_sha256': plan['catalog_sha256'],
+            'dispatcher_version': plan['dispatcher_version'], 'mode': plan['mode']},
+            key='dispatch-assigned:' + public['round_id'])
+        for assignment in plan['assignments']:
+            observer.emit('DISPATCH_SLOT_ASSIGNED', {'round_id': public['round_id'],
+                'dispatch_sha256': plan['dispatch_sha256'],
+                **{k: assignment[k] for k in ('slot', 'task_id', 'task_type', 'task_contract_hash')}},
+                key='dispatch-slot:' + public['round_id'] + ':' + assignment['slot'])
+    return plan

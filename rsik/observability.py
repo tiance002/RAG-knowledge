@@ -25,6 +25,7 @@ entry_fingerprint current_fingerprint static_pass pair_entry_ids scope_hash scop
 observation_id evidence_id evidence_refs support_refs parent_alias entry_state previous_state
 new_state from_state to_state source_event_id source_event_type event_key action decision
 selected_entry_ids retrieved_entry_ids learning_frontier schema_version metric_contract_version transport_status
+fallback_profile fallback_version dispatch_sha256 catalog_sha256 dispatcher_version mode task_type task_id task_contract_hash
 stage_attempt_id operation_id input_hash output_hash checkpoint_id failure_category recoverable error_type recovery_attempt_id recovery_operation_id original_operation_id actual_execution_id action_id error_hash http_status repair_of request_attempt relation lineage_state count total duration_ms
 '''.split())
 _IDENTIFIER = re.compile(r'[A-Za-z0-9_.:/+@=-]{1,256}\Z')

@@ -1,0 +1,1750 @@
+{
+  "dispatcher": {
+    "catalog": {
+      "ABSTAIN": {
+        "falsification_requirement": "State a concrete observation that refutes the hypothesis; retain all fact, source, replay and statistical gates.",
+        "forbidden_actions": [
+          "change_evaluator",
+          "read_private_data",
+          "change_seam_signature",
+          "mutate_inputs",
+          "remove_seeds",
+          "reorder_members",
+          "share_peer_proposals"
+        ],
+        "preconditions": [
+          "public_evidence_only",
+          "fixed_selection_seam",
+          "independent_assignment"
+        ],
+        "scope": "Do not propose or execute a candidate when no admissible seam experiment is supported.",
+        "task_type": "ABSTAIN"
+      },
+      "BUDGET": {
+        "falsification_requirement": "State a concrete observation that refutes the hypothesis; retain all fact, source, replay and statistical gates.",
+        "forbidden_actions": [
+          "change_evaluator",
+          "read_private_data",
+          "change_seam_signature",
+          "mutate_inputs",
+          "remove_seeds",
+          "reorder_members",
+          "share_peer_proposals"
+        ],
+        "preconditions": [
+          "public_evidence_only",
+          "fixed_selection_seam",
+          "independent_assignment"
+        ],
+        "scope": "Investigate independent budget hypotheses; nonseed overhead does not prove waste.",
+        "task_type": "BUDGET"
+      },
+      "DEDUP": {
+        "falsification_requirement": "State a concrete observation that refutes the hypothesis; retain all fact, source, replay and statistical gates.",
+        "forbidden_actions": [
+          "change_evaluator",
+          "read_private_data",
+          "change_seam_signature",
+          "mutate_inputs",
+          "remove_seeds",
+          "reorder_members",
+          "share_peer_proposals"
+        ],
+        "preconditions": [
+          "public_evidence_only",
+          "fixed_selection_seam",
+          "independent_assignment"
+        ],
+        "scope": "Investigate independent deduplication hypotheses; duplicate appearance does not prove dispensability.",
+        "task_type": "DEDUP"
+      },
+      "DEPENDENCY": {
+        "falsification_requirement": "State a concrete observation that refutes the hypothesis; retain all fact, source, replay and statistical gates.",
+        "forbidden_actions": [
+          "change_evaluator",
+          "read_private_data",
+          "change_seam_signature",
+          "mutate_inputs",
+          "remove_seeds",
+          "reorder_members",
+          "share_peer_proposals"
+        ],
+        "preconditions": [
+          "public_evidence_only",
+          "fixed_selection_seam",
+          "independent_assignment"
+        ],
+        "scope": "Investigate independent cross-member dependency and conservative fallback hypotheses.",
+        "task_type": "DEPENDENCY"
+      },
+      "GENERALIST": {
+        "falsification_requirement": "State a concrete observation that refutes the hypothesis; retain all fact, source, replay and statistical gates.",
+        "forbidden_actions": [
+          "change_evaluator",
+          "read_private_data",
+          "change_seam_signature",
+          "mutate_inputs",
+          "remove_seeds",
+          "reorder_members",
+          "share_peer_proposals"
+        ],
+        "preconditions": [
+          "public_evidence_only",
+          "fixed_selection_seam",
+          "independent_assignment"
+        ],
+        "scope": "Independently choose a falsifiable hypothesis within the frozen selection seam.",
+        "task_type": "GENERALIST"
+      }
+    },
+    "catalog_sha256": "c63b6276279fe941695726262d312b61c7eb5c50dfb6c8755809f468ca19d9c2",
+    "schema": "rsi-adaptive-dispatch/v1",
+    "version": "M1_ADAPTIVE_DISPATCH_V1"
+  },
+  "evidence_mode": "SYNTHETIC_CONTROL",
+  "launch_ready": false,
+  "runtime": {
+    "dispatcher": "c63b6276279fe941695726262d312b61c7eb5c50dfb6c8755809f468ca19d9c2",
+    "fallback": {
+      "activation": [
+        "DISPATCH_UNAVAILABLE"
+      ],
+      "diagnosis_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "confidence": {
+                    "type": "number"
+                  },
+                  "evidence_quote": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidence_refs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "first_deviation": {
+                    "type": "string"
+                  },
+                  "fixable_within_seam": {
+                    "type": "boolean"
+                  },
+                  "hypothesis": {
+                    "type": "string"
+                  },
+                  "observation_refs": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "problem_layer": {
+                    "enum": [
+                      "SELECTION",
+                      "WORKFLOW",
+                      "PROMPT",
+                      "DATA",
+                      "UNKNOWN"
+                    ],
+                    "type": "string"
+                  },
+                  "required_data": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "schema_version": {
+                    "enum": [
+                      "rsi-diagnosis/v2.4-adaptive-v1"
+                    ],
+                    "type": "string"
+                  },
+                  "task_signals": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "disposition": {
+                          "enum": [
+                            "SUPPORT",
+                            "CONFLICT"
+                          ],
+                          "type": "string"
+                        },
+                        "evidence_refs": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "task_type": {
+                          "enum": [
+                            "DEDUP",
+                            "BUDGET",
+                            "DEPENDENCY"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "task_type",
+                        "evidence_refs",
+                        "disposition"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "schema_version",
+                  "observation_refs",
+                  "problem_layer",
+                  "first_deviation",
+                  "evidence_refs",
+                  "evidence_quote",
+                  "hypothesis",
+                  "fixable_within_seam",
+                  "required_data",
+                  "confidence",
+                  "task_signals"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "OK",
+              "ABSTAIN"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "result",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "profile": "M1_ADAPTIVE_FROZEN_GENERALIST_FALLBACK_V1",
+      "roles": {
+        "P1_GENERALIST": {
+          "capability": "fixed_selection_seam_only",
+          "decode": {
+            "max_output_tokens": 3072,
+            "reasoning": {
+              "effort": "none"
+            },
+            "temperature": 0
+          },
+          "model": "gpt-6-luna",
+          "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+          "prompt_sha256": "63b8e4d2de3f6f4a7228262c24ff5886d059b2addd3eec91dcc69dfe681e83f9",
+          "response_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "angle": {
+                        "enum": [
+                          "P1_GENERALIST"
+                        ],
+                        "type": "string"
+                      },
+                      "change": {
+                        "type": "string"
+                      },
+                      "confidence": {
+                        "type": "number"
+                      },
+                      "evidence_refs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "expected_impact": {
+                        "type": "string"
+                      },
+                      "falsification": {
+                        "type": "string"
+                      },
+                      "handbook_entry_ids": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "hypothesis": {
+                        "type": "string"
+                      },
+                      "observation_ref": {
+                        "type": "string"
+                      },
+                      "parent_id": {
+                        "type": "string"
+                      },
+                      "proposal_id": {
+                        "type": "string"
+                      },
+                      "risk_assessment": {
+                        "type": "string"
+                      },
+                      "round_id": {
+                        "type": "string"
+                      },
+                      "schema_version": {
+                        "enum": [
+                          "rsi-v2.2"
+                        ],
+                        "type": "string"
+                      },
+                      "worker_patch": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "new": {
+                            "type": "string"
+                          },
+                          "old": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "old",
+                          "new"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "proposal_id",
+                      "round_id",
+                      "parent_id",
+                      "observation_ref",
+                      "hypothesis",
+                      "change",
+                      "expected_impact",
+                      "falsification",
+                      "risk_assessment",
+                      "angle",
+                      "evidence_refs",
+                      "handbook_entry_ids",
+                      "confidence",
+                      "worker_patch"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": [
+                  "OK",
+                  "ABSTAIN"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "result",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nIndependently design a falsifiable context-selection policy within the supplied seam. Choose your own hypothesis from the actual parent, public diagnosis and permitted aggregate history. No dimension or algorithm is assigned. Preserve the common constraints; explain risk and falsification.",
+          "task": "Independently design a falsifiable context-selection policy within the supplied seam. Choose your own hypothesis from the actual parent, public diagnosis and permitted aggregate history. No dimension or algorithm is assigned. Preserve the common constraints; explain risk and falsification."
+        },
+        "P2_GENERALIST": {
+          "capability": "fixed_selection_seam_only",
+          "decode": {
+            "max_output_tokens": 3072,
+            "reasoning": {
+              "effort": "none"
+            },
+            "temperature": 0
+          },
+          "model": "gpt-6-luna",
+          "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+          "prompt_sha256": "63b8e4d2de3f6f4a7228262c24ff5886d059b2addd3eec91dcc69dfe681e83f9",
+          "response_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "angle": {
+                        "enum": [
+                          "P2_GENERALIST"
+                        ],
+                        "type": "string"
+                      },
+                      "change": {
+                        "type": "string"
+                      },
+                      "confidence": {
+                        "type": "number"
+                      },
+                      "evidence_refs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "expected_impact": {
+                        "type": "string"
+                      },
+                      "falsification": {
+                        "type": "string"
+                      },
+                      "handbook_entry_ids": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "hypothesis": {
+                        "type": "string"
+                      },
+                      "observation_ref": {
+                        "type": "string"
+                      },
+                      "parent_id": {
+                        "type": "string"
+                      },
+                      "proposal_id": {
+                        "type": "string"
+                      },
+                      "risk_assessment": {
+                        "type": "string"
+                      },
+                      "round_id": {
+                        "type": "string"
+                      },
+                      "schema_version": {
+                        "enum": [
+                          "rsi-v2.2"
+                        ],
+                        "type": "string"
+                      },
+                      "worker_patch": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "new": {
+                            "type": "string"
+                          },
+                          "old": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "old",
+                          "new"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "proposal_id",
+                      "round_id",
+                      "parent_id",
+                      "observation_ref",
+                      "hypothesis",
+                      "change",
+                      "expected_impact",
+                      "falsification",
+                      "risk_assessment",
+                      "angle",
+                      "evidence_refs",
+                      "handbook_entry_ids",
+                      "confidence",
+                      "worker_patch"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": [
+                  "OK",
+                  "ABSTAIN"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "result",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nIndependently design a falsifiable context-selection policy within the supplied seam. Choose your own hypothesis from the actual parent, public diagnosis and permitted aggregate history. No dimension or algorithm is assigned. Preserve the common constraints; explain risk and falsification.",
+          "task": "Independently design a falsifiable context-selection policy within the supplied seam. Choose your own hypothesis from the actual parent, public diagnosis and permitted aggregate history. No dimension or algorithm is assigned. Preserve the common constraints; explain risk and falsification."
+        },
+        "P3_GENERALIST": {
+          "capability": "fixed_selection_seam_only",
+          "decode": {
+            "max_output_tokens": 3072,
+            "reasoning": {
+              "effort": "none"
+            },
+            "temperature": 0
+          },
+          "model": "gpt-6-luna",
+          "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+          "prompt_sha256": "63b8e4d2de3f6f4a7228262c24ff5886d059b2addd3eec91dcc69dfe681e83f9",
+          "response_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "angle": {
+                        "enum": [
+                          "P3_GENERALIST"
+                        ],
+                        "type": "string"
+                      },
+                      "change": {
+                        "type": "string"
+                      },
+                      "confidence": {
+                        "type": "number"
+                      },
+                      "evidence_refs": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "expected_impact": {
+                        "type": "string"
+                      },
+                      "falsification": {
+                        "type": "string"
+                      },
+                      "handbook_entry_ids": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "hypothesis": {
+                        "type": "string"
+                      },
+                      "observation_ref": {
+                        "type": "string"
+                      },
+                      "parent_id": {
+                        "type": "string"
+                      },
+                      "proposal_id": {
+                        "type": "string"
+                      },
+                      "risk_assessment": {
+                        "type": "string"
+                      },
+                      "round_id": {
+                        "type": "string"
+                      },
+                      "schema_version": {
+                        "enum": [
+                          "rsi-v2.2"
+                        ],
+                        "type": "string"
+                      },
+                      "worker_patch": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "new": {
+                            "type": "string"
+                          },
+                          "old": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "old",
+                          "new"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "schema_version",
+                      "proposal_id",
+                      "round_id",
+                      "parent_id",
+                      "observation_ref",
+                      "hypothesis",
+                      "change",
+                      "expected_impact",
+                      "falsification",
+                      "risk_assessment",
+                      "angle",
+                      "evidence_refs",
+                      "handbook_entry_ids",
+                      "confidence",
+                      "worker_patch"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": [
+                  "OK",
+                  "ABSTAIN"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "result",
+              "reason"
+            ],
+            "type": "object"
+          },
+          "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nIndependently design a falsifiable context-selection policy within the supplied seam. Choose your own hypothesis from the actual parent, public diagnosis and permitted aggregate history. No dimension or algorithm is assigned. Preserve the common constraints; explain risk and falsification.",
+          "task": "Independently design a falsifiable context-selection policy within the supplied seam. Choose your own hypothesis from the actual parent, public diagnosis and permitted aggregate history. No dimension or algorithm is assigned. Preserve the common constraints; explain risk and falsification."
+        }
+      }
+    },
+    "implementation": {
+      "rsik/__init__.py": "8722ab3091f088a2fdb3519eb72e4cc120bd5317be69c2f581886dc4e3cd6d14",
+      "rsik/__main__.py": "d02cb57f8441b9ddd23e7cb829efa637b0618abc07ea65f829e64797f51780e2",
+      "rsik/adaptive_dispatch.py": "fcd6b506c51cefcbb286158c201dfee76dcad07e09e24b17f2237d7ae2e1af5b",
+      "rsik/adjudicate.py": "39ba7a92e9105d0cb02e5f1c87c8a75aa723607fc90ce1ac3e49c431d1d6983a",
+      "rsik/analytics/__init__.py": "bfe2eec56db38dc56de90ff624d6b47dbcc1d11f6e5f8fbb444680f6e83d458d",
+      "rsik/analytics/metrics.py": "8a6807b4a7cef83e0bfe231ed36dcc12961327a3f164303e507389ef55e6e88f",
+      "rsik/analytics/portfolio.py": "59f6309381481b76a3724932e481a3f153f3fdbcf2bfa28c450ad05e96b94919",
+      "rsik/analytics/projections.py": "6855bdb3b7f0c6bae75cf89ed78ef33f409f5e5789483786dd69a16fd6968852",
+      "rsik/analytics/reader.py": "eb5fea4db9ee03ee6b81ae8f3270462bb7dfe0cba00afa98da5a4e96e630f0cd",
+      "rsik/analytics/report.py": "24331f838d72752b199ee52a25a3016b847c16c5e2db1e5c45d752e0228666f0",
+      "rsik/analytics/schemas.py": "98f0bb369f236d11df2f8fa43620346d0977ebedfdbf163636b1bc8dc7404294",
+      "rsik/analytics/selection.py": "bf40a48de8f6ebbd60286c11874d6961859501fc5ad120ff7a50653a7147a58e",
+      "rsik/autonomous.py": "f7b25880c18b11b8f03aa5c5c5db84fc6821aa11078be1cc4afeff4ba03edeaa",
+      "rsik/autonomy_contract.py": "d16eb601c05a11b1cc24dd539d2e90e3b3816575e8bba47c907124b5252789dd",
+      "rsik/baseline_qualification.py": "84080c69fae37b6ba2f29d87b75da4c32fa117932436691ca8fe6a3fea4ad08f",
+      "rsik/budgets.py": "f0b754f31c1520cbf0850075344434e6c90d76bc9efbee238b99e5541d0b630f",
+      "rsik/campaign.py": "4228ce6852b642744ff9a2844cf844143fa1bc7bcea997a94025dcc72219637b",
+      "rsik/capsule.py": "442666ffcb4902ac2fda5278ccc228c51c84884d6bf346b730753d113543ab37",
+      "rsik/collaboration.py": "5282a0caa49815ef905391318347d4e73a1fae9f54623eea041123fca5d7b97f",
+      "rsik/contracts.py": "a782a8c2fb788be7fc2111d3484560559e1adae028c6bc4d8eb0a967fef9871c",
+      "rsik/coverage_collection.py": "1ddf9c68684e5efd11d1e6bcb285a542d2865c0bc5ddd2bffb8039d069aa6d9e",
+      "rsik/errors.py": "19ca26cc0d9edfc50d935099cb8a699b9d4ac585d78222742f81c23b743d556d",
+      "rsik/events.py": "4bf19985a1ef0ba3657159714c419a5fd185914d22441c55563fa8db0b88284b",
+      "rsik/execution_evidence.py": "000cc053dfd6b2739e56ef1066a1c1211aea0bb930136b62b057f666e7e8ac69",
+      "rsik/experiment.py": "808c36b783924bd4308a4526b37653778b94a0f61fa3570bdd7601cdc58a0911",
+      "rsik/experiment_config.py": "d38d77314bec9e473123f4556cc0693450f7712edca29349a535ea59fc6dacb6",
+      "rsik/exposure.py": "f4a1dbeeed0eabc6fc7ad027ea4d884b83a8a9a4a5ead2315889ce4f53e2045f",
+      "rsik/family_decision.py": "c228ea78bb51c8ccadaa103df46ce924dd1b98f8854fb5b8d89f61c9b75ba381",
+      "rsik/fixed_history_coverage.py": "ace950ed9b0c012f082155e50c143634444712456af6a2d5bc9d613a3ed5305d",
+      "rsik/fixed_history_profile.py": "c464057d3a9fa438c0b222812ff67ee9e0d7ade07c9dcc612e6463d73752a811",
+      "rsik/fixed_history_worker.py": "bd5c2bf1560ac12e15eac00e31f3fc95aeafdb3d101d17e738c90d8cb9dcbcae",
+      "rsik/foundation.py": "fc16e9b9800cf5b41c650f3b054dea3aaa95b8b83788cc867d47b937ac405dd7",
+      "rsik/handbook/__init__.py": "89c056bd7ab074b9c6b8308a540deb88ef22927dcef882a84de77983e61052ca",
+      "rsik/handbook/contracts.py": "c95f580842cba985d99dd327ec615c9940dba7ed0507f43ab4db06de5c0fbc22",
+      "rsik/handbook/projection.py": "596766d73c7698402bfce6931af77d61220f7b7af6a61a11ea1598801fa4a9a5",
+      "rsik/handbook/store.py": "bd2bd059d5537fd04e37b02d8c53e8ee3f6425eaadefddfdd067d01cbfa0966f",
+      "rsik/holdout.py": "fa7a358d443a06fc64f1d35f31fbfea6c3cd1001c75fca7c3f695fd0789dffd3",
+      "rsik/http_worker.py": "322c007b91dd408f08604f673b75917846479b651d92bc8ba94453288d1ac3eb",
+      "rsik/launch.py": "a13cb4d523b3fed7f2e1ca4fb3756c4941b79893800c4a4d563acc2c30da101d",
+      "rsik/lineage.py": "8e1dac62e56c0ddc8836989a8499a6fbcfce32abe37fcb71f9a0c52ec01b578a",
+      "rsik/locking.py": "d11fd9b6a6399cd7bdd399a298e959fa72097adfc9fd42ce189284ef94f2b2c6",
+      "rsik/observability.py": "9102cc81ed73adff85baabb2014b54e8dc77a39a519a4e550a61c7e3d6f202e0",
+      "rsik/openai_roles.py": "0282f25759f880885af4e57c21d0e4bde17da0096add8d6c6a195fb2aba389a0",
+      "rsik/postround.py": "22580a9100c81753407341c2d0be9b34cc4af0b86a7c80e7cba47b8be6c41a58",
+      "rsik/promotion.py": "b6f15a5432604bb1008d9b6a631ed2007ad6f6cea02ae1288daf87257bed9dd1",
+      "rsik/provenance.py": "964ad321f05f3cb601e909416d548740e80f96e98820b4b6b0c94923805dbd44",
+      "rsik/qa_validation.py": "d9cd0ef6a4f7d6c197dd5ce458bc2f02fbdad783b914e2770229994365ca5cb6",
+      "rsik/query_aware.py": "eaba784b7ee4f953c2a37e8891d277f20d16fa02ca5628d4cc62acbd55cfb31a",
+      "rsik/query_batch.py": "1f097dfaadce838d8f3584717abecbf3f49cb2b28fad2d89fb5d8d2371ece1f3",
+      "rsik/query_learning.py": "5dc5df7ef3f22129e0d7f6f8ce33b981aa1c62964dd68b7785f2ca1188851ced",
+      "rsik/query_preview.py": "3bdf960f73825824d6194c9fdb40217ca64e0c4e1dfd4bd3e63bc4a5bcdc9788",
+      "rsik/query_verification.py": "6ee405da282c8e9cab0f1cd3b27e73209d133fb74f3ce43740d048147fd5dc1c",
+      "rsik/query_workflow.py": "854946dbe09fb6a0561043ff0bc4486914cd1ba7e6ecb6907070ed52af3acab3",
+      "rsik/redact.py": "8017ee5c61c26dd2ac7c32d488b753a96e9e8c48418e0f45fd157ddfd8daa97b",
+      "rsik/robustness.py": "8c2027ab14e92ce4d12104d65290605b301b698d9e0add2bddc2aeb04f89d3a1",
+      "rsik/role_profiles.py": "9d1025e9634c712f812968cec4d6f9840f8b1a37e4d33f4769702b15570c888c",
+      "rsik/selector_contract.py": "4e3bc5889da47be18c88df4f27c186b072d78bcac664cbe0889a4949b82d1d53",
+      "rsik/shadow.py": "9c9078e63955c125dcfd811263baa30041f60dccc9fd3c8590ef1ba33cfa2580",
+      "rsik/source_relations.py": "3b2b00e9a46fdc1947e9592b089e3d1bf94964e00e1153fa81e2aa5a4290e5c1",
+      "rsik/state.py": "308480df85be1c03b84749fd509c79d6504a769ad5958e5071c6fa35c2c95d6a",
+      "rsik/test_phase.py": "2415beb4f786636a1bdf96a06a0efa747e41b5497f3b4ff3d65d82a44a23311b",
+      "rsik/workflow.py": "9aa31cc085d87f79459781189b7ec96f89216638c83868b29999b3565014f98a",
+      "scripts/prepare_rsi_v23.py": "33a93a5f982b8c7796474aaf8c1a0fdc8cd81b537d750b0038d2c978a99dec1c",
+      "scripts/qualify_rsi_baseline.py": "79ae43de70bd1dea6b47f6f0572685fd3b1356d10a7629fcf7cb3654012bef4e",
+      "scripts/recover_rsi_learning.py": "ede7202eeb3a27cca57ac0b5f8d1ab0838c37afac335439b4b9ae26918530469",
+      "scripts/replay_source_preparation.py": "484274d899761eb0641a2ccc15886b8ae6b70dd242a0fb53f6f5adef9c49c020",
+      "scripts/rsi_candidates.py": "2f537753f740ce832790f25b2af2de6d3e96563e6b18d50b2d5108d25beb36a4",
+      "scripts/rsi_decision.py": "b8f0d28211aca4ffb01b9f0c3bb66bc4ffd4669193430ac49a5acd86a1512fa1",
+      "scripts/rsi_delivery_worker.py": "a5f793b9f8f6ad7908c78580a670c0cc5c909898dc8e4c36d05fdbc2a330d3da",
+      "scripts/rsi_feedback.py": "5e16f1d153ac936cff3a54530f87b1bc8708544cd2481ea3b359a254383942cb",
+      "scripts/rsi_fixed_history_worker_v1.py": "3ad09b381c6ffcd1e51bb33fb9220435216e2e9dd85850d7fac7769dee7fb9a0",
+      "scripts/rsi_foundation.py": "5be8c82fcd3acd71ce51cab38365699866127124ab6b057a7caab521e84fb639",
+      "scripts/rsi_history.py": "c36636fb26765b4b30e02a7a09f9efc8121ad53c68f87b637048fe10d19ba254",
+      "scripts/rsi_proposal_agent.py": "c30851a14bf71fdb3d71d4414b7e46c912bdcbc1062a3d680ef8d2fc0de03394",
+      "scripts/rsi_quality_execute.py": "1633daa780a885194c637e9e44ae70a5d3fe5ec241e113ccf00cce0aa80d2313",
+      "scripts/rsi_quality_loop.py": "356c9b774cbccc34937578e61717e88f806383b4564317a61d6f83f7eef9e492",
+      "scripts/rsi_quality_registry.py": "0890985786e9d7be17dd92f5ee761a2df3e4670d27b69328f6b09956ddce8edf",
+      "scripts/rsi_quality_review.py": "ed41bf62d6f01e0eb4f76e9d7602b7bbcd2c994f435912ac435218d46d942054",
+      "scripts/rsi_roles.py": "bb1b4c42166483181dca41d82a926ba92a99951a3936e50b7e40b3dc4a4738dd",
+      "scripts/rsi_roles_loop.py": "057ac105f4a38959e6d5ad46eaf6417f3834561c645651f40d2020b385d376fb",
+      "scripts/rsi_siliconflow_transport.py": "c3461d8e5cbe9a74e9f17f9dda20eacc23ee04f411a82e0e43bd43dc9a0b8cb8",
+      "scripts/run_rsi_autonomous.py": "5f764658ae5530184638304a29a6c206c7068a5d22b92f152b2f6b21538aa743",
+      "scripts/run_rsi_loop.py": "83cfaa94195f2b795ed5e1c7554da82a56b20a558346aa96f422b81217624ac5",
+      "scripts/run_rsi_offline.py": "9b58b19149c08768ea865314fc0431d1ec0bbd8f46291ba2099ce18dfbe8c81f",
+      "scripts/run_rsi_query_experiment.py": "657485143ffc9018f7b4eb8e53dd9ad0895407d7112cbe5edfb33ce17c728163",
+      "scripts/run_rsi_query_preview.py": "0ee2208c7f18167975b91af6beeaeb6b8aede757934bd102f417fd4c9ae5227f",
+      "scripts/run_rsi_query_round.py": "52077a284a93dd3e4510971eaf406a6b1b16b5d1ee602d4a47fd019faaf6f0f2"
+    },
+    "models": {
+      "P1_GENERALIST": "gpt-6-luna",
+      "P2_GENERALIST": "gpt-6-luna",
+      "P3_GENERALIST": "gpt-6-luna",
+      "curator": "gpt-6-luna",
+      "diagnose": "gpt-6-luna",
+      "meta": "gpt-6-luna"
+    },
+    "role_profile": {
+      "statistical_slots": {
+        "P1_DEDUP": "P1_GENERALIST",
+        "P2_BUDGET": "P2_GENERALIST",
+        "P3_ORDER": "P3_GENERALIST"
+      },
+      "strategy_sha256": "d2c04f74eda98e69fc70687a83dc59a2e6785b67b5394065b579b26cc327c27a",
+      "version": "M1_ADAPTIVE_V1"
+    },
+    "roles": {
+      "P1_GENERALIST": {
+        "decode": {
+          "max_output_tokens": 3072,
+          "reasoning": {
+            "effort": "none"
+          },
+          "temperature": 0
+        },
+        "model": "gpt-6-luna",
+        "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+        "prompt_sha256": "d8f5b07aa8366f6e62aa7ea2f1054a706c0a4619295edb652a5e83dd4c970cbb",
+        "response_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "angle": {
+                      "enum": [
+                        "P1_GENERALIST"
+                      ],
+                      "type": "string"
+                    },
+                    "change": {
+                      "type": "string"
+                    },
+                    "confidence": {
+                      "type": "number"
+                    },
+                    "evidence_refs": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "expected_impact": {
+                      "type": "string"
+                    },
+                    "falsification": {
+                      "type": "string"
+                    },
+                    "handbook_entry_ids": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "hypothesis": {
+                      "type": "string"
+                    },
+                    "observation_ref": {
+                      "type": "string"
+                    },
+                    "parent_id": {
+                      "type": "string"
+                    },
+                    "proposal_id": {
+                      "type": "string"
+                    },
+                    "risk_assessment": {
+                      "type": "string"
+                    },
+                    "round_id": {
+                      "type": "string"
+                    },
+                    "schema_version": {
+                      "enum": [
+                        "rsi-v2.2"
+                      ],
+                      "type": "string"
+                    },
+                    "worker_patch": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "new": {
+                          "type": "string"
+                        },
+                        "old": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "old",
+                        "new"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "proposal_id",
+                    "round_id",
+                    "parent_id",
+                    "observation_ref",
+                    "hypothesis",
+                    "change",
+                    "expected_impact",
+                    "falsification",
+                    "risk_assessment",
+                    "angle",
+                    "evidence_refs",
+                    "handbook_entry_ids",
+                    "confidence",
+                    "worker_patch"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "OK",
+                "ABSTAIN"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nIndependently propose only the supplied assignment task. Honor its preconditions, forbidden_actions and falsification_requirement. The assignment is a deterministic hypothesis allocation, not evidence of gain. Do not infer peer assignments. ABSTAIN if its constraints cannot be met.",
+        "task": "Independently propose only the supplied assignment task. Honor its preconditions, forbidden_actions and falsification_requirement. The assignment is a deterministic hypothesis allocation, not evidence of gain. Do not infer peer assignments. ABSTAIN if its constraints cannot be met.",
+        "task_sha256": "5cf0367cb634eacd1a1900b797a41d7e14a42fd1654b67d4eb74b13e594fd6fa"
+      },
+      "P2_GENERALIST": {
+        "decode": {
+          "max_output_tokens": 3072,
+          "reasoning": {
+            "effort": "none"
+          },
+          "temperature": 0
+        },
+        "model": "gpt-6-luna",
+        "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+        "prompt_sha256": "d8f5b07aa8366f6e62aa7ea2f1054a706c0a4619295edb652a5e83dd4c970cbb",
+        "response_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "angle": {
+                      "enum": [
+                        "P2_GENERALIST"
+                      ],
+                      "type": "string"
+                    },
+                    "change": {
+                      "type": "string"
+                    },
+                    "confidence": {
+                      "type": "number"
+                    },
+                    "evidence_refs": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "expected_impact": {
+                      "type": "string"
+                    },
+                    "falsification": {
+                      "type": "string"
+                    },
+                    "handbook_entry_ids": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "hypothesis": {
+                      "type": "string"
+                    },
+                    "observation_ref": {
+                      "type": "string"
+                    },
+                    "parent_id": {
+                      "type": "string"
+                    },
+                    "proposal_id": {
+                      "type": "string"
+                    },
+                    "risk_assessment": {
+                      "type": "string"
+                    },
+                    "round_id": {
+                      "type": "string"
+                    },
+                    "schema_version": {
+                      "enum": [
+                        "rsi-v2.2"
+                      ],
+                      "type": "string"
+                    },
+                    "worker_patch": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "new": {
+                          "type": "string"
+                        },
+                        "old": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "old",
+                        "new"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "proposal_id",
+                    "round_id",
+                    "parent_id",
+                    "observation_ref",
+                    "hypothesis",
+                    "change",
+                    "expected_impact",
+                    "falsification",
+                    "risk_assessment",
+                    "angle",
+                    "evidence_refs",
+                    "handbook_entry_ids",
+                    "confidence",
+                    "worker_patch"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "OK",
+                "ABSTAIN"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nIndependently propose only the supplied assignment task. Honor its preconditions, forbidden_actions and falsification_requirement. The assignment is a deterministic hypothesis allocation, not evidence of gain. Do not infer peer assignments. ABSTAIN if its constraints cannot be met.",
+        "task": "Independently propose only the supplied assignment task. Honor its preconditions, forbidden_actions and falsification_requirement. The assignment is a deterministic hypothesis allocation, not evidence of gain. Do not infer peer assignments. ABSTAIN if its constraints cannot be met.",
+        "task_sha256": "5cf0367cb634eacd1a1900b797a41d7e14a42fd1654b67d4eb74b13e594fd6fa"
+      },
+      "P3_GENERALIST": {
+        "decode": {
+          "max_output_tokens": 3072,
+          "reasoning": {
+            "effort": "none"
+          },
+          "temperature": 0
+        },
+        "model": "gpt-6-luna",
+        "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+        "prompt_sha256": "d8f5b07aa8366f6e62aa7ea2f1054a706c0a4619295edb652a5e83dd4c970cbb",
+        "response_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "angle": {
+                      "enum": [
+                        "P3_GENERALIST"
+                      ],
+                      "type": "string"
+                    },
+                    "change": {
+                      "type": "string"
+                    },
+                    "confidence": {
+                      "type": "number"
+                    },
+                    "evidence_refs": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "expected_impact": {
+                      "type": "string"
+                    },
+                    "falsification": {
+                      "type": "string"
+                    },
+                    "handbook_entry_ids": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "hypothesis": {
+                      "type": "string"
+                    },
+                    "observation_ref": {
+                      "type": "string"
+                    },
+                    "parent_id": {
+                      "type": "string"
+                    },
+                    "proposal_id": {
+                      "type": "string"
+                    },
+                    "risk_assessment": {
+                      "type": "string"
+                    },
+                    "round_id": {
+                      "type": "string"
+                    },
+                    "schema_version": {
+                      "enum": [
+                        "rsi-v2.2"
+                      ],
+                      "type": "string"
+                    },
+                    "worker_patch": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "new": {
+                          "type": "string"
+                        },
+                        "old": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "old",
+                        "new"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "proposal_id",
+                    "round_id",
+                    "parent_id",
+                    "observation_ref",
+                    "hypothesis",
+                    "change",
+                    "expected_impact",
+                    "falsification",
+                    "risk_assessment",
+                    "angle",
+                    "evidence_refs",
+                    "handbook_entry_ids",
+                    "confidence",
+                    "worker_patch"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "OK",
+                "ABSTAIN"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nIndependently propose only the supplied assignment task. Honor its preconditions, forbidden_actions and falsification_requirement. The assignment is a deterministic hypothesis allocation, not evidence of gain. Do not infer peer assignments. ABSTAIN if its constraints cannot be met.",
+        "task": "Independently propose only the supplied assignment task. Honor its preconditions, forbidden_actions and falsification_requirement. The assignment is a deterministic hypothesis allocation, not evidence of gain. Do not infer peer assignments. ABSTAIN if its constraints cannot be met.",
+        "task_sha256": "5cf0367cb634eacd1a1900b797a41d7e14a42fd1654b67d4eb74b13e594fd6fa"
+      },
+      "curator": {
+        "decode": {
+          "max_output_tokens": 2048,
+          "reasoning": {
+            "effort": "none"
+          },
+          "temperature": 0
+        },
+        "model": "gpt-6-luna",
+        "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+        "prompt_sha256": "9054c09ce3821076533225727821243b8b7b570c0eb1f8ac8a45e43aaaab846d",
+        "response_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "evidence_refs": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "op": {
+                      "enum": [
+                        "ADD",
+                        "REVISE",
+                        "DEPRECATE"
+                      ],
+                      "type": "string"
+                    },
+                    "proposed_entry": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "action": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "name": {
+                                  "enum": [
+                                    "PRESERVE_BOTH",
+                                    "DROP_DUPLICATE",
+                                    "PRIORITIZE_FIRST",
+                                    "PRIORITIZE_LAST",
+                                    "LIMIT_LONG_MEMBERS",
+                                    "PREFER_INDEPENDENT_HITS",
+                                    "FILTER_SHORT_NONSEED_TAILS",
+                                    "REUSE_VERIFIED_SELECTOR"
+                                  ],
+                                  "type": "string"
+                                },
+                                "params": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {},
+                                      "required": [],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "max_chars": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "max_chars"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "denominator": {
+                                          "type": "integer"
+                                        },
+                                        "numerator": {
+                                          "type": "integer"
+                                        },
+                                        "reference": {
+                                          "enum": [
+                                            "LONGEST_SEED_CONTENT_LENGTH"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "reference",
+                                        "numerator",
+                                        "denominator"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "code_sha256": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "code_sha256"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "target": {
+                                  "enum": [
+                                    "MEMBER_PAIR",
+                                    "NONSEED_MEMBERS",
+                                    "SELECTED_MEMBERS"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "target",
+                                "params"
+                              ],
+                              "type": "object"
+                            },
+                            "applicable_format": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "compatibility_fingerprint": {
+                              "type": "string"
+                            },
+                            "conditions": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "field": {
+                                    "enum": [
+                                      "format",
+                                      "budget_class",
+                                      "same_source",
+                                      "same_table",
+                                      "same_numeric_value",
+                                      "has_independent_hit",
+                                      "has_header",
+                                      "has_unit"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "op": {
+                                    "enum": [
+                                      "eq"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "boolean"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "field",
+                                  "op",
+                                  "value"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "explanation": {
+                              "type": "string"
+                            },
+                            "falsification": {
+                              "type": "string"
+                            },
+                            "section": {
+                              "enum": [
+                                "dedup",
+                                "budget",
+                                "order",
+                                "format"
+                              ],
+                              "type": "string"
+                            },
+                            "supersedes": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "support_refs": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "section",
+                            "applicable_format",
+                            "conditions",
+                            "action",
+                            "explanation",
+                            "falsification",
+                            "compatibility_fingerprint",
+                            "support_refs",
+                            "supersedes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "schema_version": {
+                      "enum": [
+                        "rsi-v2.2"
+                      ],
+                      "type": "string"
+                    },
+                    "target_entry_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "op",
+                    "target_entry_id",
+                    "proposed_entry",
+                    "evidence_refs",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "OK",
+                "ABSTAIN"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nRead-only curation from traceable completed candidate experiments only. Never infer selection actions from ABSTAIN counts or missing evidence, assign helpful/harmful status, or claim causal algorithmic gains. Follow the supplied schema and exact compatibility/evidence references. ABSTAIN when unsupported.",
+        "task": "Read-only curation from traceable completed candidate experiments only. Never infer selection actions from ABSTAIN counts or missing evidence, assign helpful/harmful status, or claim causal algorithmic gains. Follow the supplied schema and exact compatibility/evidence references. ABSTAIN when unsupported.",
+        "task_sha256": "c7dbb88b899084b4827457642dcafec8b2be52f6a1c91c96f472d6c31696acd9"
+      },
+      "diagnose": {
+        "decode": {
+          "max_output_tokens": 1024,
+          "reasoning": {
+            "effort": "none"
+          },
+          "temperature": 0
+        },
+        "model": "gpt-6-luna",
+        "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+        "prompt_sha256": "99f69ef06122c630abdca8b5f8924645d155ef494cd67ca933ce906a189798c7",
+        "response_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "confidence": {
+                      "type": "number"
+                    },
+                    "evidence_quote": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "evidence_refs": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "first_deviation": {
+                      "type": "string"
+                    },
+                    "fixable_within_seam": {
+                      "type": "boolean"
+                    },
+                    "hypothesis": {
+                      "type": "string"
+                    },
+                    "observation_refs": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "problem_layer": {
+                      "enum": [
+                        "SELECTION",
+                        "WORKFLOW",
+                        "PROMPT",
+                        "DATA",
+                        "UNKNOWN"
+                      ],
+                      "type": "string"
+                    },
+                    "required_data": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "schema_version": {
+                      "enum": [
+                        "rsi-diagnosis/v2.4-adaptive-v1"
+                      ],
+                      "type": "string"
+                    },
+                    "task_signals": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "disposition": {
+                            "enum": [
+                              "SUPPORT",
+                              "CONFLICT"
+                            ],
+                            "type": "string"
+                          },
+                          "evidence_refs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "task_type": {
+                            "enum": [
+                              "DEDUP",
+                              "BUDGET",
+                              "DEPENDENCY"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "task_type",
+                          "evidence_refs",
+                          "disposition"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "observation_refs",
+                    "problem_layer",
+                    "first_deviation",
+                    "evidence_refs",
+                    "evidence_quote",
+                    "hypothesis",
+                    "fixable_within_seam",
+                    "required_data",
+                    "confidence",
+                    "task_signals"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "OK",
+                "ABSTAIN"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nIdentify supported observations and a falsifiable selection-policy hypothesis. Separate code defects, no gain, fact regression, infrastructure failure, statistical insufficiency and evaluation coverage. Record missing evidence and uncertainty; do not prescribe a candidate algorithm. ABSTAIN when unsupported. Return structured task_signals for DEDUP, BUDGET or DEPENDENCY only when supported by exact public evidence_refs. Mark contradictory evidence CONFLICT. Empty task_signals is valid. Do not assign slots or select algorithms.",
+        "task": "Identify supported observations and a falsifiable selection-policy hypothesis. Separate code defects, no gain, fact regression, infrastructure failure, statistical insufficiency and evaluation coverage. Record missing evidence and uncertainty; do not prescribe a candidate algorithm. ABSTAIN when unsupported. Return structured task_signals for DEDUP, BUDGET or DEPENDENCY only when supported by exact public evidence_refs. Mark contradictory evidence CONFLICT. Empty task_signals is valid. Do not assign slots or select algorithms.",
+        "task_sha256": "4377efb9a6dc097a94ba3701347d5ab1bcc4452af5c73e313531b372526c71de"
+      },
+      "meta": {
+        "decode": {
+          "max_output_tokens": 2048,
+          "reasoning": {
+            "effort": "none"
+          },
+          "temperature": 0
+        },
+        "model": "gpt-6-luna",
+        "policy": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n",
+        "prompt_sha256": "29e37ebe8ff2f6a585b287812d777726ca9d327eaece3776ec2a476be69dfc0a",
+        "response_schema": {
+          "additionalProperties": false,
+          "properties": {
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "findings": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "category": {
+                            "enum": [
+                              "COVERAGE",
+                              "FRESHNESS",
+                              "FALSE_PASS_SUSPECTED",
+                              "UNKNOWN_ATTRIBUTION"
+                            ],
+                            "type": "string"
+                          },
+                          "certainty": {
+                            "enum": [
+                              "SUPPORTED",
+                              "UNKNOWN"
+                            ],
+                            "type": "string"
+                          },
+                          "evidence_refs": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "observation": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "category",
+                          "evidence_refs",
+                          "observation",
+                          "certainty"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "limitations": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "schema_version": {
+                      "enum": [
+                        "rsi-v2.2"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "findings",
+                    "limitations"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "enum": [
+                "OK",
+                "ABSTAIN"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "status",
+            "result",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "system_prompt": "You are one isolated role in a deterministic Context Selection experiment.\nUse only the supplied public context, aliases and exact evidence strings. Do not infer hidden\nanswers, invent source facts or claim experiments ran. Confidence is metadata only.\nReturn the strict JSON envelope. Proposals are falsifiable hypotheses; only frozen deterministic\nreplay can establish facts, correctness or gain. ABSTAIN if no admissible hypothesis exists.\nOnly the select_member_indices function body may change. Keep its supplied signature exactly.\nNo imports, globals, argument mutation, indirect calls, tools, data access or evaluator edits.\nNo new attributes except get/append. Allowed calls: require, duplicate_key, any, all, range,\nlen, enumerate, list, tuple, set, sorted, min, max, sum, abs. Append only to a fresh private list.\nBinary arithmetic permits only + and -. Never assign through a subscript or attribute.\nHandle empty members and empty seed lists without raising. Preserve every seed and original\nrelative membership order. For the six-argument seam, query is read-only and not supplied in\nproposal context; preserve all members when its length is less than two characters.\nDo not hardcode dataset identities. Do not weaken source, fact, budget, signature, whitelist,\nreplay or statistical gates. Report uncertainty and a concrete falsifier. Keep descriptions concise.\n\nRead-only audit of what supplied aggregate evidence supports. Mark missing distribution, currency and false-pass evidence UNKNOWN. Do not inspect hidden answers, modify fixtures or change deterministic decisions.",
+        "task": "Read-only audit of what supplied aggregate evidence supports. Mark missing distribution, currency and false-pass evidence UNKNOWN. Do not inspect hidden answers, modify fixtures or change deterministic decisions.",
+        "task_sha256": "6a7731e27dd46371425d589fb090523e4d5924a86a738c1b95763734b4cd2da6"
+      }
+    },
+    "schema": "rsi-m1-runtime-profile/v1",
+    "seam_profile": "query-autonomous-v1",
+    "sha256": "8ef2e0fe3c127738eb370d12e3d5afac73ba29a68053985ce33139cf19907bbd"
+  },
+  "statistical_protocol": {
+    "alpha": {
+      "denominator": 10,
+      "numerator": 1
+    },
+    "family_size": 3,
+    "scope": "adaptive exploratory training; not confirmatory significance",
+    "version": "fixed-holm3/v1"
+  }
+}

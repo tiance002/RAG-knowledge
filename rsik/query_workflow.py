@@ -100,6 +100,16 @@ def resume_query_round(*, directory, registry, fixtures, evidence=None):
     profile = record['role_profile']['version']
     if record['role_profile'] != profile_manifest(profile) or record.get('proposal_roles') != roles_for(profile):
         raise ValueError('QUERY_COMPLETED_ROLE_PROFILE_CHANGED')
+    from .role_profiles import M1_ADAPTIVE_V1
+    if profile == M1_ADAPTIVE_V1 and 'dispatch_plan' in record:
+        from .adaptive_dispatch import validate_dispatch_plan
+        from .contracts import validate_diagnosis
+        if record.get('diagnosis') is not None:
+            validate_diagnosis(record['diagnosis'], public, adaptive=True)
+        plan = load(directory / 'dispatch-plan.json')
+        validate_dispatch_plan(plan, public, record['diagnosis'])
+        if record.get('dispatch_plan') != plan:
+            raise ValueError('QUERY_COMPLETED_DISPATCH_CHANGED')
     raw = record.get('raw_role_proposals', {})
     if set(raw) != set(record.get('proposal_instances', {})):
         raise ValueError('QUERY_COMPLETED_ROLE_PROPOSALS_CHANGED')
@@ -474,12 +484,12 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
             result = roles.diagnose(context)
             guard()
             return result
-        def propose(self, slot, context, diagnosis):
+        def propose(self, slot, context, diagnosis, **kwargs):
             guard()
-            result = roles.propose(slot, context, diagnosis)
+            result = roles.propose(slot, context, diagnosis, **kwargs)
             guard()
             return result
-    result = execute_round(public, GuardedRoles(), review, replay, enabled_slots=enabled_slots, deadline=deadline, role_profile=role_profile, observer=observer)
+    result = execute_round(public, GuardedRoles(), review, replay, enabled_slots=enabled_slots, deadline=deadline, role_profile=role_profile, observer=observer, dispatch_directory=directory)
     evidence_modes = sorted({d.get('evidence_mode', 'UNKNOWN') for a in artifacts.values() for d in a.get('suite_decisions', [])})
     result['evidence_mode'] = evidence_modes[0] if len(evidence_modes) == 1 else 'UNKNOWN' if evidence_modes else 'NOT_EXECUTED'
     result['real_eligible'] = result['evidence_mode'] == 'REAL_REPLAY' and all(d.get('real_eligible') is True for a in artifacts.values() for d in a.get('suite_decisions', []))
