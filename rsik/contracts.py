@@ -8,6 +8,9 @@ import unicodedata
 
 
 VERSION = 'rsi-v2.2'
+ADAPTIVE_DIAGNOSIS_VERSION = 'rsi-diagnosis/v2.4-adaptive-v1'
+ADAPTIVE_TASK_TYPES = ('DEDUP', 'BUDGET', 'DEPENDENCY')
+ADAPTIVE_SIGNAL_DISPOSITIONS = ('SUPPORT', 'CONFLICT')
 ANGLES = ('P1_DEDUP', 'P2_BUDGET', 'P3_ORDER', 'P3_DEPENDENCY', 'P1_GENERALIST', 'P2_GENERALIST', 'P3_GENERALIST')
 
 
@@ -41,11 +44,14 @@ def confidence(value):
         raise ContractError()
 
 
-def validate_diagnosis(value, visible):
+def validate_diagnosis(value, visible, *, adaptive=False):
     required = ('schema_version', 'observation_refs', 'problem_layer', 'first_deviation', 'evidence_refs',
                 'evidence_quote', 'hypothesis', 'fixable_within_seam', 'required_data', 'confidence')
+    if adaptive:
+        required += ('task_signals',)
     object_fields(value, required)
-    if value['schema_version'] != VERSION or value['problem_layer'] not in {'SELECTION', 'WORKFLOW', 'PROMPT', 'DATA', 'UNKNOWN'}:
+    version = ADAPTIVE_DIAGNOSIS_VERSION if adaptive else VERSION
+    if value['schema_version'] != version or value['problem_layer'] not in {'SELECTION', 'WORKFLOW', 'PROMPT', 'DATA', 'UNKNOWN'}:
         raise ContractError()
     for field in ('first_deviation', 'hypothesis'):
         text(value[field])
@@ -63,7 +69,26 @@ def validate_diagnosis(value, visible):
     if type(value['fixable_within_seam']) is not bool:
         raise ContractError()
     confidence(value['confidence'])
+    if adaptive:
+        _validate_task_signals(value['task_signals'], value['evidence_refs'])
     return value
+
+
+def _validate_task_signals(signals, diagnosis_refs):
+    if not isinstance(signals, list) or len(signals) > 12:
+        raise ContractError('ADAPTIVE_SIGNALS_INVALID')
+    seen = set()
+    for signal in signals:
+        object_fields(signal, ('task_type', 'evidence_refs', 'disposition'))
+        refs = string_list(signal['evidence_refs'])
+        if (signal['task_type'] not in ADAPTIVE_TASK_TYPES
+                or signal['disposition'] not in ADAPTIVE_SIGNAL_DISPOSITIONS
+                or not refs or set(refs) - set(diagnosis_refs)):
+            raise ContractError('ADAPTIVE_SIGNALS_INVALID')
+        identity = (signal['task_type'], signal['disposition'], tuple(sorted(refs)))
+        if identity in seen:
+            raise ContractError('ADAPTIVE_SIGNALS_INVALID')
+        seen.add(identity)
 
 
 def validate_proposal(value, visible, angle):
@@ -97,7 +122,7 @@ def validate_proposal(value, visible, angle):
     return value
 
 
-def role_schema(role):
+def role_schema(role, *, adaptive=False):
     """Provider JSON Schema plus local business/reference validation above."""
     string = {'type': 'string'}
     strings = {'type': 'array', 'items': string}
@@ -108,6 +133,14 @@ def role_schema(role):
                       'first_deviation': string, 'evidence_refs': strings, 'evidence_quote': {'type': ['string', 'null']},
                       'hypothesis': string, 'fixable_within_seam': {'type': 'boolean'},
                       'required_data': strings, 'confidence': number}
+        if adaptive:
+            properties['schema_version']['enum'] = [ADAPTIVE_DIAGNOSIS_VERSION]
+            signal = {'task_type': {'type': 'string', 'enum': list(ADAPTIVE_TASK_TYPES)},
+                      'evidence_refs': strings,
+                      'disposition': {'type': 'string', 'enum': list(ADAPTIVE_SIGNAL_DISPOSITIONS)}}
+            properties['task_signals'] = {'type': 'array', 'items': {
+                'type': 'object', 'properties': signal, 'required': list(signal),
+                'additionalProperties': False}}
     elif role in ANGLES:
         properties = {name: string for name in ('schema_version', 'proposal_id', 'round_id', 'parent_id',
                                                 'observation_ref', 'hypothesis', 'change', 'expected_impact',

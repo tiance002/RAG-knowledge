@@ -1,0 +1,84 @@
+{
+  "schema": "rsi-v24-s32-data-audit/v1",
+  "status": "BLOCKED_DATA",
+  "date": "2026-11-18",
+  "read_scope": "DEV-only audit and allowlisted sources; metadata/stat only for other QA pools; no mixed Gold or FINAL content",
+  "verified_dev_sources": {
+    "items": 20,
+    "files": 31,
+    "bytes": 6163727,
+    "hash_matches": 31,
+    "hash_mismatches": 0,
+    "extensions": {
+      ".md": 9,
+      ".pdf": 1,
+      ".txt": 21
+    }
+  },
+  "inputs": {
+    "passive_dev_audit": {
+      "sha256": "56c6343f1628a3cba0e325b392f899fb40176ee71d7e6d0f8f426427c4ab787c",
+      "bytes": 387244
+    },
+    "compile_receipt": {
+      "sha256": "6e0f684d22f6c0c89e2b0d2294dca284e4cbe67f383b3e44f1c6d8a9a6f8080b",
+      "bytes": 40840
+    },
+    "structural_evidence": {
+      "sha256": "0315ebc5bd1c616348146d91fafc3ea77de8e4d99d93eeca0ebc23bda8514005",
+      "bytes": 7080
+    },
+    "prepare_failure_log": {
+      "sha256": "add8eaedf9ff13e62168d118f4dbfc2a09c96e7c745a3a0e4dc35a60bb367dcd",
+      "bytes": 1881
+    },
+    "historical_s7_report": {
+      "sha256": "8003ea6041487cbd7e5af45cc50d9d46511b0354b97086b88b1c847dce0766ff",
+      "bytes": 17280
+    }
+  },
+  "selected_dev_compile": {
+    "status": "COMPILED_NOT_EXECUTED",
+    "accepted_claims": 72,
+    "evidence_refs": 68,
+    "matched_refs": 66,
+    "negative_control_gaps": {
+      "main": 25,
+      "question-paraphrase": 25,
+      "forward-seed": 27,
+      "backward-seed": 15
+    },
+    "irreducible_questions": 4,
+    "irreducible_atoms": 9,
+    "prepare_error": "COVERAGE_EVERY_ATOM_CONTROL_REQUIRED",
+    "prepare_exit_code_source": "historical S7 report; raw log confirms exception, no standalone exit receipt found"
+  },
+  "drafts": {
+    "count": 12,
+    "document_groups": 2,
+    "admitted_independent_families": 0,
+    "graded": 0,
+    "control_executions": 0,
+    "existing_dev_membership": true,
+    "status": "DRAFT_UNGRADED_NOT_ADMITTED"
+  },
+  "new_model_calls": 0,
+  "new_real_replays": 0,
+  "gold_integrity": "historical DEV-only claim binding verified by receipts; mixed original Gold not opened or regraded",
+  "resource_policy": {
+    "reused": "existing DEV-only receipts and source bytes; existing Python",
+    "new": "this metadata receipt and two small Markdown documents",
+    "deleted": 0,
+    "copied_sources_indexes_databases": 0,
+    "containers_created": 0
+  },
+  "disk_used_before": {
+    "D": 187502997504,
+    "E": 432382382080
+  },
+  "disk_used_after": {
+    "D": 187502997504,
+    "E": 432383918080
+  },
+  "disk_delta_attribution": "includes concurrent tasks; not attributable solely to this audit"
+}

@@ -71,9 +71,9 @@ class _ScriptedRoles(OpenAIRoles):
         super().__init__(budget, directory, directory / 'no-provider-key', scanner,
                          transport=self._receipt, **kwargs)
 
-    def call(self, role, public, diagnosis=None):
+    def call(self, role, public, diagnosis=None, **kwargs):
         self._role.value = role
-        return super().call(role, public, diagnosis)
+        return super().call(role, public, diagnosis, **kwargs)
 
     def _receipt(self, body, *_):
         context = json.loads(body['input'][1]['content'])
