@@ -1,0 +1,123 @@
+{
+  "schema": "rsi-s33-baseline-readiness/v1",
+  "status": "BLOCKED_DATA",
+  "execution": "NOT_RUN",
+  "base": "2816e91da984ca8c18e93eb3eb8fd552f2ba2054",
+  "original_worker_sha256": "a5f793b9f8f6ad7908c78580a670c0cc5c909898dc8e4c36d05fdbc2a330d3da",
+  "registry_identities": {
+    "historical_fixed_history_wrapper": {
+      "candidate_id": "e0339ebf2588f447babbdcb6a88012afde952a76de6d43fa5369553afa99f821",
+      "parent_id": "a8191e090bef5e0a626d527968d71d91df7badc0445cd13ca2093fe1904836db",
+      "registry_origin": "FIXED_HISTORY_COVERAGE_BASELINE_WRAPPER",
+      "worker_sha256": "3ad09b381c6ffcd1e51bb33fb9220435216e2e9dd85850d7fac7769dee7fb9a0",
+      "config_sha256": "1b6a7f3472e1525a76f1733a6793c139e736c866a6dd1f3c1aa0f520c59174e4",
+      "config_selection": "all",
+      "selector_args": [
+        "members",
+        "chunks",
+        "files",
+        "seed_ids",
+        "selection",
+        "query"
+      ],
+      "qualification": "UNKNOWN_NOT_REBUILT"
+    },
+    "query_profile_root": {
+      "candidate_id": "a8191e090bef5e0a626d527968d71d91df7badc0445cd13ca2093fe1904836db",
+      "parent_id": "72311680e2a892b8a47d66bb559c940a2edc966930ffc8d15db206bc8be5941f",
+      "registry_origin": "OWNER_AUTHORIZED_QUERY_PROFILE_BOOTSTRAP",
+      "worker_sha256": "d81060d2a745c3ffe6d213a8b29fd4ae9fe734129ef63496a0cdf31ade3f27e1",
+      "config_sha256": "1b6a7f3472e1525a76f1733a6793c139e736c866a6dd1f3c1aa0f520c59174e4",
+      "config_selection": "all",
+      "selector_args": [
+        "members",
+        "chunks",
+        "files",
+        "seed_ids",
+        "selection",
+        "query"
+      ],
+      "qualification": "UNKNOWN_NOT_REBUILT"
+    }
+  },
+  "fixture_manifests": {
+    "main": {
+      "sha256": "cae3a497470116d2a0779afb009093cfe0c1a74876e7aa4aece1632a3e843b34",
+      "profile": "source-relations-fixed-history/v1",
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "case_domain_counts": {
+        "actual_history_questions": 6,
+        "business_controls": 3,
+        "empty_history_questions": 14,
+        "retrieval_questions": 17
+      },
+      "production_qualified": false
+    },
+    "question-paraphrase": {
+      "sha256": "0211dca9837631b51c021920e45805afa12f2447da5f008ebc9f1227f4cd49c6",
+      "profile": "source-relations-fixed-history/v1",
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "case_domain_counts": {
+        "actual_history_questions": 6,
+        "business_controls": 3,
+        "empty_history_questions": 14,
+        "retrieval_questions": 17
+      },
+      "production_qualified": false
+    },
+    "forward-seed": {
+      "sha256": "027e9142bb0551ada518d5449c0b1a0be2fb4940cd3fbc8dd8e95541095081db",
+      "profile": "source-relations-fixed-history/v1",
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "case_domain_counts": {
+        "actual_history_questions": 6,
+        "business_controls": 3,
+        "empty_history_questions": 14,
+        "retrieval_questions": 17
+      },
+      "production_qualified": false
+    },
+    "backward-seed": {
+      "sha256": "e830d8755cba510342ab65fa0e754da237aa156afce91c0253f2d6728b508d62",
+      "profile": "source-relations-fixed-history/v1",
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "case_domain_counts": {
+        "actual_history_questions": 6,
+        "business_controls": 3,
+        "empty_history_questions": 14,
+        "retrieval_questions": 17
+      },
+      "production_qualified": false
+    }
+  },
+  "coverage_attempt_failure": "COVERAGE_EVERY_ATOM_CONTROL_REQUIRED",
+  "evaluator_source_sha256": {
+    "rsik/fixed_history_profile.py": "c464057d3a9fa438c0b222812ff67ee9e0d7ade07c9dcc612e6463d73752a811",
+    "rsik/fixed_history_coverage.py": "ace950ed9b0c012f082155e50c143634444712456af6a2d5bc9d613a3ed5305d",
+    "rsik/adjudicate.py": "39ba7a92e9105d0cb02e5f1c87c8a75aa723607fc90ce1ac3e49c431d1d6983a",
+    "rsik/baseline_qualification.py": "84080c69fae37b6ba2f29d87b75da4c32fa117932436691ca8fe6a3fea4ad08f",
+    "rsik/launch.py": "a13cb4d523b3fed7f2e1ca4fb3756c4941b79893800c4a4d563acc2c30da101d",
+    "scripts/rsi_decision.py": "b8f0d28211aca4ffb01b9f0c3bb66bc4ffd4669193430ac49a5acd86a1512fa1"
+  },
+  "dev_gold_compile_receipt_sha256": "6e0f684d22f6c0c89e2b0d2294dca284e4cbe67f383b3e44f1c6d8a9a6f8080b",
+  "source_snapshot": "DEV-scope historical snapshot; fixture byte identity alone does not qualify data",
+  "original_budget_sha256": "b1cbb1b5d178d6c716a508ed42bdb575370e9790f45c5b4bdfcd728b4ad3be52",
+  "original_budget_present_events": 668,
+  "original_budget_writes": 0,
+  "new_qualifications": 0,
+  "new_candidates": 0,
+  "real_replays": 0,
+  "paid_calls": 0,
+  "original_worker_selector_args": [
+    "members",
+    "chunks",
+    "files",
+    "seed_ids",
+    "selection"
+  ],
+  "coverage_failure_log_sha256": "add8eaedf9ff13e62168d118f4dbfc2a09c96e7c745a3a0e4dc35a60bb367dcd"
+}
