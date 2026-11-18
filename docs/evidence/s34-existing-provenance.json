@@ -1,0 +1,2742 @@
+{
+  "schema": "rsi-s34-existing-provenance/v1",
+  "date": "2026-11-18",
+  "status": "BLOCKED_DATA",
+  "read_scope": "S33 DEV-only source map, 12 DEV draft metadata, allowlisted DEV raw bytes for SHA256 only, and public official webpages; no FINAL body, mixed Gold or new pool read",
+  "inputs": [
+    {
+      "path": "docs/evidence/s3-v24-s33-source-family-map.json",
+      "sha256": "0a399043ab45050e4ff88d6a17f9a26af1daed96ffd9264f3e839357c910b7cd",
+      "bytes": 72560
+    },
+    {
+      "path": "docs/evidence/s3-v24-s33-question-audit.csv",
+      "sha256": "ed30aacdb8481b2a89e7cc939ad571a5a653f7e4fc85d80377c456830f58103b",
+      "bytes": 66873
+    }
+  ],
+  "denominator": "unique existing DEV raw_source_sha256; no other pool merged",
+  "counts": {
+    "source_rows": 31,
+    "unique_raw_hashes": 31,
+    "eligible": 0,
+    "blocked": 0,
+    "unknown": 31,
+    "known_document_groups": 31,
+    "admitted_independent_families": 0,
+    "actual_independent_families": "UNKNOWN",
+    "official_related_context_found": 2,
+    "upstream_lineage_verified": 0,
+    "source_specific_reuse_license_verified": 0,
+    "old_drafts": 12,
+    "old_drafts_signed_or_admitted": 0
+  },
+  "byte_integrity": {
+    "this_run": {
+      "method": "SHA256 of explicitly allowlisted DEV paths; no raw bodies printed or copied",
+      "files": 31,
+      "matches": 31,
+      "missing": 0,
+      "mismatches": 0,
+      "bytes": 6163727,
+      "rows": [
+        {
+          "row": 1,
+          "status": "MATCH",
+          "bytes": 27400,
+          "sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654"
+        },
+        {
+          "row": 2,
+          "status": "MATCH",
+          "bytes": 14295,
+          "sha256": "447c4da807f22f08f411a171fe98e34fb6a6971aecbab2c0a5005a6dca0b7bd3"
+        },
+        {
+          "row": 3,
+          "status": "MATCH",
+          "bytes": 33148,
+          "sha256": "c4bc1404906bd8611f09222f1d35a2ba57926c76e67474688becbc0c9810c3b3"
+        },
+        {
+          "row": 4,
+          "status": "MATCH",
+          "bytes": 5924004,
+          "sha256": "8f49f93f1665fd5ff604e66ffed9649d8b18ce7f114ab43463aeac46cd3d00cb"
+        },
+        {
+          "row": 5,
+          "status": "MATCH",
+          "bytes": 345,
+          "sha256": "b83d234b12a726468cc79cf1ea08878f4172b44b258ebff6fce011a82d62ce9a"
+        },
+        {
+          "row": 6,
+          "status": "MATCH",
+          "bytes": 353,
+          "sha256": "aa6f4afcee3810a5a120e351b091559ce21aa308138c1dc0a444a20daee4ee2a"
+        },
+        {
+          "row": 7,
+          "status": "MATCH",
+          "bytes": 759,
+          "sha256": "3d241965e0dbd489396ab5a21ad50451564b65d35e754956943b657df82e0b3d"
+        },
+        {
+          "row": 8,
+          "status": "MATCH",
+          "bytes": 968,
+          "sha256": "6810b63a46b2cf6ed4c30e46e7aa060e8bad6e3a88fcddf20651330794525d9d"
+        },
+        {
+          "row": 9,
+          "status": "MATCH",
+          "bytes": 1818,
+          "sha256": "a2825606e76278f79d6508b0718337acdc6602baa7f9d37e7417d05c006f6eec"
+        },
+        {
+          "row": 10,
+          "status": "MATCH",
+          "bytes": 6859,
+          "sha256": "0e1d2fcf70bfd6cc9649b6bb1c305960e8643329f204e8346fcfbf817913f609"
+        },
+        {
+          "row": 11,
+          "status": "MATCH",
+          "bytes": 2666,
+          "sha256": "ae8916de431ff3dc0eff0d928c86913867f4ed05bc67c39edd5eb5716ea31453"
+        },
+        {
+          "row": 12,
+          "status": "MATCH",
+          "bytes": 4751,
+          "sha256": "b5d6164c6150cb75be8aaf85b9cf1b995b1ba571f7c8c2385ca8fcb8634a2978"
+        },
+        {
+          "row": 13,
+          "status": "MATCH",
+          "bytes": 2429,
+          "sha256": "1e0a84f2cf6bacb55c4c60c0b4a6d1e5a63574f491e9a900fae2e10286e6c508"
+        },
+        {
+          "row": 14,
+          "status": "MATCH",
+          "bytes": 1623,
+          "sha256": "731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea"
+        },
+        {
+          "row": 15,
+          "status": "MATCH",
+          "bytes": 800,
+          "sha256": "778590ccc49d03823d77118b5db294771b5d3da034b24c8416caea2d61435746"
+        },
+        {
+          "row": 16,
+          "status": "MATCH",
+          "bytes": 25822,
+          "sha256": "7d13314dd3e601e8e1ec8b1f589bff7846ca77fa639d244a585b259e082db695"
+        },
+        {
+          "row": 17,
+          "status": "MATCH",
+          "bytes": 4724,
+          "sha256": "4cab4fc8086f5b68ac4ade6feda329dfaa3c428753d9b021b3e0f7fce80c3f6f"
+        },
+        {
+          "row": 18,
+          "status": "MATCH",
+          "bytes": 18287,
+          "sha256": "e64dd3ff07fa1ce99e2dfcf7f65f9cf59945f2f0180ab622e5b7d69fc46fd7fa"
+        },
+        {
+          "row": 19,
+          "status": "MATCH",
+          "bytes": 11524,
+          "sha256": "94971fa402c51167b755c79d814c091f8d3045387b664f0139b24474b6ff7c3a"
+        },
+        {
+          "row": 20,
+          "status": "MATCH",
+          "bytes": 6247,
+          "sha256": "878beb372db426595f98504614f5d7b59a5f74d30dc7cc68bf31f9302983edea"
+        },
+        {
+          "row": 21,
+          "status": "MATCH",
+          "bytes": 5157,
+          "sha256": "fe91597f0d618f2840db581a4a066a4f991aae33466426b36da5ff0c5d402828"
+        },
+        {
+          "row": 22,
+          "status": "MATCH",
+          "bytes": 4719,
+          "sha256": "28f11a56098091f11a7dcef2cf70cc30a02e4bdabe965cf425f0d6dba0059bd6"
+        },
+        {
+          "row": 23,
+          "status": "MATCH",
+          "bytes": 5006,
+          "sha256": "ee5e85b7efdc2f41029362b97844ca379dc801163f7fa770cec320a8781adaf8"
+        },
+        {
+          "row": 24,
+          "status": "MATCH",
+          "bytes": 3703,
+          "sha256": "3abb00247be18b03f3ef7bbf04269866f2fe2a4e636ba31cb28eb48a78cbc6e3"
+        },
+        {
+          "row": 25,
+          "status": "MATCH",
+          "bytes": 2711,
+          "sha256": "650536985a154c79475fb798fcbd4d30ec1011ad670f8b2cfc349a2657e75fdf"
+        },
+        {
+          "row": 26,
+          "status": "MATCH",
+          "bytes": 9458,
+          "sha256": "d18f61754a9b96c729ff3e73c93b9ef7017ea33d083419ddb1097dbf3f039655"
+        },
+        {
+          "row": 27,
+          "status": "MATCH",
+          "bytes": 9693,
+          "sha256": "46d3ec6a1bd46f3a62afc4fd5edd18c75c749f0a29218858bb2d7835eeaa3aa1"
+        },
+        {
+          "row": 28,
+          "status": "MATCH",
+          "bytes": 3239,
+          "sha256": "66ff071f5c9c5cbaa4bca3b8cb3d6c5975c8f7aaa96e1489257212b67c808af8"
+        },
+        {
+          "row": 29,
+          "status": "MATCH",
+          "bytes": 5148,
+          "sha256": "75e242042fb37b07ce07b9252f34ceb5ee6f293606b28e077069c39fef3afe43"
+        },
+        {
+          "row": 30,
+          "status": "MATCH",
+          "bytes": 18433,
+          "sha256": "9aa62436534a2252fd5df68ef0e179e9dfa65c80d2eaf7ab72418cee16bd25e1"
+        },
+        {
+          "row": 31,
+          "status": "MATCH",
+          "bytes": 7638,
+          "sha256": "f3f64bec64919db78f34f61783f4a7ac6d1208250e517c8c486fa3799b90ce84"
+        }
+      ]
+    },
+    "prior_receipt": {
+      "files": 31,
+      "bytes": 6163727,
+      "matches": 31,
+      "missing": 0,
+      "mismatches": 0
+    }
+  },
+  "public_evidence": [
+    {
+      "id": "PUB-DSM-01",
+      "title": "全球地理信息资源 数字表面模型生产技术规范 - 全国标准信息公共服务平台",
+      "url": "https://std.samr.gov.cn/hb/search/stdHBDetailedCNF?id=EE20C35DC1AE9E47E05397BE0A0A7656",
+      "authority": "SAMR national standards registry",
+      "accessed": "2026-11-18",
+      "verification": "page opened; title, code, authority, release/effective dates directly checked",
+      "facts": {
+        "standard": "CH/T 9033-2022",
+        "published": "2022-07-10",
+        "effective": "2022-11-01",
+        "supervising_body": "自然资源部",
+        "registry_status_at_lookup": "现行"
+      },
+      "limits": "Registry metadata does not establish local draft version, source capture chain or reuse license."
+    },
+    {
+      "id": "PUB-JZG-01",
+      "title": "九寨沟火花海灾害治理完成 将于国庆前夕开放",
+      "url": "https://www.jiuzhai.com/dynamic/work/7279-2020-09-26-11-01-35",
+      "authority": "九寨沟管理局 official site",
+      "published": "2020-09-26",
+      "accessed": "2026-11-18",
+      "verification": "page opened; author/date, earthquake and restoration context, copyright footer checked",
+      "facts": {
+        "author": "九寨沟管理局",
+        "context": "2017 earthquake damage followed by restoration and 2020 assessment; historical risk descriptions require time scope",
+        "footer": "© 2002 - 2026 九寨沟风景名胜区管理局"
+      },
+      "limits": "Not proved to be local short-text upstream. Copyright footer is not a positive reuse license; no current risk conclusion drawn."
+    }
+  ],
+  "sources": [
+    {
+      "existing_document_ids": [
+        "bee35f97-cba0-43ea-9ef9-ee8efdaf022b"
+      ],
+      "existing_file_ids": [
+        "bee35f97-cba0-43ea-9ef9-ee8efdaf022b"
+      ],
+      "dev_item_ids": [
+        "legacy-session1-v5-s1-t04"
+      ],
+      "draft_source_group": "DSM",
+      "raw_source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "raw_bytes": 27400,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing; S3.2 document reading and draft derivation",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "THREE_NATIVE_ROWS_MAPPED; EIGHT_DRAFT_TARGETS_OUTSIDE_MAPPED_SPANS; UNKNOWN8",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/069_bee35f97-cba0-43ea-9ef9-ee8efdaf022b_6bf461d387564edcd4acc378.md"
+      ],
+      "audit_row": 1,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "TITLE_RELATED_OFFICIAL_RELEASE_IDENTIFIED_LOCAL_DRAFT_LINEAGE_UNVERIFIED",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [
+        "PUB-DSM-01"
+      ],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "source_title_from_existing_DEV_draft": "全球地理信息资源数字表面模型生产技术规范（报批稿）",
+      "candidate_release_relation": "CH/T 9033-2022 is title-related; no byte/version identity or author-to-local-capture chain established",
+      "required_resolution": [
+        "locate original draft publication URL and version/date",
+        "verify draft-to-release changes without replacing frozen source",
+        "obtain source-specific reuse permission or terms",
+        "independent family/exposure approval and native target member evidence"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "a23a5079-13a1-4481-b316-0a056ac6835c"
+      ],
+      "existing_file_ids": [
+        "a23a5079-13a1-4481-b316-0a056ac6835c"
+      ],
+      "dev_item_ids": [
+        "legacy-session3-v5-s1-t02"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "447c4da807f22f08f411a171fe98e34fb6a6971aecbab2c0a5005a6dca0b7bd3",
+      "raw_bytes": 14295,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "447c4da807f22f08f411a171fe98e34fb6a6971aecbab2c0a5005a6dca0b7bd3",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/067_a23a5079-13a1-4481-b316-0a056ac6835c_6f395a6b1125be2e62cd5737.md"
+      ],
+      "audit_row": 2,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "b5c6a4a3-7445-4b82-a533-6efb13925a61"
+      ],
+      "existing_file_ids": [
+        "b5c6a4a3-7445-4b82-a533-6efb13925a61"
+      ],
+      "dev_item_ids": [
+        "legacy-session4-v6-s1-t04"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "c4bc1404906bd8611f09222f1d35a2ba57926c76e67474688becbc0c9810c3b3",
+      "raw_bytes": 33148,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "c4bc1404906bd8611f09222f1d35a2ba57926c76e67474688becbc0c9810c3b3",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/068_b5c6a4a3-7445-4b82-a533-6efb13925a61_a7e64327993d144ee720d13c.md"
+      ],
+      "audit_row": 3,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "ef0cf2bd-8467-48ed-abf7-419a6aeb48e0"
+      ],
+      "existing_file_ids": [
+        "ef0cf2bd-8467-48ed-abf7-419a6aeb48e0"
+      ],
+      "dev_item_ids": [
+        "legacy-session5-v3-s1-t04"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "8f49f93f1665fd5ff604e66ffed9649d8b18ce7f114ab43463aeac46cd3d00cb",
+      "raw_bytes": 5924004,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "8f49f93f1665fd5ff604e66ffed9649d8b18ce7f114ab43463aeac46cd3d00cb",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/073_ef0cf2bd-8467-48ed-abf7-419a6aeb48e0_11-21-16-Updated-Post-Election-Release.pdf"
+      ],
+      "audit_row": 4,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "84139d05-3bfa-4032-9bc4-a3c5de980693"
+      ],
+      "existing_file_ids": [
+        "84139d05-3bfa-4032-9bc4-a3c5de980693"
+      ],
+      "dev_item_ids": [
+        "forward-session14-v7-s1-t10"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "b83d234b12a726468cc79cf1ea08878f4172b44b258ebff6fce011a82d62ce9a",
+      "raw_bytes": 345,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "b83d234b12a726468cc79cf1ea08878f4172b44b258ebff6fce011a82d62ce9a",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/061_84139d05-3bfa-4032-9bc4-a3c5de980693_a4ac70a472b41ab675e315fc55977d32fbf6ac7cf2177fdc8a03dd20b21d79c6.txt"
+      ],
+      "audit_row": 5,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "eac25116-7e50-4382-89fd-c12a3c28f403"
+      ],
+      "existing_file_ids": [
+        "eac25116-7e50-4382-89fd-c12a3c28f403"
+      ],
+      "dev_item_ids": [
+        "forward-session14-v7-s1-t10"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "aa6f4afcee3810a5a120e351b091559ce21aa308138c1dc0a444a20daee4ee2a",
+      "raw_bytes": 353,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "aa6f4afcee3810a5a120e351b091559ce21aa308138c1dc0a444a20daee4ee2a",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/062_eac25116-7e50-4382-89fd-c12a3c28f403_46c0cdfb975e13514a984356eec4b9e0d606c7ccbc258146585c8acfc1b6e92a.txt"
+      ],
+      "audit_row": 6,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "f2f1351f-d86d-4a73-acf8-111552fbd343"
+      ],
+      "existing_file_ids": [
+        "f2f1351f-d86d-4a73-acf8-111552fbd343"
+      ],
+      "dev_item_ids": [
+        "terra-ecs-b8-006"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "3d241965e0dbd489396ab5a21ad50451564b65d35e754956943b657df82e0b3d",
+      "raw_bytes": 759,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "3d241965e0dbd489396ab5a21ad50451564b65d35e754956943b657df82e0b3d",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/043_f2f1351f-d86d-4a73-acf8-111552fbd343_full-3d241965e0dbd489396ab5a2.md"
+      ],
+      "audit_row": 7,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "7871df83-8bb1-4261-a1a7-83e3954a2e74"
+      ],
+      "existing_file_ids": [
+        "7871df83-8bb1-4261-a1a7-83e3954a2e74"
+      ],
+      "dev_item_ids": [
+        "terra-ecs-b6-019"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "6810b63a46b2cf6ed4c30e46e7aa060e8bad6e3a88fcddf20651330794525d9d",
+      "raw_bytes": 968,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "6810b63a46b2cf6ed4c30e46e7aa060e8bad6e3a88fcddf20651330794525d9d",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/009_7871df83-8bb1-4261-a1a7-83e3954a2e74_full-6810b63a46b2cf6ed4c30e46.md"
+      ],
+      "audit_row": 8,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "aadeae6a-3884-43e8-9433-85078cd97fef"
+      ],
+      "existing_file_ids": [
+        "aadeae6a-3884-43e8-9433-85078cd97fef"
+      ],
+      "dev_item_ids": [
+        "terra-ecs-b4-009"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "a2825606e76278f79d6508b0718337acdc6602baa7f9d37e7417d05c006f6eec",
+      "raw_bytes": 1818,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "a2825606e76278f79d6508b0718337acdc6602baa7f9d37e7417d05c006f6eec",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/014_aadeae6a-3884-43e8-9433-85078cd97fef_full-a2825606e76278f79d6508b0.md"
+      ],
+      "audit_row": 9,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_3c3ab5813b264367877e0d02f652ca32"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0840"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "0e1d2fcf70bfd6cc9649b6bb1c305960e8643329f204e8346fcfbf817913f609",
+      "raw_bytes": 6859,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "0e1d2fcf70bfd6cc9649b6bb1c305960e8643329f204e8346fcfbf817913f609",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/158_dsid_3c3ab5813b264367877e0d02f652ca32__copperfield-nimbus-solutions-dedicated-sizing-and-security-notes.txt"
+      ],
+      "audit_row": 10,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_8ca703d991844bd195b4b8fdc16040fd"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0840"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "ae8916de431ff3dc0eff0d928c86913867f4ed05bc67c39edd5eb5716ea31453",
+      "raw_bytes": 2666,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "ae8916de431ff3dc0eff0d928c86913867f4ed05bc67c39edd5eb5716ea31453",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/164_dsid_8ca703d991844bd195b4b8fdc16040fd__company-copperfield-nimbus-solutions.txt"
+      ],
+      "audit_row": 11,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_38aee49cad12452f8b11574723a578be"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0858"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "b5d6164c6150cb75be8aaf85b9cf1b995b1ba571f7c8c2385ca8fcb8634a2978",
+      "raw_bytes": 4751,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "b5d6164c6150cb75be8aaf85b9cf1b995b1ba571f7c8c2385ca8fcb8634a2978",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/128_dsid_38aee49cad12452f8b11574723a578be__dedicated-mi300-canada-east-capacity-and-reservations.txt"
+      ],
+      "audit_row": 12,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_fb5209e0e305478d8ba56f87f8a8df57"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0858"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "1e0a84f2cf6bacb55c4c60c0b4a6d1e5a63574f491e9a900fae2e10286e6c508",
+      "raw_bytes": 2429,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "1e0a84f2cf6bacb55c4c60c0b4a6d1e5a63574f491e9a900fae2e10286e6c508",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/179_dsid_fb5209e0e305478d8ba56f87f8a8df57__1823456789-dedicated-mi300-canada-east-availability.txt"
+      ],
+      "audit_row": 13,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "aeb51a7c-bf57-4d94-ae8a-12074230297d"
+      ],
+      "existing_file_ids": [
+        "aeb51a7c-bf57-4d94-ae8a-12074230297d"
+      ],
+      "dev_item_ids": [
+        "terra-ecs-b4-014"
+      ],
+      "draft_source_group": "JZG",
+      "raw_source_sha256": "731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+      "raw_bytes": 1623,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing; S3.2 document reading and draft derivation",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "TWO_OVERLAPPING_NATIVE_ROWS; FOUR_DRAFT_TARGETS_EFFECTIVELY_SINGLE_SUPPORTING_SEED; BLOCKED4",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/018_aeb51a7c-bf57-4d94-ae8a-12074230297d_full-731d9e51e79964747dd60d66.md"
+      ],
+      "audit_row": 14,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "OFFICIAL_BACKGROUND_IDENTIFIED_LOCAL_TEXT_ORIGIN_UNVERIFIED",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [
+        "PUB-JZG-01"
+      ],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "source_title_from_existing_DEV_draft": "九寨沟风景名胜区",
+      "candidate_release_relation": "official 2020 restoration article is context, not a proved upstream or derivative parent of frozen local short text",
+      "required_resolution": [
+        "recover actual upstream URL and revision ID for local text",
+        "verify original/translation/reprint relations and license",
+        "preserve historical time scope of earthquake statements",
+        "independent family/exposure approval and native topology controls"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "b0a6ad9c-7164-4a40-b91e-46d9aa225661"
+      ],
+      "existing_file_ids": [
+        "b0a6ad9c-7164-4a40-b91e-46d9aa225661"
+      ],
+      "dev_item_ids": [
+        "terra-ecs-b11-005"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "778590ccc49d03823d77118b5db294771b5d3da034b24c8416caea2d61435746",
+      "raw_bytes": 800,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "778590ccc49d03823d77118b5db294771b5d3da034b24c8416caea2d61435746",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/022_b0a6ad9c-7164-4a40-b91e-46d9aa225661_full-778590ccc49d03823d77118b.md"
+      ],
+      "audit_row": 15,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dc3716d9-caef-406b-8e5d-e96d53e0934e"
+      ],
+      "existing_file_ids": [
+        "dc3716d9-caef-406b-8e5d-e96d53e0934e"
+      ],
+      "dev_item_ids": [
+        "legacy-session2-v5-s1-t02"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "7d13314dd3e601e8e1ec8b1f589bff7846ca77fa639d244a585b259e082db695",
+      "raw_bytes": 25822,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "7d13314dd3e601e8e1ec8b1f589bff7846ca77fa639d244a585b259e082db695",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/070_dc3716d9-caef-406b-8e5d-e96d53e0934e_43521b2a65fdd1e7f7e1f002.md"
+      ],
+      "audit_row": 16,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_9dff54e0ef8e4710926767a81224d475"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0621"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "4cab4fc8086f5b68ac4ade6feda329dfaa3c428753d9b021b3e0f7fce80c3f6f",
+      "raw_bytes": 4724,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "4cab4fc8086f5b68ac4ade6feda329dfaa3c428753d9b021b3e0f7fce80c3f6f",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/192_dsid_9dff54e0ef8e4710926767a81224d475__1930123456-lb-tls-dns-pageoutage.txt"
+      ],
+      "audit_row": 17,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_c18e7b288af34add92570d67b1980bda"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0744"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "e64dd3ff07fa1ce99e2dfcf7f65f9cf59945f2f0180ab622e5b7d69fc46fd7fa",
+      "raw_bytes": 18287,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "e64dd3ff07fa1ce99e2dfcf7f65f9cf59945f2f0180ab622e5b7d69fc46fd7fa",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/161_dsid_c18e7b288af34add92570d67b1980bda__security-claims-matrix.txt"
+      ],
+      "audit_row": 18,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_39be65662e0541c9868dfe3d331d5654"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0744"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "94971fa402c51167b755c79d814c091f8d3045387b664f0139b24474b6ff7c3a",
+      "raw_bytes": 11524,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "94971fa402c51167b755c79d814c091f8d3045387b664f0139b24474b6ff7c3a",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/133_dsid_39be65662e0541c9868dfe3d331d5654__rfp-response-ownership-and-approvals.txt"
+      ],
+      "audit_row": 19,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_6380c5b842d84b5eaf35b3b6eb7d5778"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0150"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "878beb372db426595f98504614f5d7b59a5f74d30dc7cc68bf31f9302983edea",
+      "raw_bytes": 6247,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "878beb372db426595f98504614f5d7b59a5f74d30dc7cc68bf31f9302983edea",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/117_dsid_6380c5b842d84b5eaf35b3b6eb7d5778__ENG-33247-resumable-handoff-escape-handshake.txt"
+      ],
+      "audit_row": 20,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_ab6cc1587c2c491fb4a402f2c6a8342a"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0150"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "fe91597f0d618f2840db581a4a066a4f991aae33466426b36da5ff0c5d402828",
+      "raw_bytes": 5157,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "fe91597f0d618f2840db581a4a066a4f991aae33466426b36da5ff0c5d402828",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/106_dsid_ab6cc1587c2c491fb4a402f2c6a8342a__pr-64321-continuation-token-resume-inflight-abort-and-tool-idempotency-openai-compat.txt"
+      ],
+      "audit_row": 21,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_103ecfafe4fc4e0596414b6b4f98d17e"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0150"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "28f11a56098091f11a7dcef2cf70cc30a02e4bdabe965cf425f0d6dba0059bd6",
+      "raw_bytes": 4719,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "28f11a56098091f11a7dcef2cf70cc30a02e4bdabe965cf425f0d6dba0059bd6",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/116_dsid_103ecfafe4fc4e0596414b6b4f98d17e__ENG-88123-resumable-stream-segmentation-toolcall-interop.txt"
+      ],
+      "audit_row": 22,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_d283ff2efa944227b3bcad9a4e3d28f4"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0942"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "ee5e85b7efdc2f41029362b97844ca379dc801163f7fa770cec320a8781adaf8",
+      "raw_bytes": 5006,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "ee5e85b7efdc2f41029362b97844ca379dc801163f7fa770cec320a8781adaf8",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/100_dsid_d283ff2efa944227b3bcad9a4e3d28f4__misc-oddball-onboarding-reminders-2026.txt"
+      ],
+      "audit_row": 23,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_d147be61f81249dd85ef4ad13b81d44c"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0942"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "3abb00247be18b03f3ef7bbf04269866f2fe2a4e636ba31cb28eb48a78cbc6e3",
+      "raw_bytes": 3703,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "3abb00247be18b03f3ef7bbf04269866f2fe2a4e636ba31cb28eb48a78cbc6e3",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/121_dsid_d147be61f81249dd85ef4ad13b81d44c__1769876543-sara-usb4-dock-wifi-onboarding-thread.txt"
+      ],
+      "audit_row": 24,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_e5ee3d516eef4049924b02f44abf3ad1"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0942"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "650536985a154c79475fb798fcbd4d30ec1011ad670f8b2cfc349a2657e75fdf",
+      "raw_bytes": 2711,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "650536985a154c79475fb798fcbd4d30ec1011ad670f8b2cfc349a2657e75fdf",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/122_dsid_e5ee3d516eef4049924b02f44abf3ad1__1918888888-monitor-hdmi-adapter-wifi-slow.txt"
+      ],
+      "audit_row": 25,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_09d52038c96e46baac0cceb55d39bd49"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0131"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "d18f61754a9b96c729ff3e73c93b9ef7017ea33d083419ddb1097dbf3f039655",
+      "raw_bytes": 9458,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "d18f61754a9b96c729ff3e73c93b9ef7017ea33d083419ddb1097dbf3f039655",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/093_dsid_09d52038c96e46baac0cceb55d39bd49__oncall-playbook-for-throttle-and-backpressure-events-2026.txt"
+      ],
+      "audit_row": 26,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_a559687e57f24826b4beecfcd6322d48"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0131"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "46d3ec6a1bd46f3a62afc4fd5edd18c75c749f0a29218858bb2d7835eeaa3aa1",
+      "raw_bytes": 9693,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "46d3ec6a1bd46f3a62afc4fd5edd18c75c749f0a29218858bb2d7835eeaa3aa1",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/092_dsid_a559687e57f24826b4beecfcd6322d48__service-failure-containment-and-recovery-procedure-2026.txt"
+      ],
+      "audit_row": 27,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_ec25fde45afd4900afd2818e6ef4e327"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0602"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "66ff071f5c9c5cbaa4bca3b8cb3d6c5975c8f7aaa96e1489257212b67c808af8",
+      "raw_bytes": 3239,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "66ff071f5c9c5cbaa4bca3b8cb3d6c5975c8f7aaa96e1489257212b67c808af8",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/177_dsid_ec25fde45afd4900afd2818e6ef4e327__2401240000-telemetry-init-race-repro-reqid-preserve.txt"
+      ],
+      "audit_row": 28,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_3a1f6951df694270beffed49a6a3cabc"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0670"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "75e242042fb37b07ce07b9252f34ceb5ee6f293606b28e077069c39fef3afe43",
+      "raw_bytes": 5148,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "75e242042fb37b07ce07b9252f34ceb5ee6f293606b28e077069c39fef3afe43",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/112_dsid_3a1f6951df694270beffed49a6a3cabc__company-acme-ai-corp.txt"
+      ],
+      "audit_row": 29,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_36f47da3bf1e4303bd75c020a9b2ed4f"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0670"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "9aa62436534a2252fd5df68ef0e179e9dfa65c80d2eaf7ab72418cee16bd25e1",
+      "raw_bytes": 18433,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "9aa62436534a2252fd5df68ef0e179e9dfa65c80d2eaf7ab72418cee16bd25e1",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/101_dsid_36f47da3bf1e4303bd75c020a9b2ed4f__2026-02-03-acme-escalation-streaming-timeouts.txt"
+      ],
+      "audit_row": 30,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    },
+    {
+      "existing_document_ids": [
+        "dsid_70124860f38d4604981c3c41c45308ce"
+      ],
+      "existing_file_ids": [
+        null
+      ],
+      "dev_item_ids": [
+        "qst_0670"
+      ],
+      "draft_source_group": null,
+      "raw_source_sha256": "f3f64bec64919db78f34f61783f4a7ac6d1208250e517c8c486fa3799b90ce84",
+      "raw_bytes": 7638,
+      "live_byte_check": "MATCH",
+      "source_version": {
+        "kind": "frozen_local_snapshot_raw_bytes",
+        "sha256": "f3f64bec64919db78f34f61783f4a7ac6d1208250e517c8c486fa3799b90ce84",
+        "snapshot_manifest_sha256": [
+          "152a467784bdb1889aab3bc52389e97f40bc0e76b96785f2e944de7f34b677c3"
+        ],
+        "upstream_version": "UNKNOWN"
+      },
+      "upstream_origin": "UNKNOWN_NOT_ESTABLISHED_BY_DEV_BYTE_BINDING",
+      "original_translation_reprint_version_relations": "UNKNOWN",
+      "family_id": null,
+      "family_relation": "UNKNOWN",
+      "independence_review": "NOT_ADMITTED",
+      "prior_exposure": {
+        "known_use": "selected DEV source binding and audit; S3.2 source byte hashing",
+        "optimizer_exposure": "UNKNOWN",
+        "fresh_holdout_eligible": false
+      },
+      "allowed_usage": {
+        "current_audit": "explicit DEV-only local binding allowlist",
+        "candidate": "development draft only after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED",
+        "upstream_license_or_reuse_permission": "UNKNOWN"
+      },
+      "opaque_FINAL_exact_raw_hash_intersection": false,
+      "FINAL_family_intersection": "UNKNOWN",
+      "source_eligibility": "UNKNOWN",
+      "blocking_reasons": [
+        "UPSTREAM_PROVENANCE_UNRESOLVED",
+        "DERIVATIVE_RELATIONS_UNRESOLVED",
+        "FAMILY_INDEPENDENCE_NOT_ADMITTED",
+        "FAMILY_LEVEL_FINAL_INTERSECTION_UNKNOWN",
+        "EXPOSURE_FRESHNESS_UNKNOWN"
+      ],
+      "structural_control_status": "NOT_A_SOURCE_FAMILY_ADMISSION_FIELD",
+      "source_paths": [
+        "DEV_SNAPSHOT/files/113_dsid_70124860f38d4604981c3c41c45308ce__SUP-1842-streaming-connection-resets-us-east.txt"
+      ],
+      "audit_row": 31,
+      "metadata_audit": "S33_FIELDS_REVIEWED_AND_ALLOWLISTED_DEV_RAW_SHA256_REVERIFIED_NO_BODY_OUTPUT",
+      "raw_byte_verification_this_run": "MATCH",
+      "upstream_evidence_status": "UNKNOWN_NO_RELIABLY_IDENTIFIED_PUBLIC_ORIGIN",
+      "license_status": "UNKNOWN_NO_SOURCE_SPECIFIC_REUSE_GRANT_VERIFIED",
+      "upstream_version_status": "UNKNOWN_LOCAL_HASH_IS_NOT_UPSTREAM_VERSION",
+      "public_evidence_refs": [],
+      "human_source_family_signoff": "UNAVAILABLE_NOT_SIGNED",
+      "required_resolution": [
+        "recover publisher/origin and source version from authorized DEV metadata",
+        "verify source-specific license/reuse permission",
+        "resolve derivative/translation/family and exposure relations before admission"
+      ]
+    }
+  ],
+  "family_graph": {
+    "semantics": "31 raw nodes remain in conservative UNKNOWN dependency component; this is a dependence assumption, not evidence of one actual family. Candidate context edges create no family admission.",
+    "edges": [
+      {
+        "from": "raw:a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+        "to": "PUB-DSM-01",
+        "relation": "TITLE_RELATED_RELEASE_CANDIDATE_ONLY",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:447c4da807f22f08f411a171fe98e34fb6a6971aecbab2c0a5005a6dca0b7bd3",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:c4bc1404906bd8611f09222f1d35a2ba57926c76e67474688becbc0c9810c3b3",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:8f49f93f1665fd5ff604e66ffed9649d8b18ce7f114ab43463aeac46cd3d00cb",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:b83d234b12a726468cc79cf1ea08878f4172b44b258ebff6fce011a82d62ce9a",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:aa6f4afcee3810a5a120e351b091559ce21aa308138c1dc0a444a20daee4ee2a",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:3d241965e0dbd489396ab5a21ad50451564b65d35e754956943b657df82e0b3d",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:6810b63a46b2cf6ed4c30e46e7aa060e8bad6e3a88fcddf20651330794525d9d",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:a2825606e76278f79d6508b0718337acdc6602baa7f9d37e7417d05c006f6eec",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:0e1d2fcf70bfd6cc9649b6bb1c305960e8643329f204e8346fcfbf817913f609",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:ae8916de431ff3dc0eff0d928c86913867f4ed05bc67c39edd5eb5716ea31453",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:b5d6164c6150cb75be8aaf85b9cf1b995b1ba571f7c8c2385ca8fcb8634a2978",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:1e0a84f2cf6bacb55c4c60c0b4a6d1e5a63574f491e9a900fae2e10286e6c508",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+        "to": "PUB-JZG-01",
+        "relation": "OFFICIAL_HISTORICAL_CONTEXT_NOT_PROVEN_UPSTREAM",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:778590ccc49d03823d77118b5db294771b5d3da034b24c8416caea2d61435746",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:7d13314dd3e601e8e1ec8b1f589bff7846ca77fa639d244a585b259e082db695",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:4cab4fc8086f5b68ac4ade6feda329dfaa3c428753d9b021b3e0f7fce80c3f6f",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:e64dd3ff07fa1ce99e2dfcf7f65f9cf59945f2f0180ab622e5b7d69fc46fd7fa",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:94971fa402c51167b755c79d814c091f8d3045387b664f0139b24474b6ff7c3a",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:878beb372db426595f98504614f5d7b59a5f74d30dc7cc68bf31f9302983edea",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:fe91597f0d618f2840db581a4a066a4f991aae33466426b36da5ff0c5d402828",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:28f11a56098091f11a7dcef2cf70cc30a02e4bdabe965cf425f0d6dba0059bd6",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:ee5e85b7efdc2f41029362b97844ca379dc801163f7fa770cec320a8781adaf8",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:3abb00247be18b03f3ef7bbf04269866f2fe2a4e636ba31cb28eb48a78cbc6e3",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:650536985a154c79475fb798fcbd4d30ec1011ad670f8b2cfc349a2657e75fdf",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:d18f61754a9b96c729ff3e73c93b9ef7017ea33d083419ddb1097dbf3f039655",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:46d3ec6a1bd46f3a62afc4fd5edd18c75c749f0a29218858bb2d7835eeaa3aa1",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:66ff071f5c9c5cbaa4bca3b8cb3d6c5975c8f7aaa96e1489257212b67c808af8",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:75e242042fb37b07ce07b9252f34ceb5ee6f293606b28e077069c39fef3afe43",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:9aa62436534a2252fd5df68ef0e179e9dfa65c80d2eaf7ab72418cee16bd25e1",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      },
+      {
+        "from": "raw:f3f64bec64919db78f34f61783f4a7ac6d1208250e517c8c486fa3799b90ce84",
+        "to": "UNKNOWN_DEPENDENCY_COMPONENT",
+        "relation": "CONSERVATIVE_ACCOUNTING_NOT_PROVEN_COMMON_ORIGIN",
+        "lineage_verified": false
+      }
+    ],
+    "FINAL_relation": "S33 opaque exact-hash metadata reused only: intersection 0; family intersection UNKNOWN; FINAL bodies not read"
+  },
+  "old_draft_status": [
+    {
+      "question_id": "DRAFT-DSM-01",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-DSM-02",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-DSM-03",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-DSM-04",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-DSM-05",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-DSM-06",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-DSM-07",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-DSM-08",
+      "source_group": "DSM",
+      "source_file_id": "bee35f97-cba0-43ea-9ef9-ee8efdaf022b",
+      "source_sha256": "a00fca96fed4629eb7d38db5b18b25f50d5b533f8e420ccb2f72366d402fa654",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "UNKNOWN_TARGET_MEMBER_NOT_IN_CAPTURE_WINDOW",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "UNKNOWN_NO_TARGET_NATIVE_BINDING_OR_SEED",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-JZG-01",
+      "source_group": "JZG",
+      "source_file_id": "aeb51a7c-bf57-4d94-ae8a-12074230297d",
+      "source_sha256": "731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "VERIFIED_SINGLE_SUPPORT_MEMBER_IN_CAPTURE",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "BLOCKED_FOR_KNOWN_SINGLE_SUPPORT_SEED_GEOMETRY; proposed_seed=UNKNOWN; broader_native_pool=UNKNOWN",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-JZG-02",
+      "source_group": "JZG",
+      "source_file_id": "aeb51a7c-bf57-4d94-ae8a-12074230297d",
+      "source_sha256": "731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "VERIFIED_SINGLE_SUPPORT_MEMBER_IN_CAPTURE",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "BLOCKED_FOR_KNOWN_SINGLE_SUPPORT_SEED_GEOMETRY; proposed_seed=UNKNOWN; broader_native_pool=UNKNOWN",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-JZG-03",
+      "source_group": "JZG",
+      "source_file_id": "aeb51a7c-bf57-4d94-ae8a-12074230297d",
+      "source_sha256": "731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "VERIFIED_SINGLE_SUPPORT_MEMBER_IN_CAPTURE",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "BLOCKED_FOR_KNOWN_SINGLE_SUPPORT_SEED_GEOMETRY; proposed_seed=UNKNOWN; broader_native_pool=UNKNOWN",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    },
+    {
+      "question_id": "DRAFT-JZG-04",
+      "source_group": "JZG",
+      "source_file_id": "aeb51a7c-bf57-4d94-ae8a-12074230297d",
+      "source_sha256": "731d9e51e79964747dd60d663d734659a9ddc10e7b6b5f568dbc901f63b4c8ea",
+      "status": "DRAFT_UNGRADED_NOT_ADMITTED",
+      "native_binding_status": "VERIFIED_SINGLE_SUPPORT_MEMBER_IN_CAPTURE",
+      "native_pool_completeness": "UNKNOWN_WINDOW_ONLY",
+      "nonseed_necessity_status": "BLOCKED_FOR_KNOWN_SINGLE_SUPPORT_SEED_GEOMETRY; proposed_seed=UNKNOWN; broader_native_pool=UNKNOWN",
+      "independent_review_status": "UNKNOWN_NOT_REVIEWED",
+      "review_decision": "UNKNOWN_NO_INDEPENDENT_GOLD_REVIEW",
+      "unresolved_fields": "semantic_entailment;necessary_atom_review;actual_seed;every_atom_controls;family_independence;Gold_signoff",
+      "human_signature": "UNAVAILABLE_NOT_SIGNED",
+      "S34_action": "STATUS_PRESERVED_NO_GOLD_ADMISSION"
+    }
+  ],
+  "review_boundary": {
+    "human_signatures": "UNAVAILABLE",
+    "AI_can_sign_human_Gold": false,
+    "independence_admission": "NONE",
+    "new_family_approval": "NOT_PERFORMED",
+    "new_exposure_ledger_events": 0,
+    "known_exposure": "all selected DEV sources already exposed; DSM/JZG also S32 drafts and S33 provisional annotation; upstream publication does not restore freshness"
+  },
+  "resources": {
+    "reused": [
+      "S33 source map",
+      "S33 draft metadata",
+      "existing worktree and Python"
+    ],
+    "new": [
+      "docs/evidence/s34-existing-provenance.json",
+      "docs/rsi-v24-s34-existing-provenance.zh.md"
+    ],
+    "containers": 0,
+    "source_or_index_copies": 0,
+    "deleted": 0,
+    "preserve_reason": "original frozen sources, Gold, logs and UNKNOWN records retained; no disposable resources created",
+    "disk_E_before_free_bytes": 55676055552,
+    "disk_E_after_free_bytes": 55675756544,
+    "disk_measurement_limit": "shared drive free space may change concurrently; only two small documentation artifacts created"
+  }
+}

@@ -1,0 +1,400 @@
+{
+  "schema": "rsi-v24-s34-controls-coverage/v1",
+  "status": "BLOCKED_DATA",
+  "claim_scope": "DEV-only metadata recount of compiled historical specifications; no new admissible Gold, seeds, qualifying controls, source-family admission, or answer-quality claim",
+  "denominator_rules": {
+    "historical_selected_DEV20": {
+      "total": 20,
+      "retrieval": 17,
+      "business_controls": 3
+    },
+    "historical_v23_DEV20": "separate immutable denominator; not merged",
+    "S33_drafts": {
+      "total": 12,
+      "graded": 0,
+      "admitted": 0
+    },
+    "DEV20_R2": {
+      "required_slots": 20,
+      "admitted_slots": 0,
+      "status": "NOT_FROZEN_NOT_QUALIFIED"
+    },
+    "class_rows": "suite by atom category incidences; classes overlap; distinct-gap atoms deduplicated by qid and atom_id only"
+  },
+  "historical_suites": {
+    "main": {
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "production_qualified": false,
+      "literal_atom_specifications": 72,
+      "compiled_negative_specifications": 47,
+      "missing_negative_specifications": 25,
+      "execution_status": "COMPILED_NOT_EXECUTED",
+      "class_atom_labels": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 2,
+        "NEGATION_CONDITION": 19,
+        "UNIT_SCOPE_OWNERSHIP": 25,
+        "MULTI_SOURCE_SUPPORT": 1,
+        "CITATION_SUPPORT": 72
+      },
+      "class_compiled_negative_specifications": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 1,
+        "NEGATION_CONDITION": 11,
+        "UNIT_SCOPE_OWNERSHIP": 21,
+        "MULTI_SOURCE_SUPPORT": 0,
+        "CITATION_SUPPORT": 47
+      }
+    },
+    "question-paraphrase": {
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "production_qualified": false,
+      "literal_atom_specifications": 72,
+      "compiled_negative_specifications": 47,
+      "missing_negative_specifications": 25,
+      "execution_status": "COMPILED_NOT_EXECUTED",
+      "class_atom_labels": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 2,
+        "NEGATION_CONDITION": 19,
+        "UNIT_SCOPE_OWNERSHIP": 25,
+        "MULTI_SOURCE_SUPPORT": 1,
+        "CITATION_SUPPORT": 72
+      },
+      "class_compiled_negative_specifications": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 1,
+        "NEGATION_CONDITION": 11,
+        "UNIT_SCOPE_OWNERSHIP": 21,
+        "MULTI_SOURCE_SUPPORT": 0,
+        "CITATION_SUPPORT": 47
+      }
+    },
+    "forward-seed": {
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "production_qualified": false,
+      "literal_atom_specifications": 72,
+      "compiled_negative_specifications": 45,
+      "missing_negative_specifications": 27,
+      "execution_status": "COMPILED_NOT_EXECUTED",
+      "class_atom_labels": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 2,
+        "NEGATION_CONDITION": 19,
+        "UNIT_SCOPE_OWNERSHIP": 25,
+        "MULTI_SOURCE_SUPPORT": 1,
+        "CITATION_SUPPORT": 72
+      },
+      "class_compiled_negative_specifications": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 0,
+        "NEGATION_CONDITION": 11,
+        "UNIT_SCOPE_OWNERSHIP": 18,
+        "MULTI_SOURCE_SUPPORT": 0,
+        "CITATION_SUPPORT": 45
+      }
+    },
+    "backward-seed": {
+      "partition": "DEV",
+      "review_status": "AI_REVIEWED",
+      "production_qualified": false,
+      "literal_atom_specifications": 72,
+      "compiled_negative_specifications": 57,
+      "missing_negative_specifications": 15,
+      "execution_status": "COMPILED_NOT_EXECUTED",
+      "class_atom_labels": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 2,
+        "NEGATION_CONDITION": 19,
+        "UNIT_SCOPE_OWNERSHIP": 25,
+        "MULTI_SOURCE_SUPPORT": 1,
+        "CITATION_SUPPORT": 72
+      },
+      "class_compiled_negative_specifications": {
+        "NONSEED_NECESSITY": 0,
+        "CROSS_MEMBER_RELATION": 1,
+        "NEGATION_CONDITION": 15,
+        "UNIT_SCOPE_OWNERSHIP": 22,
+        "MULTI_SOURCE_SUPPORT": 0,
+        "CITATION_SUPPORT": 57
+      }
+    }
+  },
+  "historical_gap_audit": {
+    "suite_atom_incidences": 92,
+    "distinct_atoms": 32,
+    "structural_incidence_count": 36,
+    "other_geometry_incidence_count": 56,
+    "support_nonseed_zero_rows": 92,
+    "control_execution_status_counts": {
+      "NOT_EXECUTED": 92
+    },
+    "canonical_admission_counts": {
+      "UNREVIEWED_NOT_ADMITTED": 92
+    }
+  },
+  "six_class_coverage": [
+    {
+      "category": "NONSEED_NECESSITY",
+      "historical_atom_label_incidences": 0,
+      "historical_compiled_negative_specifications": 0,
+      "historical_missing_negative_incidences": 0,
+      "historical_distinct_gap_atoms": 0,
+      "admitted_positive_examples": 0,
+      "admitted_independent_positive_families": 0,
+      "executed_qualifying_positive_controls": 0,
+      "executed_qualifying_matched_negative_controls": 0,
+      "required_positive_examples": 2,
+      "required_independent_positive_families": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "CROSS_MEMBER_RELATION",
+      "historical_atom_label_incidences": 8,
+      "historical_compiled_negative_specifications": 3,
+      "historical_missing_negative_incidences": 5,
+      "historical_distinct_gap_atoms": 2,
+      "admitted_positive_examples": 0,
+      "admitted_independent_positive_families": 0,
+      "executed_qualifying_positive_controls": 0,
+      "executed_qualifying_matched_negative_controls": 0,
+      "required_positive_examples": 2,
+      "required_independent_positive_families": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "NEGATION_CONDITION",
+      "historical_atom_label_incidences": 76,
+      "historical_compiled_negative_specifications": 48,
+      "historical_missing_negative_incidences": 28,
+      "historical_distinct_gap_atoms": 12,
+      "admitted_positive_examples": 0,
+      "admitted_independent_positive_families": 0,
+      "executed_qualifying_positive_controls": 0,
+      "executed_qualifying_matched_negative_controls": 0,
+      "required_positive_examples": 2,
+      "required_independent_positive_families": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "UNIT_SCOPE_OWNERSHIP",
+      "historical_atom_label_incidences": 100,
+      "historical_compiled_negative_specifications": 82,
+      "historical_missing_negative_incidences": 18,
+      "historical_distinct_gap_atoms": 8,
+      "admitted_positive_examples": 0,
+      "admitted_independent_positive_families": 0,
+      "executed_qualifying_positive_controls": 0,
+      "executed_qualifying_matched_negative_controls": 0,
+      "required_positive_examples": 2,
+      "required_independent_positive_families": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "MULTI_SOURCE_SUPPORT",
+      "historical_atom_label_incidences": 4,
+      "historical_compiled_negative_specifications": 0,
+      "historical_missing_negative_incidences": 4,
+      "historical_distinct_gap_atoms": 1,
+      "admitted_positive_examples": 0,
+      "admitted_independent_positive_families": 0,
+      "executed_qualifying_positive_controls": 0,
+      "executed_qualifying_matched_negative_controls": 0,
+      "required_positive_examples": 2,
+      "required_independent_positive_families": 2,
+      "status": "BLOCKED_DATA"
+    },
+    {
+      "category": "CITATION_SUPPORT",
+      "historical_atom_label_incidences": 288,
+      "historical_compiled_negative_specifications": 196,
+      "historical_missing_negative_incidences": 92,
+      "historical_distinct_gap_atoms": 32,
+      "admitted_positive_examples": 0,
+      "admitted_independent_positive_families": 0,
+      "executed_qualifying_positive_controls": 0,
+      "executed_qualifying_matched_negative_controls": 0,
+      "required_positive_examples": 2,
+      "required_independent_positive_families": 2,
+      "status": "BLOCKED_DATA"
+    }
+  ],
+  "execution": {
+    "qualifying_positive": "NOT_RUN",
+    "qualifying_matched_negative": "NOT_RUN",
+    "baseline": "NOT_RUN",
+    "model_calls": 0,
+    "ECS_requests": 0,
+    "new_seeds": 0,
+    "Gold_written": false,
+    "FINAL_read": false,
+    "mixed_Gold_read": false,
+    "historical_controls": "COMPILED_NOT_EXECUTED; not replayed in S34"
+  },
+  "admissible_control_gate": [
+    "admitted DEV provenance and independent-family review",
+    "full source-bound necessary atom reviewed and approved",
+    "real native member IDs and real frozen seed IDs; necessary nonseed identified",
+    "every complete support alternative is broken by legal removal while all required seeds remain",
+    "matched positive PRESENT and negative ABSENT observed from actual delivered bytes",
+    "existing class gate unchanged; at least 2 positive examples and 2 independent positive families per class with matching negatives"
+  ],
+  "blocked_reasons": [
+    "No newly approved independent-family admission or signed human Gold review in this coverage audit",
+    "All 92 historical gap rows have support_nonseed_count=0; other pool nonseed members do not prove necessity",
+    "Nine structural distinct atoms cannot be repaired by removing mandatory seeds",
+    "S34 parsing inventory cannot assign retrieval-derived seed roles or certify atom semantics",
+    "DEV20-R2 has zero admitted slots; no baseline launch allowed"
+  ],
+  "historical_failure": "COVERAGE_EVERY_ATOM_CONTROL_REQUIRED",
+  "verification": {
+    "method": "read DEV manifests, assert partition DEV and production_qualified false; recount relation labels and compiled control references; reconcile controls plus gaps against atoms",
+    "reconciled_suite_atom_incidences": 288,
+    "compiled_negative_specifications": 196,
+    "missing_negative_specifications": 92,
+    "outcome": "PASS_METADATA_RECOUNT_ONLY",
+    "not_a_test_of_real_controls": true,
+    "raw_inspection_failures": [
+      "initial schema probe assumed control list was dict; corrected metadata-only recount exit 0",
+      "initial Python read used platform gbk default; repeated with explicit utf-8 exit 0"
+    ],
+    "truncated_inspection_output": "early broad S33 output and mistaken schema probe were truncated; final counts recomputed from full files, not truncated console text",
+    "all_bound_input_hashes_rechecked": 18,
+    "final_check_exit_code": 0
+  },
+  "inputs": [
+    {
+      "path": "docs/evidence/s3-v24-s33-atom-control-gap.csv",
+      "bytes": 112434,
+      "sha256": "ba5ed4cd6b92cc8c93462d70e02f4301e8c3d929adc8c40c0290a7a26cefb5a0"
+    },
+    {
+      "path": "HISTORICAL_DEV/main/manifest.json",
+      "bytes": 10404,
+      "sha256": "cae3a497470116d2a0779afb009093cfe0c1a74876e7aa4aece1632a3e843b34"
+    },
+    {
+      "path": "HISTORICAL_DEV/main/relations.restricted.json",
+      "bytes": 628518,
+      "sha256": "05f4b014445cb4ba958b0ac8408c56cddf6d06210e9822656d3af74b9cf8101c"
+    },
+    {
+      "path": "HISTORICAL_DEV/main/control-spec.restricted.json",
+      "bytes": 10839,
+      "sha256": "4b15b94199ecd0af85dedb5832c0092787dc0b3867d3a68dd09f302aabd1f797"
+    },
+    {
+      "path": "HISTORICAL_DEV/question-paraphrase/manifest.json",
+      "bytes": 31143,
+      "sha256": "0211dca9837631b51c021920e45805afa12f2447da5f008ebc9f1227f4cd49c6"
+    },
+    {
+      "path": "HISTORICAL_DEV/question-paraphrase/relations.restricted.json",
+      "bytes": 628518,
+      "sha256": "05f4b014445cb4ba958b0ac8408c56cddf6d06210e9822656d3af74b9cf8101c"
+    },
+    {
+      "path": "HISTORICAL_DEV/question-paraphrase/control-spec.restricted.json",
+      "bytes": 10839,
+      "sha256": "4b15b94199ecd0af85dedb5832c0092787dc0b3867d3a68dd09f302aabd1f797"
+    },
+    {
+      "path": "HISTORICAL_DEV/forward-seed/manifest.json",
+      "bytes": 10412,
+      "sha256": "027e9142bb0551ada518d5449c0b1a0be2fb4940cd3fbc8dd8e95541095081db"
+    },
+    {
+      "path": "HISTORICAL_DEV/forward-seed/relations.restricted.json",
+      "bytes": 628518,
+      "sha256": "05f4b014445cb4ba958b0ac8408c56cddf6d06210e9822656d3af74b9cf8101c"
+    },
+    {
+      "path": "HISTORICAL_DEV/forward-seed/control-spec.restricted.json",
+      "bytes": 10429,
+      "sha256": "62a96d6d36d40188e9ffa39d48d6d2bde8f4d36551cfb93464fd4ff02e8956f9"
+    },
+    {
+      "path": "HISTORICAL_DEV/backward-seed/manifest.json",
+      "bytes": 10413,
+      "sha256": "e830d8755cba510342ab65fa0e754da237aa156afce91c0253f2d6728b508d62"
+    },
+    {
+      "path": "HISTORICAL_DEV/backward-seed/relations.restricted.json",
+      "bytes": 628518,
+      "sha256": "05f4b014445cb4ba958b0ac8408c56cddf6d06210e9822656d3af74b9cf8101c"
+    },
+    {
+      "path": "HISTORICAL_DEV/backward-seed/control-spec.restricted.json",
+      "bytes": 13125,
+      "sha256": "9893dd56990fac4222898af79d6535656076b56f817ea905f8e3f411d022e5d5"
+    },
+    {
+      "path": "docs/evidence/s3-v24-s33-dev20-r2-feasibility.json",
+      "bytes": 8869,
+      "sha256": "1309a36e570e43d68445429d605ddcfb427506dc629c59d14734ca6e0154e3c3"
+    },
+    {
+      "path": "docs/evidence/s3-v24-s33-baseline-readiness.json",
+      "bytes": 4887,
+      "sha256": "2dd49cfaa77e1a8d636039e9d088e7e99490bbcb2d837e15a87dcb876ab3f76f"
+    },
+    {
+      "path": "rsik/source_relations.py",
+      "bytes": 42709,
+      "sha256": "3b2b00e9a46fdc1947e9592b089e3d1bf94964e00e1153fa81e2aa5a4290e5c1"
+    },
+    {
+      "path": "rsik/fixed_history_coverage.py",
+      "bytes": 34653,
+      "sha256": "ace950ed9b0c012f082155e50c143634444712456af6a2d5bc9d613a3ed5305d"
+    },
+    {
+      "path": "docs/evidence/s34-existing-provenance.json",
+      "bytes": 122234,
+      "sha256": "22adb643b9da338fc9d11e04d5ec54d7700540c22aabbc357cd41fc7bc058fa1"
+    }
+  ],
+  "resource_use": {
+    "reused": "existing DEV-only historical receipts and local Python; no source/history bodies read by this task",
+    "created": [
+      "docs/rsi-v24-s34-controls-coverage.zh.md",
+      "docs/evidence/s34-coverage.json"
+    ],
+    "corpus_database_index_copies": 0,
+    "containers_created": 0,
+    "deleted": 0,
+    "retention_reason": "reviewable coverage receipt and blocked evidence",
+    "disk_before": {
+      "total": 488093249536,
+      "used": 432417492992,
+      "free": 55675756544
+    },
+    "disk_after": {
+      "total": 488093249536,
+      "used": 432417824768,
+      "free": 55675424768
+    },
+    "disk_delta_attribution": "concurrent workspace activity; not solely attributable to these two files"
+  },
+  "S34_existing_provenance": {
+    "status": "BLOCKED_DATA",
+    "verified_allowlisted_DEV_sources": 31,
+    "eligible": 0,
+    "blocked": 0,
+    "unknown": 31,
+    "admitted_independent_families": 0,
+    "old_drafts_signed_or_admitted": 0,
+    "scope": "metadata from separately verified DEV provenance receipt; no new family admission"
+  },
+  "S34_native_inventory": {
+    "sha256": "aea53e78b73930c8f47f268611181d5a926a9e017855c654b68c5eb1befa76d9",
+    "file": "docs/evidence/s34-native-map.json",
+    "members": 221,
+    "source_count": 5,
+    "seed_selection": "UNKNOWN_NOT_RUN",
+    "qualifying_pair_executions": 0
+  }
+}

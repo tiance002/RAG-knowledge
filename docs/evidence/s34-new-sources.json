@@ -1,0 +1,247 @@
+{
+  "schema": "s34-new-sources/v1",
+  "created_at_utc": "2026-11-18T02:02:02.0054133Z",
+  "status": "ACQUIRED_NOT_FAMILY_OR_FINAL_ADMITTED",
+  "scope": "Three new public first-party technical monitoring source snapshots. No existing DEV/FINAL question, answer, evidence or source bodies loaded by this acquisition task.",
+  "raw_publication": "Raw source/license/NOTICE bytes remain local under ignored var/s34; public artifact is metadata only",
+  "resource_receipt": {
+    "reused": "Existing E:/rsi-v24-s34 checkout and native PowerShell HTTP/hash; no new environment, DB, index or container",
+    "new": "3 exact raw source snapshots, 3 license snapshots, 1 NOTICE snapshot, 1 local acquisition receipt",
+    "deleted": "NONE",
+    "raw_directory_before_bytes": 0,
+    "raw_directory_after_bytes": 135158.0,
+    "source_bytes": 86908.0,
+    "reason_retained": "Small source-of-truth inputs and licensing receipts required for parser and provenance reproducibility",
+    "cleanup": "No duplicate corpus/index created. Retain these evidence inputs until S34 review; parent owns final disk/free-space reconciliation."
+  },
+  "verification": {
+    "http_success": "7/7 downloads HTTP 200",
+    "hash_algorithm": "SHA-256 over exact saved bytes",
+    "new_source_count": 3,
+    "new_source_distinct_sha256_count": 3,
+    "source_body_reencoding": "NONE",
+    "license_tree_check": "GitHub recursive trees returned truncated=false; Prometheus root LICENSE+NOTICE, OTel root LICENSE, CPython LICENSE and Doc/license.rst",
+    "test_or_parser_run": "NOT_RUN_BY_ACQUISITION_AGENT",
+    "output_truncation": "One NOTICE display and a prior metadata-map display were truncated; complete files retained, conclusions do not depend on omitted console tails",
+    "final_byte_revalidation": "7/7 exact SHA256 and byte-size matches; source denominator 3, unique source hashes 3; PowerShell command exit 0",
+    "public_metadata_checks": "JSON parse succeeded; git check-ignore returned raw and receipt paths; git diff --check exit 0"
+  },
+  "sources": [
+    {
+      "source_id": "S34-PROM",
+      "title": "Prometheus — Querying basics",
+      "organization": "The Prometheus Authors",
+      "proposed_family_id": "prometheus/prometheus",
+      "family_status": "UNKNOWN_NOT_ADMITTED",
+      "origin_kind": "first_party_original_repository_source",
+      "upstream_repository": "https://github.com/prometheus/prometheus",
+      "upstream_commit": "21b0d7eae184c9cf5558f01ce4c63399b54ccd32",
+      "repository_commit_timestamp_utc": "2026-11-17T20:25:55Z",
+      "document_last_change_timestamp_utc": "UNKNOWN_NOT_QUERIED",
+      "upstream_path": "docs/querying/basics.md",
+      "download_url": "https://raw.githubusercontent.com/prometheus/prometheus/21b0d7eae184c9cf5558f01ce4c63399b54ccd32/docs/querying/basics.md",
+      "human_readable_url": "https://github.com/prometheus/prometheus/blob/21b0d7eae184c9cf5558f01ce4c63399b54ccd32/docs/querying/basics.md",
+      "rendered_url": "https://prometheus.io/docs/prometheus/latest/querying/basics/",
+      "version_note": "The captured repository commit and raw SHA256 are authoritative. Moving rendered page URL is a provenance pointer, not proven byte/render equivalence.",
+      "local_path": "var/s34/raw/prometheus-query-basics.md",
+      "sha256": "c918cc042050e8458372d9df468e9cacf9a98018b877851692557743164bf3f3",
+      "bytes": 27077,
+      "http_status": 200,
+      "retrieved_at_utc": "2026-11-18T02:00:11.8362131Z",
+      "original_format": "Markdown",
+      "local_format": "Markdown",
+      "filename_mapping": "IDENTICAL_EXTENSION_AND_BYTES",
+      "license": {
+        "identifier": "Apache-2.0",
+        "evidence_url": "https://raw.githubusercontent.com/prometheus/prometheus/21b0d7eae184c9cf5558f01ce4c63399b54ccd32/LICENSE",
+        "evidence_local_path": "var/s34/raw/S34-PROM-LICENSE.txt",
+        "evidence_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        "evidence_bytes": 11357,
+        "permission_status": "DOCUMENTED_PERMISSIVE_WITH_ATTRIBUTION_CONDITIONS",
+        "conditions": "Retain upstream attribution, LICENSE and applicable NOTICE; record changes for derivatives",
+        "notice_receipts": [
+          {
+            "source_id": "S34-PROM",
+            "kind": "notice",
+            "repo": "prometheus/prometheus",
+            "commit": "21b0d7eae184c9cf5558f01ce4c63399b54ccd32",
+            "upstream_path": "NOTICE",
+            "url": "https://raw.githubusercontent.com/prometheus/prometheus/21b0d7eae184c9cf5558f01ce4c63399b54ccd32/NOTICE",
+            "local_path": "var/s34/raw/S34-PROM-NOTICE.txt",
+            "http_status": 200,
+            "retrieved_at_utc": "2026-11-18T02:01:13.8415879Z",
+            "bytes": 4370,
+            "sha256": "ac9e304462a58a4d71b6488423d4447e614c8b31d517fe24345016522c102a78"
+          }
+        ]
+      },
+      "content_structure": {
+        "generated_content": "No include directives detected; relative references not expanded",
+        "conditional_sections": "430-462; 574-620",
+        "native_table_lines": "376-379"
+      },
+      "upstream_reference_edges": [
+        "https://prometheus.io/docs/specs/native_histograms",
+        "https://golang.org/ref/spec#String_literals",
+        "https://github.com/google/re2/wiki/Syntax",
+        "https://github.com/prometheus/proposals/blob/main/proposals/2025-04-04_extended-range-selectors-semantics.md"
+      ],
+      "graph_closure": "INCOMPLETE_LINK_TARGETS_NOT_ACQUIRED",
+      "translation_or_reprint": "No translation/reprint introduced locally. Captured bytes come from first-party repository; full authorship/derivation graph remains unproven.",
+      "prior_exposure": {
+        "current": "S34 acquisition agent fetched and inspected source bytes, license, headings and structural excerpts",
+        "optimizer_before_S34": "UNKNOWN",
+        "historical_DEV": "UNKNOWN_PENDING_OPAQUE_HASH_CHECK",
+        "historical_FINAL": "UNKNOWN_PENDING_OPAQUE_HASH_AND_FAMILY_CHECK",
+        "fresh_holdout_eligible": false
+      },
+      "admission": {
+        "source_provenance": "FIRST_PARTY_REPOSITORY_PIN_AND_BYTES_VERIFIED",
+        "permission": "DOCUMENTED",
+        "byte_uniqueness_across_new_three": "DISTINCT",
+        "statistical_independence": "UNKNOWN",
+        "family_independence": "NOT_ADMITTED",
+        "FINAL_clean": "UNKNOWN",
+        "allowed_usage": "S34 local acquisition and parser/source-structure research only; DEV candidate after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED"
+      }
+    },
+    {
+      "source_id": "S34-OTEL",
+      "title": "OpenTelemetry — Metrics",
+      "organization": "OpenTelemetry Authors",
+      "proposed_family_id": "open-telemetry/opentelemetry.io",
+      "family_status": "UNKNOWN_NOT_ADMITTED",
+      "origin_kind": "first_party_original_repository_source",
+      "upstream_repository": "https://github.com/open-telemetry/opentelemetry.io",
+      "upstream_commit": "41477529b5ad5d600c36c57803b3df9cda150941",
+      "repository_commit_timestamp_utc": "2026-11-17T21:40:34Z",
+      "document_last_change_timestamp_utc": "UNKNOWN_NOT_QUERIED",
+      "upstream_path": "content/en/docs/concepts/signals/metrics.md",
+      "download_url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry.io/41477529b5ad5d600c36c57803b3df9cda150941/content/en/docs/concepts/signals/metrics.md",
+      "human_readable_url": "https://github.com/open-telemetry/opentelemetry.io/blob/41477529b5ad5d600c36c57803b3df9cda150941/content/en/docs/concepts/signals/metrics.md",
+      "rendered_url": "https://opentelemetry.io/docs/concepts/signals/metrics/",
+      "version_note": "The captured repository commit and raw SHA256 are authoritative. Moving rendered page URL is a provenance pointer, not proven byte/render equivalence.",
+      "local_path": "var/s34/raw/opentelemetry-metrics.md",
+      "sha256": "891112f4c81851850b2d732f68c3ba58adf7d5e0017df5233408324307e18951",
+      "bytes": 9543,
+      "http_status": 200,
+      "retrieved_at_utc": "2026-11-18T02:00:12.4689437Z",
+      "original_format": "Markdown",
+      "local_format": "Markdown",
+      "filename_mapping": "IDENTICAL_EXTENSION_AND_BYTES",
+      "license": {
+        "identifier": "CC-BY-4.0",
+        "evidence_url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry.io/41477529b5ad5d600c36c57803b3df9cda150941/LICENSE",
+        "evidence_local_path": "var/s34/raw/S34-OTEL-LICENSE.txt",
+        "evidence_sha256": "6f9997b6f85f473f853aeef19b5f16504dd228ba99cee70e5a19211df947a2b3",
+        "evidence_bytes": 18719,
+        "permission_status": "DOCUMENTED_PERMISSIVE_WITH_ATTRIBUTION_CONDITIONS",
+        "conditions": "Credit OpenTelemetry Authors, source URL and CC-BY-4.0, and indicate modifications",
+        "notice_receipts": []
+      },
+      "content_structure": {
+        "generated_content": "Line 199 Hugo signal-support-table shortcode is unresolved raw text, not acquired language-support table data",
+        "conditional_sections": "114-191",
+        "native_table_lines": null
+      },
+      "upstream_reference_edges": [
+        "/docs/specs/otel/metrics/sdk/",
+        "/docs/specs/otel/metrics/data-model/#temporality",
+        "/docs/specs/otel/overview/#metric-signal",
+        "HUGO_SHORTCODE:signal-support-table:metrics"
+      ],
+      "graph_closure": "INCOMPLETE_LINK_TARGETS_NOT_ACQUIRED",
+      "translation_or_reprint": "No translation/reprint introduced locally. Captured bytes come from first-party repository; full authorship/derivation graph remains unproven.",
+      "prior_exposure": {
+        "current": "S34 acquisition agent fetched and inspected source bytes, license, headings and structural excerpts",
+        "optimizer_before_S34": "UNKNOWN",
+        "historical_DEV": "UNKNOWN_PENDING_OPAQUE_HASH_CHECK",
+        "historical_FINAL": "UNKNOWN_PENDING_OPAQUE_HASH_AND_FAMILY_CHECK",
+        "fresh_holdout_eligible": false
+      },
+      "admission": {
+        "source_provenance": "FIRST_PARTY_REPOSITORY_PIN_AND_BYTES_VERIFIED",
+        "permission": "DOCUMENTED",
+        "byte_uniqueness_across_new_three": "DISTINCT",
+        "statistical_independence": "UNKNOWN",
+        "family_independence": "NOT_ADMITTED",
+        "FINAL_clean": "UNKNOWN",
+        "allowed_usage": "S34 local acquisition and parser/source-structure research only; DEV candidate after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED"
+      }
+    },
+    {
+      "source_id": "S34-PYLOG",
+      "title": "Python — Logging HOWTO",
+      "organization": "Python Software Foundation and contributors",
+      "proposed_family_id": "python/cpython",
+      "family_status": "UNKNOWN_NOT_ADMITTED",
+      "origin_kind": "first_party_original_repository_source",
+      "upstream_repository": "https://github.com/python/cpython",
+      "upstream_commit": "3ad9316217ba4e2788abc7d19f469762c6c38309",
+      "repository_commit_timestamp_utc": "2026-11-17T22:15:06Z",
+      "document_last_change_timestamp_utc": "UNKNOWN_NOT_QUERIED",
+      "upstream_path": "Doc/howto/logging.rst",
+      "download_url": "https://raw.githubusercontent.com/python/cpython/3ad9316217ba4e2788abc7d19f469762c6c38309/Doc/howto/logging.rst",
+      "human_readable_url": "https://github.com/python/cpython/blob/3ad9316217ba4e2788abc7d19f469762c6c38309/Doc/howto/logging.rst",
+      "rendered_url": "https://docs.python.org/3/howto/logging.html",
+      "version_note": "The captured repository commit and raw SHA256 are authoritative. Moving rendered page URL is a provenance pointer, not proven byte/render equivalence.",
+      "local_path": "var/s34/raw/python-logging-howto.txt",
+      "sha256": "2a5c394ce442289573e689b7e68f3ea0e560bb69c12b6d5ff224f68a928d4d01",
+      "bytes": 50288,
+      "http_status": 200,
+      "retrieved_at_utc": "2026-11-18T02:00:13.1176108Z",
+      "original_format": "reStructuredText",
+      "local_format": "plain text carrying exact upstream reStructuredText bytes",
+      "filename_mapping": "Upstream Doc/howto/logging.rst renamed python-logging-howto.txt; no byte conversion",
+      "license": {
+        "identifier": "PSF-2.0",
+        "evidence_url": "https://raw.githubusercontent.com/python/cpython/3ad9316217ba4e2788abc7d19f469762c6c38309/LICENSE",
+        "evidence_local_path": "var/s34/raw/S34-PYLOG-LICENSE.txt",
+        "evidence_sha256": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231",
+        "evidence_bytes": 13804,
+        "permission_status": "DOCUMENTED_PERMISSIVE_WITH_ATTRIBUTION_CONDITIONS",
+        "conditions": "Retain PSF license/copyright; summarize modifications in derivatives; documentation code additionally PSF-2.0 OR 0BSD per LICENSE lines 65-67",
+        "notice_receipts": []
+      },
+      "content_structure": {
+        "generated_content": "Sphinx roles remain literal; references not expanded; no include directives detected",
+        "conditional_sections": "Table rows 38-65 and logging-level/filter sections",
+        "native_table_lines": "35-66; 74-101"
+      },
+      "upstream_reference_edges": [
+        "CPYTHON_SPHINX:logging API",
+        "CPYTHON_SPHINX:logging.handlers",
+        "CPYTHON_SPHINX:logging.config",
+        "CPYTHON_SPHINX:logging cookbook"
+      ],
+      "graph_closure": "INCOMPLETE_LINK_TARGETS_NOT_ACQUIRED",
+      "translation_or_reprint": "No translation/reprint introduced locally. Captured bytes come from first-party repository; full authorship/derivation graph remains unproven.",
+      "prior_exposure": {
+        "current": "S34 acquisition agent fetched and inspected source bytes, license, headings and structural excerpts",
+        "optimizer_before_S34": "UNKNOWN",
+        "historical_DEV": "UNKNOWN_PENDING_OPAQUE_HASH_CHECK",
+        "historical_FINAL": "UNKNOWN_PENDING_OPAQUE_HASH_AND_FAMILY_CHECK",
+        "fresh_holdout_eligible": false
+      },
+      "admission": {
+        "source_provenance": "FIRST_PARTY_REPOSITORY_PIN_AND_BYTES_VERIFIED",
+        "permission": "DOCUMENTED",
+        "byte_uniqueness_across_new_three": "DISTINCT",
+        "statistical_independence": "UNKNOWN",
+        "family_independence": "NOT_ADMITTED",
+        "FINAL_clean": "UNKNOWN",
+        "allowed_usage": "S34 local acquisition and parser/source-structure research only; DEV candidate after separate exposure registration",
+        "FINAL": "NOT_AUTHORIZED"
+      }
+    }
+  ],
+  "cross_source_graph": {
+    "observed": "Distinct first-party repositories and exact content hashes",
+    "known_shared_context": "Prometheus and OpenTelemetry are related observability ecosystems; telemetry vocabulary/concepts may overlap",
+    "conservative_rule": "Distinct org/repo/document/hash does not establish independent evidence families. Treat cross-source family independence as UNKNOWN until review.",
+    "prior_corpus_family_intersection": "UNKNOWN",
+    "FINAL_family_intersection": "UNKNOWN"
+  }
+}
