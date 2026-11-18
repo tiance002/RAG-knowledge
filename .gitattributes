@@ -6,3 +6,7 @@ scripts/rsi_delivery_worker.py -text
 scripts/replay_source_preparation.py -text
 scripts/rsi_fixed_history_worker_v1.py -text
 scripts/rsi_decision.py -text
+
+# S3.4 receipt and parser identities bind exact file bytes.
+docs/evidence/s34-*.json -text
+scripts/audit_s34_native.py -text
