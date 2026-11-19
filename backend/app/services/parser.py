@@ -908,28 +908,6 @@ class FileParser:
         return f"{self.image_prefix}/{image_filename}"
 
 
-    def _parse_pdf(self, file_path):
-        """Legacy caller adapter; all formats share the same chunking facade."""
-        return self.parse(file_path, chunk_mode=getattr(self, 'chunk_mode', 'legacy'),
-                          chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
-                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))
-
-
-
-    def _parse_docx(self, file_path):
-        """Legacy caller adapter; all formats share the same chunking facade."""
-        return self.parse(file_path, chunk_mode=getattr(self, 'chunk_mode', 'legacy'),
-                          chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
-                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))
-
-
-    def _parse_txt(self, file_path):
-        """Legacy caller adapter; all formats share the same chunking facade."""
-        return self.parse(file_path, chunk_mode=getattr(self, 'chunk_mode', 'legacy'),
-                          chunk_size=getattr(getattr(self, 'splitter', None), 'chunk_size', 4096),
-                          chunk_overlap=getattr(getattr(self, 'splitter', None), 'chunk_overlap', 0))
-
-
     def _parse_image_file(self, file_path: str) -> List[ParsedChunk]:
         """解析单独的图片文件"""
         chunks = []

@@ -90,9 +90,6 @@ def tokenize(text: str) -> List[str]:
     3. 过滤停用词和单字符；jieba 不可用时明确报错
     """
     jieba = require_jieba()
-    # Disabled alternatives, retained as comments to prevent accidental use:
-    # chinese_tokens = list(chinese_text)  # per-character fallback
-    # return tokenize_bigram_compatible(text, STOP_WORDS)  # bigram fallback
     if not text:
         return []
 
@@ -407,12 +404,6 @@ class BM25Index:
             检索结果列表 [{"chunk_id": "...", "bm25_score": 0.xx}, ...]
         """
         top_k = top_k or settings.BM25_TOP_K
-
-        # Disabled alternate analyzer entry: production tests must use jieba.
-        # if self.bigram_index_path:
-        #     from app.services.bm25_generation import BigramGeneration
-        #     return BigramGeneration(self.bigram_index_path).search(
-        #         session, query, kb_id, top_k, k1=self.k1, b=self.b)
 
         # 1. 查询分词
         query_tokens = tokenize(query)
