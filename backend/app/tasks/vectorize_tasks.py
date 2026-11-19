@@ -9,20 +9,10 @@ from sqlalchemy import update
 
 from app.tasks.celery_app import celery_app
 from app.core.database import engine
-from app.models import FileDocument, DocumentChunk, KnowledgeBase, FileStatus, CustomModel
+from app.models import FileDocument, DocumentChunk, KnowledgeBase, FileStatus
 from app.services.embedding import EmbeddingService
 from app.services.vector_store import VectorStoreService
 from app.services.metrics import track_background_task
-
-
-def run_async(coro):
-    """在同步环境中运行异步函数"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 @celery_app.task(bind=True, max_retries=0)
@@ -143,7 +133,7 @@ def vectorize_file_task(self, file_id: str, expected_revision: str = None):
 
             for i in range(0, total, batch_size):
                 batch = contents[i:i + batch_size]
-                embeddings = run_async(embedding_service.embed_documents(batch, model_id=target_model_id))
+                embeddings = asyncio.run(embedding_service.embed_documents(batch, model_id=target_model_id))
                 all_embeddings.extend(embeddings)
 
 

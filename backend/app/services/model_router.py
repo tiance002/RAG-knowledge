@@ -20,6 +20,9 @@ AFFINITY_VERSION = 'rule-router-v1.3-task-interactions-experimental'
 RISK_V4_VERSION = 'rule-router-v1.5-cheap-default-risk-v4-estimated'
 RISK_V5_VERSION = 'rule-router-v1.6-cheap-default-risk-v5-d-observe-length'
 RISK_V6_VERSION = 'rule-router-v1.7-cheap-default-risk-v6-c-semantic-refinement'
+RISK_E_VERSION = 'rule-router-v9-e-three-slots'
+RISK_VERSIONS = {'RISK_V4': RISK_V4_VERSION, 'RISK_V5': RISK_V5_VERSION,
+                 'RISK_V6': RISK_V6_VERSION, 'RISK_E': RISK_E_VERSION}
 QUALITY_FIRST_VERSION = 'rule-router-v1.4-quality-first-estimated-uncalibrated'
 # Weak initial prior, not fitted/calibrated weights. Long or tabular context
 # alone must not be treated as evidence of a difficult reasoning task.
@@ -60,7 +63,7 @@ class RouterConfig:
             raise ValueError('unknown unknown-feature policy')
         _unit(self.threshold, 'threshold')
         _unit(self.task_risk_floor, 'task_risk_floor')
-        if self.selection_policy not in ('WEIGHTED_V1', 'AFFINITY_V2', 'QUALITY_FIRST_V3', 'RISK_V4', 'RISK_V5', 'RISK_V6'):
+        if self.selection_policy not in ('WEIGHTED_V1', 'AFFINITY_V2', 'QUALITY_FIRST_V3', *RISK_VERSIONS):
             raise ValueError('unknown selection policy')
         if set(self.weights) != set(FEATURE_NAMES):
             raise ValueError('weights must specify T,C,J,D,L,M exactly')
@@ -82,7 +85,7 @@ class RouterConfig:
             mode=env.get(prefix + 'MODE', 'OFF').strip().upper(),
             cheap_model=env.get(prefix + 'CHEAP_MODEL', 'Qwen/Qwen3.5-4B').strip(),
             expensive_model=env.get(prefix + 'EXPENSIVE_MODEL', 'zai-org/GLM-5.3-Flash').strip(),
-            threshold=float(env.get(prefix + 'THRESHOLD', '0.45' if env.get(prefix + 'SELECTION_POLICY', '').strip().upper() in ('RISK_V5', 'RISK_V6') else '0.5')),
+            threshold=float(env.get(prefix + 'THRESHOLD', '0.45' if env.get(prefix + 'SELECTION_POLICY', '').strip().upper() in ('RISK_V5', 'RISK_V6', 'RISK_E') else '0.5')),
             selection_policy=env.get(prefix + 'SELECTION_POLICY', 'WEIGHTED_V1').strip().upper(),
             task_risk_floor=float(env.get(prefix + 'TASK_RISK_FLOOR', '0.55')),
             weights={k: float(env.get(prefix + 'WEIGHT_' + k, str(DEFAULT_WEIGHTS[k]))) for k in FEATURE_NAMES},
@@ -637,6 +640,38 @@ def qwen_risk_v6(question, citations=None, messages=None):
     return risk
 
 
+def qwen_risk_e(question, citations=None, messages=None):
+    """Frozen E_THREE_SLOTS: retain V6 and raise evidence-backed multi-slot risk."""
+    risk = qwen_risk_v6(question, citations, messages)
+    if risk['status'] != 'ESTIMATED' or not any(
+            isinstance(c.get('content'), str) and c['content'].strip() for c in citations or ()):
+        return risk
+    text = question.strip()
+    pattern = r'什么|多少|哪(?:些|个|一|两|位|种|家|里)|何(?:时|处)|谁|为何|为什么|如何|怎样|\b(?:what|which|who|where|when|why|how)\b'
+    slots = []
+    for found in re.finditer(pattern, text, re.I):
+        if re.fullmatch(r'[a-z]+', found.group(), re.I):
+            prefix = text[:found.start()]
+            coordinated = bool(re.search(r'(?:\b(?:and|also|plus)\s+(?:(?:on|at|by|from|for|in|to|then)\s+)*|[,;?]\s*)$', prefix, re.I))
+            initial = not slots and (found.group().casefold() in ('what', 'who', 'why', 'how') or not prefix.strip())
+            if not (initial or coordinated):
+                continue
+        if slots and found.start() <= slots[-1][1] + 1:
+            slots[-1] = (slots[-1][0], found.end())
+        else:
+            slots.append((found.start(), found.end()))
+    dependency = re.search(r'为什么|原因|导致|以便|才能|之前|之后|如果|除非|相隔|\b(?:cause\w*|why|because|before|after|until|if|unless|when|so that|in order to|prerequisites?)\b', text, re.I)
+    facets = re.search(r'(?:what|which)[^?？]{0,240},[^?？]{0,160},?\s+and\s+[^?？]{0,100}(?:checks?|tests?|requirements?|artifacts?|defaults?|steps?|actions?)\b', text, re.I)
+    added = []
+    if dependency and (len(slots) >= 2 or facets):
+        added.append('dependent_answer_slots')
+    if len(slots) >= 3:
+        added.append('three_independent_requested_slots')
+    return {**risk, 'v6_score_points': risk['score_points'], 'explicit_interrogative_slots': len(slots),
+            'score_points': max(risk['score_points'], 45 if added else 0),
+            'e_rules': added, 'matched_rules': risk['matched_rules'] + added}
+
+
 def apply_selection_policy(question, features, metadata, config):
     """Shared by live selection and offline replay of captured input features.
 
@@ -647,13 +682,13 @@ def apply_selection_policy(question, features, metadata, config):
     lower, upper = score_interval(features, config.weights)
     details = {'policy': config.selection_policy, 'base_score_lower': lower,
                'base_score_upper': upper, 'matched_rules': [], 'status': 'NOT_APPLICABLE'}
-    if config.selection_policy in ('RISK_V4', 'RISK_V5', 'RISK_V6'):
+    if config.selection_policy in RISK_VERSIONS:
         risk = metadata.get(config.selection_policy.lower().replace('risk_', 'qwen_risk_')) or {}
         known = risk.get('status') == 'ESTIMATED' and isinstance(risk.get('score_points'), (int, float))
         lower = upper = risk['score_points'] / 100 if known else 0.0
         details.update(status='ESTIMATED' if known else 'UNKNOWN',
                        matched_rules=risk.get('matched_rules', []) if known else [],
-                       method={'RISK_V4': RISK_V4_VERSION, 'RISK_V5': RISK_V5_VERSION, 'RISK_V6': RISK_V6_VERSION}[config.selection_policy], interpretation='ESTIMATED_RISK_NOT_PROBABILITY',
+                       method=RISK_VERSIONS[config.selection_policy], interpretation='ESTIMATED_RISK_NOT_PROBABILITY',
                        calibration='FROZEN_HEURISTIC_NOT_PROBABILITY',
                        reason='RISK_THRESHOLD' if known else 'RISK_OBSERVATIONS_UNKNOWN')
     elif config.selection_policy == 'AFFINITY_V2':
@@ -700,6 +735,8 @@ def decide_route(question, citations, messages=None, retrieval_status='SUCCESS',
         metadata['qwen_risk_v5'] = qwen_risk_v5(question, citations, messages)
     elif config.selection_policy == 'RISK_V6':
         metadata['qwen_risk_v6'] = qwen_risk_v6(question, citations, messages)
+    elif config.selection_policy == 'RISK_E':
+        metadata['qwen_risk_e'] = qwen_risk_e(question, citations, messages)
     metadata['weights'] = dict(config.weights)
     metadata['unknown_policy'] = {'mode': config.unknown_policy}
     metadata['model_roles'] = {'cheap': {'model': config.cheap_model},
@@ -720,10 +757,12 @@ def decide_route(question, citations, messages=None, retrieval_status='SUCCESS',
         metadata['rule_version'] = RISK_V5_VERSION
     elif config.selection_policy == 'RISK_V6':
         metadata['rule_version'] = RISK_V6_VERSION
+    elif config.selection_policy == 'RISK_E':
+        metadata['rule_version'] = RISK_E_VERSION
     if config.mode in ('CHEAP_ONLY', 'EXPENSIVE_ONLY'):
         role = 'CHEAP' if config.mode == 'CHEAP_ONLY' else 'EXPENSIVE'
         reason = 'FIXED_MODE'
-    elif config.selection_policy in ('RISK_V4', 'RISK_V5', 'RISK_V6'):
+    elif config.selection_policy in RISK_VERSIONS:
         role = 'EXPENSIVE' if policy['status'] == 'ESTIMATED' and lower >= config.threshold else 'CHEAP'
         reason = ('RISK_AT_OR_ABOVE_THRESHOLD' if role == 'EXPENSIVE' else
                   'RISK_OBSERVATIONS_UNKNOWN_CHEAP' if policy['status'] == 'UNKNOWN' else 'RISK_BELOW_THRESHOLD')

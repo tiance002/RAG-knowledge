@@ -49,9 +49,9 @@ def route_direct_history_generation(llm, model_id, messages, question):
         return baseline
     from app.services.model_router import (RouterConfig, quality_first_candidate, QUALITY_FIRST_VERSION,
                                            qwen_risk_v4, RISK_V4_VERSION, qwen_risk_v5, RISK_V5_VERSION,
-                                           qwen_risk_v6, RISK_V6_VERSION)
+                                           qwen_risk_v6, RISK_V6_VERSION, RISK_E_VERSION)
     config = RouterConfig.from_env()
-    if config.mode != 'DYNAMIC' or config.selection_policy not in ('QUALITY_FIRST_V3', 'RISK_V4', 'RISK_V5', 'RISK_V6'):
+    if config.mode != 'DYNAMIC' or config.selection_policy not in ('QUALITY_FIRST_V3', 'RISK_V4', 'RISK_V5', 'RISK_V6', 'RISK_E'):
         return baseline
     # Only assistant messages preceding the current user turn are history.
     current = max((i for i, m in enumerate(messages) if m.get('role') == 'user'), default=len(messages))
@@ -59,15 +59,16 @@ def route_direct_history_generation(llm, model_id, messages, question):
                       and m['content'].strip() for m in messages[:current])
     candidate = quality_first_candidate(question)
     risk = None
-    if config.selection_policy in ('RISK_V4', 'RISK_V5', 'RISK_V6'):
-        risk = (qwen_risk_v6(question, [], messages) if config.selection_policy == 'RISK_V6'
+    if config.selection_policy in ('RISK_V4', 'RISK_V5', 'RISK_V6', 'RISK_E'):
+        risk = (qwen_risk_v6(question, [], messages) if config.selection_policy in ('RISK_V6', 'RISK_E')
                 else qwen_risk_v5(question, [], messages) if config.selection_policy == 'RISK_V5'
                 else qwen_risk_v4(question, [], messages[:current]))
         eligible = (has_history and risk['status'] == 'ESTIMATED'
                     and risk['signals'].get('arithmetic', False)
                     and risk['score_points'] / 100 >= config.threshold)
         matched_rules = risk['matched_rules']
-        version = {'RISK_V4': RISK_V4_VERSION, 'RISK_V5': RISK_V5_VERSION, 'RISK_V6': RISK_V6_VERSION}[config.selection_policy]
+        version = {'RISK_V4': RISK_V4_VERSION, 'RISK_V5': RISK_V5_VERSION,
+                   'RISK_V6': RISK_V6_VERSION, 'RISK_E': RISK_E_VERSION}[config.selection_policy]
     else:
         eligible = has_history and 'DERIVED_NUMERIC_OPERATION' in candidate['risk']
         matched_rules = candidate['risk']

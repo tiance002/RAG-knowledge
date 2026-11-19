@@ -12,12 +12,12 @@ from app.models import FileDocument, DocumentChunk, FileStatus, ContentType, Kno
 from app.services.parser import FileParser
 from app.services.vector_store import VectorStoreService
 from app.services.embedding import EmbeddingService
-from app.services.bm25 import get_bm25_index  # 新增：BM25 索引
-from app.core.config import get_settings # Fix: import get_settings
+from app.services.bm25 import get_bm25_index
+from app.core.config import get_settings
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from sqlalchemy.exc import OperationalError
 
-settings = get_settings() # Fix: Initialize settings
+settings = get_settings()
 _UNSET_VLM = object()
 
 # 定义重试策略：捕获 OperationalError (通常包含 database is locked)，最多重试 5 次，指数退避
@@ -31,16 +31,6 @@ db_retry = retry(
 def safe_commit(session: Session):
     """带重试机制的数据库提交"""
     session.commit()
-
-
-def run_async(coro):
-    """在同步环境中运行异步函数"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 def _preflight_embedding(session, file_doc, vector_model):
@@ -64,7 +54,7 @@ def _prepare_embeddings(session, file_doc, vector_model, contents):
     binding = resolve_model(session, "embedding", vector_model or kb.embedding_model, use_default=False)
     embedding = EmbeddingService(base_url=binding.base_url, api_key=binding.api_key, model=binding.model_name)
     model_id = binding.model_name
-    vectors = run_async(embedding.embed_documents(contents, model_id=model_id))
+    vectors = asyncio.run(embedding.embed_documents(contents, model_id=model_id))
     if len(vectors) != len(contents) or any(not v for v in vectors):
         raise ValueError("Embedding returned incomplete vectors")
     if vectors:
@@ -276,9 +266,6 @@ def process_file_parsing(
         auto_vectorize: 解析完成后是否自动入库
     """
     _guard_legacy_entry()
-    # 立即打印入参，确保前端传值正确
-    print(f"🚀 [ParseTask] 接收到任务: file_id={file_id}, chunk_mode={chunk_mode}, embedding_model={embedding_model}, vector_model={vector_model}", flush=True)
-    
     from app.services.runtime_settings import get_runtime_settings
     defaults = get_runtime_settings() if chunk_size is None or chunk_overlap is None else None
     chunk_size = defaults.chunk_size if chunk_size is None else int(chunk_size)
@@ -390,7 +377,7 @@ def process_file_parsing(
                                          model=bound_vlm.model_name)
                 except ModelBindingError as exc:
                     vlm_binding_error = type(exc).__name__
-                description_summary = describe_parsed_images(parsed_chunks, file_doc.kb_id, vlm, run_async)
+                description_summary = describe_parsed_images(parsed_chunks, file_doc.kb_id, vlm, asyncio.run)
                 for c in parsed_chunks:
                     if (c.metadata or {}).get('content_origin') == 'model_generated_image_description':
                         c.token_count = parser.splitter.count_tokens(c.content)
