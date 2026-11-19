@@ -81,11 +81,13 @@ def get_file_task(file_id: str, task_id: str, session: Session = Depends(get_ses
     events = session.exec(select(FileTaskEvent).where(FileTaskEvent.task_id == task_id)
         .order_by(FileTaskEvent.created_at)).all()
     data = receipt_view(row)
-    data["attempts"] = [dict(attempt_no=a.attempt_no, stage=a.stage, worker=a.worker_id, outcome=a.outcome,
+    data["attempts"] = [dict(attempt_no=a.attempt_no, stage=a.stage, worker=a.worker_id,
+        outcome="FAILED" if a.outcome == "UNKNOWN" else a.outcome,
         started_at=a.started_at, finished_at=a.finished_at, error=a.error_code) for a in attempts]
     data["effects"] = [dict(effect_key=e.effect_key, stage=e.stage, state=e.state,
         provider_request_id=e.provider_request_id, stored_result=bool(e.result_ref)) for e in effects]
-    data["decisions"] = [dict(action=e.action, reason=e.reason, created_at=e.created_at) for e in events]
+    data["decisions"] = [dict(action=e.action, reason=e.reason, created_at=e.created_at) for e in events
+                         if e.action in ("resume", "retry", "terminate")]
     return ApiResponse(data=data)
 
 

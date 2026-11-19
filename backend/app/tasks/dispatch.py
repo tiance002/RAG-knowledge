@@ -20,7 +20,7 @@ from app.tasks.celery_app import celery_app
 LEASE_MS = int(os.getenv('FILE_TASK_LEASE_MS', '90000'))
 HEARTBEAT_SECONDS = float(os.getenv('FILE_TASK_HEARTBEAT_SECONDS', '20'))
 MAX_STAGE_ATTEMPTS = 4
-UNKNOWN_REVIEWED = -1
+UNCONFIRMED_FAILURE = 'FILE_TASK_RESULT_UNCONFIRMED'
 ATTEMPT_LIMIT_MS = get_settings().CELERY_TASK_TIME_LIMIT * 1000
 
 def now_ms():
@@ -115,11 +115,18 @@ class DispatchUnconfirmed(RuntimeError):
         super().__init__('任务投递未确认')
 
 def receipt_view(row):
+    pending_review = row.status == 'UNKNOWN'
+    resolution_available = row.status == 'FAILED' and row.error_message == UNCONFIRMED_FAILURE
+    public_status = {'UNKNOWN': 'RETRY_WAIT', 'PUBLISH_UNKNOWN': 'QUEUED'}.get(row.status, row.status)
     return dict(task_id=row.task_id, file_id=row.file_id, operation=row.operation,
-                status=row.status, stage=row.stage, attempt_no=row.attempt_no,
+                status=public_status,
+                resolution_available=resolution_available, stage=row.stage, attempt_no=row.attempt_no,
                 stage_attempts=row.stage_attempts, target_generation=row.target_generation,
-                heartbeat_at=row.heartbeat_at, next_run_at=row.next_run_at,
-                checkpoint_ref=row.checkpoint_ref, error_type=row.error_type, error_message=row.error_message,
+                heartbeat_at=row.heartbeat_at, next_run_at=0 if pending_review else row.next_run_at,
+                checkpoint_ref=row.checkpoint_ref,
+                error_type=None if pending_review or resolution_available else row.error_type,
+                error_message=('本次处理未完成，可取消或重新处理。' if resolution_available
+                               else None if pending_review else row.error_message),
                 result=json.loads(row.result) if row.result else None,
                 created_at=row.created_at.isoformat(), updated_at=row.updated_at.isoformat())
 
@@ -415,12 +422,15 @@ def project_failure_in_session(session, row, state, code):
     doc = session.get(FileDocument, row.file_id)
     if doc and doc.desired_generation == row.target_generation and not getattr(doc, 'deleted_at', None):
         if not doc.active_build_id and doc.status not in (FileStatus.PARSED, FileStatus.READY):
-            if state in ('FAILED', 'UNKNOWN', 'CANCELLED'):
+            if state == 'FAILED':
                 doc.status = FileStatus.FAILED
+            elif state == 'CANCELLED':
+                doc.status = FileStatus.PENDING
             elif state in ('RETRY_WAIT', 'QUEUED'):
                 doc.status = FileStatus.PARSING if row.stage == 'parse' else FileStatus.EMBEDDING
-        doc.error_message = (('任务结果待核对: ' if state == 'UNKNOWN' else '任务执行失败: ') + code
-                             if state in ('FAILED', 'UNKNOWN', 'CANCELLED') else None)
+        doc.error_message = ('本次处理未完成，可在处理任务中取消或重新处理。'
+                             if state == 'FAILED' and code == UNCONFIRMED_FAILURE
+                             else '任务执行失败: ' + code if state == 'FAILED' else None)
         session.add(doc)
 
 def cancel_in_session(session, file_id, reason='cancelled'):
@@ -482,13 +492,12 @@ def reconcile_unknown(task_id, attempt_no):
         if engine.dialect.name == 'sqlite':
             session.connection().exec_driver_sql('BEGIN IMMEDIATE')
         row = session.get(FileTaskReceipt, task_id)
-        if (not row or row.status != 'UNKNOWN' or row.stage not in ('parse', 'embed')
-                or row.next_run_at == UNKNOWN_REVIEWED or row.attempt_no != attempt_no):
+        if not row or row.status != 'UNKNOWN' or row.attempt_no != attempt_no:
             return False
         from app.models import FileDocument
         doc = session.get(FileDocument, row.file_id)
         resumed = False
-        if (doc and not doc.deleted_at and row.target_generation is not None
+        if (row.stage in ('parse', 'embed') and doc and not doc.deleted_at and row.target_generation is not None
                 and doc.desired_generation == row.target_generation):
             if row.stage_attempts < MAX_STAGE_ATTEMPTS:
                 try:
@@ -503,12 +512,16 @@ def reconcile_unknown(task_id, attempt_no):
                         resumed = _authorize_uncertain_model_replay(session, row)
                 except FileTaskConflict:
                     pass
-        row.next_run_at = 0 if resumed else UNKNOWN_REVIEWED
+        row.next_run_at = 0
         if resumed:
             row.status = 'RETRY_WAIT'
             row.last_dispatched_at = None
+        else:
+            row.status = 'FAILED'
+            row.active_file = None
+            row.error_message = UNCONFIRMED_FAILURE
         row.updated_at = datetime.utcnow()
-        project_failure_in_session(session, row, row.status, 'USER_ACTION_REQUIRED')
+        project_failure_in_session(session, row, row.status, row.error_message)
         session.add(row)
         session.add(FileTaskEvent(event_id=str(uuid4()), task_id=task_id,
             action='auto_resume' if resumed else 'auto_review', reason='verified_result_or_bounded_replay' if resumed else 'user_action_required',
@@ -523,8 +536,9 @@ def resolve_unknown(file_id, task_id, action, reason):
     with Session(engine) as session:
         if engine.dialect.name == 'sqlite': session.connection().exec_driver_sql('BEGIN IMMEDIATE')
         row = session.get(FileTaskReceipt, task_id)
-        if not row or row.file_id != file_id or row.status != 'UNKNOWN':
-            raise FileTaskConflict('TASK_NOT_UNKNOWN')
+        if (not row or row.file_id != file_id or not
+                (row.status == 'UNKNOWN' or row.status == 'FAILED' and row.error_message == UNCONFIRMED_FAILURE)):
+            raise FileTaskConflict('TASK_RESOLUTION_UNAVAILABLE')
         if action != 'terminate' and row.target_generation is None:
             raise FileTaskConflict('LEGACY_TASK_CANNOT_REPLAY')
         if action != 'terminate':
@@ -533,6 +547,11 @@ def resolve_unknown(file_id, task_id, action, reason):
             kb = session.get(KnowledgeBase, doc.kb_id) if doc else None
             if not doc or doc.deleted_at or doc.desired_generation != row.target_generation or not kb or kb.is_deleted:
                 raise FileTaskConflict('TASK_FILE_UNAVAILABLE_OR_SUPERSEDED')
+            busy = session.exec(select(FileTaskReceipt.task_id).where(
+                FileTaskReceipt.active_file == file_id, FileTaskReceipt.task_id != task_id)).first()
+            if busy:
+                raise FileTaskConflict('TASK_FILE_BUSY')
+            row.active_file = file_id
         if action == 'resume':
             _verify_unknown_resume(session, row)
         if action == 'retry':
@@ -546,6 +565,7 @@ def resolve_unknown(file_id, task_id, action, reason):
                 FileTaskEffect.state == 'PENDING').values(state='REPLAY_AUTHORIZED', updated_at=now_ms()))
         row.status = 'CANCELLED' if action == 'terminate' else 'RETRY_WAIT'
         row.error_type = 'MANUAL_'+action.upper()+': '+reason.strip()
+        row.error_message = None
         row.next_run_at = 0
         row.owner_token=None
         row.lease_until=None

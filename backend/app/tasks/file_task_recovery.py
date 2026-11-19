@@ -41,8 +41,7 @@ def scan_once(at=None, limit=100):
     with Session(d.engine) as session:
         receipt = d.FileTaskReceipt
         uncertain = session.exec(select(receipt.task_id, receipt.attempt_no).where(
-            receipt.status == 'UNKNOWN', receipt.stage.in_(['parse', 'embed']),
-            receipt.next_run_at != d.UNKNOWN_REVIEWED,
+            receipt.status == 'UNKNOWN',
         ).order_by(receipt.updated_at, receipt.task_id).limit(limit)).all()
     for task_id, attempt_no in uncertain:
         if d.reconcile_unknown(task_id, attempt_no):

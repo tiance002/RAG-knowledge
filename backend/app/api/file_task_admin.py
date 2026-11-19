@@ -39,21 +39,21 @@ def list_kb_tasks(kb_id: str, limit: int = Query(50, ge=1, le=200),
         raise HTTPException(404, detail="知识库不存在")
     receipt = FileTaskReceipt
     queue = case((receipt.stage == "index", "document.index"), else_="document.parse")
-    summary = {name: {"waiting": 0, "running": 0, "failed": 0, "unknown": 0,
+    summary = {name: {"waiting": 0, "running": 0, "failed": 0,
                       "oldest_wait_seconds": None} for name in ("document.parse", "document.index")}
     counts = session.exec(select(queue, receipt.status, func.count(), func.min(receipt.updated_at))
                           .join(FileDocument, receipt.file_id == FileDocument.id)
                           .where(FileDocument.kb_id == kb_id).group_by(queue, receipt.status)).all()
     now = datetime.utcnow()
-    waiting = {"QUEUED", "RETRY_WAIT", "PUBLISH_UNKNOWN"}
+    waiting = {"QUEUED", "RETRY_WAIT", "PUBLISH_UNKNOWN", "UNKNOWN"}
     for name, status, count, oldest in counts:
         group = summary[name]
         if status in waiting:
             group["waiting"] += count
             age = max(0, int((now - oldest).total_seconds()))
             group["oldest_wait_seconds"] = max(age, group["oldest_wait_seconds"] or 0)
-        elif status in {"RUNNING", "FAILED", "UNKNOWN"}:
-            group[{"RUNNING": "running", "FAILED": "failed", "UNKNOWN": "unknown"}[status]] += count
+        elif status in {"RUNNING", "FAILED"}:
+            group[{"RUNNING": "running", "FAILED": "failed"}[status]] += count
     entries = session.exec(select(receipt, FileDocument)
         .join(FileDocument, receipt.file_id == FileDocument.id).where(FileDocument.kb_id == kb_id)
         .order_by(case((receipt.active_file.is_not(None), 0), else_=1),

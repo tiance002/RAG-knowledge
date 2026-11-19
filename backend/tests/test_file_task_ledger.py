@@ -80,14 +80,27 @@ def test_expired_pending_effect_is_unknown_not_replayed(ledger, monkeypatch):
     assert stats['unknown'] == 1 and stats['sent'] == 0
     with Session(ledger) as s:
         row=s.get(d.FileTaskReceipt,'t')
-        assert row.status == 'UNKNOWN' and row.active_file == 'f'
-        assert row.next_run_at == d.UNKNOWN_REVIEWED
+        assert row.status == 'FAILED' and row.active_file is None
+        assert row.error_message == d.UNCONFIRMED_FAILURE
+        assert d.receipt_view(row)['resolution_available'] is True
         assert s.get(d.FileTaskAttempt, ('t',1)).outcome == 'UNKNOWN'
     d.resolve_unknown('f','t','retry','user explicitly accepts possible charge')
     c2=d.claim_task('t','parse')
     assert c2 and c2.owner_token != c.owner_token
     assert d.begin_effect(c2,'effect','hash') == 'NEW'
     assert d.begin_effect(c2,'effect','hash') == 'PENDING'
+
+
+def test_public_receipt_hides_internal_unknown_and_pending_review_has_no_actions(ledger):
+    with Session(ledger) as session:
+        row = session.get(d.FileTaskReceipt, 't')
+        row.status, row.error_message = 'UNKNOWN', 'provider detail'
+        public = d.receipt_view(row)
+        assert public['status'] == 'RETRY_WAIT'
+        assert public['error_message'] is None
+        assert public['resolution_available'] is False
+        row.status = 'PUBLISH_UNKNOWN'
+        assert d.receipt_view(row)['status'] == 'QUEUED'
 
 def test_expiry_retry_then_old_token_rejected(ledger, monkeypatch):
     clock=[1000]

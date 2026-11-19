@@ -3,15 +3,15 @@ import './TaskMonitor.css';
 
 type Receipt = { task_id: string; file_id: string; file_name: string; status: string; stage: string;
   attempt_no: number; heartbeat_at: number | null; next_run_at: number; error_type?: string; error_message?: string;
-  active_build_id?: string; target_generation?: number | null };
-type Queue = { waiting: number; running: number; failed: number; unknown: number; oldest_wait_seconds: number | null };
+  active_build_id?: string; target_generation?: number | null; resolution_available?: boolean };
+type Queue = { waiting: number; running: number; failed: number; oldest_wait_seconds: number | null };
 type View = { queues: Record<string, Queue>; tasks: Receipt[]; has_more: boolean };
 type Detail = { task_id: string;
   attempts: { attempt_no: number; stage: string; outcome: string; error: string | null }[];
   effects: { effect_key: string; stage: string; state: string; provider_request_id: string | null; stored_result: boolean }[];
   decisions: { created_at: number; action: string; reason: string }[] };
 const states: Record<string, string> = { QUEUED: '排队中', RUNNING: '执行中', RETRY_WAIT: '等待重试',
-  UNKNOWN: '处理未完成', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消', PUBLISH_UNKNOWN: '等待补投' };
+  COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' };
 const stages: Record<string, string> = { parse: '解析', embed: '生成向量', index: '发布索引' };
 const time = (ms: number | null) => ms ? new Date(ms).toLocaleString('zh-CN') : '—';
 
@@ -67,7 +67,7 @@ export default function TaskMonitor({ kbId }: { kbId: string }) {
     {error && <p role="alert">{error}</p>}
     {view && Object.entries(view.queues).map(([name, q]) => <p key={name}>
       <strong>{name === 'document.index' ? '索引发布' : '解析与向量计算'}</strong>
-      {'　'}等待 {q.waiting} · 执行 {q.running} · 失败 {q.failed} · 处理未完成 {q.unknown}
+      {'　'}等待 {q.waiting} · 执行 {q.running} · 失败 {q.failed}
       {q.oldest_wait_seconds != null && ` · 最久等待 ${q.oldest_wait_seconds} 秒`}
     </p>)}
     <div className="task-table-scroll"><table><thead><tr>
@@ -75,7 +75,7 @@ export default function TaskMonitor({ kbId }: { kbId: string }) {
     </tr></thead><tbody>{view?.tasks.map(r => <tr key={r.task_id}>
       <td>{r.file_name}<small>{r.task_id}</small><button onClick={() => void showDetail(r)}>执行记录</button></td><td>{states[r.status] || r.status} · {stages[r.stage] || r.stage}
         {(r.error_message || r.error_type) && <small>{r.error_message || r.error_type}</small>}
-        {r.status === 'UNKNOWN' && <div>
+        {r.resolution_available && <div>
           <button disabled={busy} onClick={() => void resolve(r, 'terminate')}>取消处理</button>
           {r.target_generation != null && <button disabled={busy} onClick={() => void resolve(r, 'retry')}>重新处理</button>}
         </div>}

@@ -387,7 +387,9 @@ def test_uncertain_effect_replays_at_most_once(stages, monkeypatch, kind, outcom
         assert scan_once()['retried'] == 0
         assert scan_once()['sent'] == 0
         with Session(stages[0]) as session:
-            assert session.get(dispatch.FileTaskReceipt, old.task_id).status == 'UNKNOWN'
+            terminal = session.get(dispatch.FileTaskReceipt, old.task_id)
+            assert terminal.status == 'FAILED' and terminal.active_file is None
+            assert dispatch.receipt_view(terminal)['resolution_available'] is True
         assert dispatch.resolve_unknown(old.file_id, old.task_id, 'terminate', 'user cancelled')['status'] == 'CANCELLED'
     else:
         expected = old_result if outcome == 'late_before_send' else new_result
