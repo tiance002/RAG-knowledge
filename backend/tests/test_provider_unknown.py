@@ -121,6 +121,7 @@ def test_provider_success_id_is_recorded(monkeypatch):
 
 def test_real_service_stream_timeout_correlates_dispatch(monkeypatch):
     events = []
+    monkeypatch.setattr(llm, 'ANSWER_RETRY_DELAYS', (0, 0))
     monkeypatch.setattr(llm, "event", lambda name, **data: events.append((name, data)))
     class Stream:
         _request_id = "req_stream"
@@ -138,8 +139,10 @@ def test_real_service_stream_timeout_correlates_dispatch(monkeypatch):
     with pytest.raises(TimeoutError) as raised:
         asyncio.run(run())
     payload = llm.provider_error_payload(raised.value, stage="answer_stream")
-    start = next(data for name, data in events if name == "provider.request_started")
-    assert payload["local_request_id"] == start["local_request_id"]
+    starts = [data for name, data in events if name == "provider.request_started"]
+    assert len(starts) == 3
+    assert len({data["local_request_id"] for data in starts}) == 3
+    assert payload["local_request_id"] == starts[-1]["local_request_id"]
     assert payload["provider_request_id"] == "req_stream"
     assert payload["status"] == "UNKNOWN"
 

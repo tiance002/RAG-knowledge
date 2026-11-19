@@ -251,7 +251,8 @@ class EffectRunner:
                         cached.task_id != self.claim.task_id or cached.stage != self.claim.stage or
                         cached.input_hash != identity_hash):
                     raise UnconfirmedEffect('VLM_CACHE_ONLY_RESULT_REQUIRED')
-        state = dispatch.begin_effect(self.claim, key, identity_hash)
+        state = dispatch.begin_effect(self.claim, key, identity_hash,
+                                      single_model_request=kind in ('embedding', 'vlm') and not cache_only)
         if state == 'COMPLETED':
             # The result location is deterministic; recover a completed call even
             # if the stage checkpoint was never committed.
@@ -264,7 +265,7 @@ class EffectRunner:
             if value.get('effect_key') != key:
                 raise ValueError('EFFECT_RESULT_IDENTITY_MISMATCH')
             return value['result']
-        if state != 'NEW':
+        if state not in ('NEW', 'AUTO_REPLAY'):
             raise UnconfirmedEffect('EFFECT_PREVIOUS_OUTCOME_UNCONFIRMED')
         if cache_only:
             # A concurrent ledger change must never turn a cache import into a paid call.
@@ -278,6 +279,7 @@ class EffectRunner:
             provider_id = ids[0] if len(ids) == 1 else json.dumps(ids) if ids else None
             reference = write_artifact(self.claim.task_id, {'schema': 'task-effect-v1',
                 'task_id': self.claim.task_id, 'stage': self.claim.stage,
+                'attempt_no': self.claim.attempt_no,
                 'input_hash': identity_hash, 'effect_key': key, 'kind': kind,
                 'input_count': len(identity['inputs']) if kind == 'embedding' else None,
                 'provider_request_id': provider_id, 'result': result})
@@ -301,7 +303,7 @@ class EffectRunner:
                     # A failed evidence write still leaves the paid intent PENDING.
                     # It must not authorize replay or turn the caption into success.
                     pass
-            delay = _safe_retry_delay(exc, provider_ids)
+            delay = _safe_retry_delay(exc, provider_ids) if state != 'AUTO_REPLAY' else None
             if delay is not None:
                 code = 'PROVIDER_REJECTED_429' if provider_ids else 'PROVIDER_PRE_CONNECT_FAILED'
                 if not dispatch.mark_effect_retryable(self.claim, key, delay, code):
@@ -309,6 +311,9 @@ class EffectRunner:
                 retryable = dispatch.RetryableStageError(delay, code)
                 retryable.ingest_effect_error = True
                 raise retryable from exc
+            from app.services.llm import is_unknown_provider_error
+            if state == 'NEW' and not provider_ids and is_unknown_provider_error(exc):
+                dispatch.record_model_uncertainty(self.claim, key)
             raise UnconfirmedEffect('EFFECT_RESULT_UNCONFIRMED:' + type(exc).__name__) from exc
 
 
@@ -425,12 +430,12 @@ def _relevant_resume_effects(row, effects):
     return [effect for effect in effects if effect.effect_key not in excluded]
 
 
-def verify_checkpoint_for_resume(row, effects):
+def verify_checkpoint_for_resume(row, effects, *, allow_missing=None):
     """UNKNOWN may resume only from an intact checkpoint and settled effects."""
     from app.tasks.dispatch import Claim
     try:
         effects = _relevant_resume_effects(row, effects)
-        if any(effect.state != 'COMPLETED' for effect in effects):
+        if any(effect.state != 'COMPLETED' and effect.effect_key != allow_missing for effect in effects):
             return False
         payload = json.loads(row.payload)
         if not row.checkpoint_ref:
@@ -446,6 +451,8 @@ def verify_checkpoint_for_resume(row, effects):
             if not isinstance(payload.get('_model_snapshots'), dict):
                 return False
             for effect in effects:
+                if effect.state != 'COMPLETED':
+                    continue
                 stored = read_artifact(row.task_id, effect.result_ref)
                 if stored.get('effect_key') != effect.effect_key:
                     return False
@@ -456,6 +463,8 @@ def verify_checkpoint_for_resume(row, effects):
         if row.stage == 'index':
             _validate_vectors(value['embeddings'], sum(c.get('chunk_type') != 'parent' for c in value['chunks_data']))
         for effect in effects:
+            if effect.state != 'COMPLETED':
+                continue
             stored = read_artifact(row.task_id, effect.result_ref)
             if stored.get('effect_key') != effect.effect_key:
                 return False
@@ -464,7 +473,7 @@ def verify_checkpoint_for_resume(row, effects):
         return False
 
 
-def recover_materialized_effects_for_resume(session, row, effects):
+def recover_materialized_effects_for_resume(session, row, effects, *, allow_missing=None):
     """Recover write-before-CAS responses inside the caller's resume transaction.
 
     No provider is called. A pending intent is settled only by exactly one
@@ -500,6 +509,12 @@ def recover_materialized_effects_for_resume(session, row, effects):
                 elif value.get('kind') != 'vlm' or not isinstance(value.get('result'), str) or not value['result'].strip():
                     continue
                 matches.append((reference, value))
+            if len(matches) > 1:
+                current = [pair for pair in matches if pair[1].get('attempt_no') == row.attempt_no]
+                if len(current) == 1:
+                    matches = current
+            if not matches and effect.effect_key == allow_missing:
+                continue
             if len(matches) != 1:
                 return False
             settled.append((effect, *matches[0]))

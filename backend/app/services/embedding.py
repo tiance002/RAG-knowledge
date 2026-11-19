@@ -48,11 +48,24 @@ class EmbeddingService:
 
     async def embed_documents(self, texts: List[str], model_id: str = None) -> List[List[float]]:
         """批量获取文本的向量表示"""
-        from app.services.task_effect_context import invoke_effect
-        return await invoke_effect('embedding', {
-            'base_url': self.base_url, 'model': model_id or self.model,
-            'inputs': texts,
-        }, lambda: self._embed(texts, model_id))
+        from app.services.task_effect_context import has_active_effect_scope, invoke_effect
+        if not has_active_effect_scope():
+            return await self._embed(texts, model_id)
+        target = model_id or self.model
+
+        async def embed_request(inputs):
+            return await invoke_effect('embedding', {
+                'base_url': self.base_url, 'model': target, 'inputs': inputs,
+            }, lambda: self._embed(inputs, model_id))
+
+        # These providers issue a separate HTTP request for each item.
+        if len(texts) > 1 and ('doubao' in target.lower() or 'volces' in (self.base_url or '')
+                                or '/api/embeddings' in (self.base_url or '')):
+            vectors = []
+            for item in texts:
+                vectors.extend(await embed_request([item]))
+            return vectors
+        return await embed_request(texts)
 
     @observe("embedding.call")
     async def _embed(self, texts: List[str], model_id: str = None) -> List[List[float]]:

@@ -332,7 +332,24 @@ def handoff(claim, next_stage, checkpoint_ref):
         session.commit()
         return changed.rowcount == 1
 
-def begin_effect(claim, effect_key, input_hash):
+def _effect_event_exists(session, task_id, effect_key, action):
+    return session.exec(select(FileTaskEvent.event_id).where(FileTaskEvent.task_id == task_id,
+        FileTaskEvent.reason == effect_key, FileTaskEvent.action == action).limit(1)).first() is not None
+
+
+def _record_effect_event(session, task_id, effect_key, action):
+    session.add(FileTaskEvent(event_id=str(uuid4()), task_id=task_id, action=action,
+                              reason=effect_key, created_at=now_ms()))
+
+
+def record_model_uncertainty(claim, effect_key):
+    with Session(engine) as session:
+        if guard_claim_in_session(session, claim):
+            _record_effect_event(session, claim.task_id, effect_key, 'model_request_uncertain')
+            session.commit()
+
+
+def begin_effect(claim, effect_key, input_hash, *, single_model_request=False):
     with Session(engine) as session:
         if not guard_claim_in_session(session, claim):
             session.rollback()
@@ -342,7 +359,18 @@ def begin_effect(claim, effect_key, input_hash):
             if effect.task_id != claim.task_id or effect.stage != claim.stage or effect.input_hash != input_hash:
                 raise FileTaskConflict('TASK_EFFECT_CONFLICT')
             state = effect.state
-            if state in ('REPLAY_AUTHORIZED', 'RETRYABLE'):
+            if state == 'AUTO_REPLAY_AUTHORIZED':
+                # Recheck after dispatch delay, immediately before authorizing
+                # any network call. The current owner alone can settle the effect.
+                from app.tasks.staged_pipeline import recover_materialized_effects_for_resume
+                row = session.get(FileTaskReceipt, claim.task_id)
+                effect.state = 'PENDING'
+                if recover_materialized_effects_for_resume(session, row, [effect], allow_missing=effect_key):
+                    state = 'COMPLETED' if effect.state == 'COMPLETED' else 'AUTO_REPLAY'
+                else:
+                    state = 'PENDING'
+                session.add(effect)
+            elif state in ('REPLAY_AUTHORIZED', 'RETRYABLE'):
                 effect.state = 'PENDING'
                 effect.updated_at = now_ms()
                 session.add(effect)
@@ -351,6 +379,8 @@ def begin_effect(claim, effect_key, input_hash):
             session.add(FileTaskEffect(effect_key=effect_key, task_id=claim.task_id, stage=claim.stage,
                 input_hash=input_hash, updated_at=now_ms()))
             state = 'NEW'
+        if state == 'NEW' and single_model_request:
+            _record_effect_event(session, claim.task_id, effect_key, 'model_request_started')
         session.commit()
         return state
 
@@ -420,8 +450,34 @@ def _verify_unknown_resume(session, row, *, require_effect=False):
         raise FileTaskConflict('VERIFIED_CHECKPOINT_REQUIRED')
 
 
+def _authorize_uncertain_model_replay(session, row):
+    from app.tasks.staged_pipeline import recover_materialized_effects_for_resume, verify_checkpoint_for_resume
+    effects = session.exec(select(FileTaskEffect).where(FileTaskEffect.task_id == row.task_id,
+        FileTaskEffect.stage == row.stage)).all()
+    pending = [effect for effect in effects if effect.state == 'PENDING']
+    if len(pending) != 1:
+        return False
+    target = pending[0]
+    key = target.effect_key
+    evidence = 'model_request_started' if row.error_type == 'LeaseExpired' else 'model_request_uncertain'
+    if (_effect_event_exists(session, row.task_id, key, 'auto_model_replay')
+            or not _effect_event_exists(session, row.task_id, key, evidence)):
+        return False
+    if (not recover_materialized_effects_for_resume(session, row, effects, allow_missing=key)
+            or not verify_checkpoint_for_resume(row, effects, allow_missing=key)):
+        raise FileTaskConflict('VERIFIED_CHECKPOINT_REQUIRED')
+    if target.state != 'COMPLETED':
+        target.state = 'AUTO_REPLAY_AUTHORIZED'
+        session.add(target)
+        _record_effect_event(session, row.task_id, key, 'auto_model_replay')
+    # The one authorized replay must still be claimable if safe retries
+    # previously consumed the regular stage budget.
+    row.stage_attempts = min(row.stage_attempts, MAX_STAGE_ATTEMPTS - 1)
+    return True
+
+
 def reconcile_unknown(task_id, attempt_no):
-    """Check each uncertain model attempt once, without resending any request."""
+    """Recover a verified result or durably schedule one uncertain request replay."""
     with Session(engine) as session:
         if engine.dialect.name == 'sqlite':
             session.connection().exec_driver_sql('BEGIN IMMEDIATE')
@@ -433,14 +489,20 @@ def reconcile_unknown(task_id, attempt_no):
         doc = session.get(FileDocument, row.file_id)
         resumed = False
         if (doc and not doc.deleted_at and row.target_generation is not None
-                and doc.desired_generation == row.target_generation
-                and row.stage_attempts < MAX_STAGE_ATTEMPTS):
-            try:
-                with session.begin_nested():
-                    _verify_unknown_resume(session, row, require_effect=True)
-                resumed = True
-            except FileTaskConflict:
-                pass
+                and doc.desired_generation == row.target_generation):
+            if row.stage_attempts < MAX_STAGE_ATTEMPTS:
+                try:
+                    with session.begin_nested():
+                        _verify_unknown_resume(session, row, require_effect=True)
+                    resumed = True
+                except FileTaskConflict:
+                    pass
+            if not resumed:
+                try:
+                    with session.begin_nested():
+                        resumed = _authorize_uncertain_model_replay(session, row)
+                except FileTaskConflict:
+                    pass
         row.next_run_at = 0 if resumed else UNKNOWN_REVIEWED
         if resumed:
             row.status = 'RETRY_WAIT'
@@ -449,7 +511,7 @@ def reconcile_unknown(task_id, attempt_no):
         project_failure_in_session(session, row, row.status, 'USER_ACTION_REQUIRED')
         session.add(row)
         session.add(FileTaskEvent(event_id=str(uuid4()), task_id=task_id,
-            action='auto_resume' if resumed else 'auto_review', reason='verified_result' if resumed else 'user_action_required',
+            action='auto_resume' if resumed else 'auto_review', reason='verified_result_or_bounded_replay' if resumed else 'user_action_required',
             created_at=now_ms()))
         session.commit()
         return resumed

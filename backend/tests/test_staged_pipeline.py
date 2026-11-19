@@ -334,6 +334,96 @@ def test_pending_effect_without_materialized_result_cannot_resume(stages):
         assert effects[0].state == 'PENDING'
 
 
+@pytest.mark.parametrize('kind', ['embedding', 'vlm'])
+@pytest.mark.parametrize('outcome', ['late_before_send', 'late_after_send', 'second_timeout'])
+def test_uncertain_effect_replays_at_most_once(stages, monkeypatch, kind, outcome):
+    from app.tasks.file_task_recovery import scan_once
+
+    calls = []
+    monkeypatch.setattr(dispatch, 'notify_task', lambda *args: None)
+    old = submit('index', {'chunks_data': [{'content': 'durable source'}]})
+    cached = {'inputs': ['already complete']} if kind == 'embedding' else {'image_sha256': 'a'}
+    uncertain = {'inputs': ['uncertain']} if kind == 'embedding' else {'image_sha256': 'b'}
+    old_result, new_result = ([[1., 0.]], [[0., 1.]]) if kind == 'embedding' else ('old caption', 'new caption')
+    key, identity_hash = pipeline._effect_identity(old, kind, uncertain)
+
+    def store_late_result():
+        reference = pipeline.write_artifact(old.task_id, dict(schema='task-effect-v1', task_id=old.task_id,
+            stage=old.stage, attempt_no=old.attempt_no, effect_key=key, input_hash=identity_hash,
+            kind=kind, input_count=1, result=old_result))
+        assert not dispatch.mark_effect_result(old, key, reference)
+
+    async def previously_completed():
+        calls.append('completed')
+        return old_result
+
+    async def lost():
+        calls.append('original')
+        raise TimeoutError('response lost')
+
+    assert asyncio.run(pipeline.EffectRunner(old)(kind, cached, previously_completed)) == old_result
+    with pytest.raises(pipeline.UnconfirmedEffect) as exc:
+        asyncio.run(pipeline.EffectRunner(old)(kind, uncertain, lost))
+    dispatch._fail_claim(old, exc.value)
+    assert scan_once()['retried'] == 1
+    if outcome == 'late_before_send':
+        store_late_result()
+    new = dispatch.claim_task(old.task_id, 'embed')
+    assert new is not None
+    assert asyncio.run(pipeline.EffectRunner(new)(kind, cached, previously_completed)) == old_result
+
+    async def replay():
+        calls.append('replay')
+        if outcome == 'second_timeout':
+            raise TimeoutError('second response lost')
+        if outcome == 'late_after_send':
+            store_late_result()
+        return new_result
+
+    if outcome == 'second_timeout':
+        with pytest.raises(pipeline.UnconfirmedEffect) as exc:
+            asyncio.run(pipeline.EffectRunner(new)(kind, uncertain, replay))
+        dispatch._fail_claim(new, exc.value)
+        assert scan_once()['retried'] == 0
+        assert scan_once()['sent'] == 0
+        with Session(stages[0]) as session:
+            assert session.get(dispatch.FileTaskReceipt, old.task_id).status == 'UNKNOWN'
+        assert dispatch.resolve_unknown(old.file_id, old.task_id, 'terminate', 'user cancelled')['status'] == 'CANCELLED'
+    else:
+        expected = old_result if outcome == 'late_before_send' else new_result
+        assert asyncio.run(pipeline.EffectRunner(new)(kind, uncertain, replay)) == expected
+        with Session(stages[0]) as session:
+            effect = session.get(dispatch.FileTaskEffect, key)
+            assert effect.state == 'COMPLETED'
+            assert pipeline.read_artifact(old.task_id, effect.result_ref)['result'] == expected
+    assert calls == ['completed', 'original'] + ([] if outcome == 'late_before_send' else ['replay'])
+
+
+def test_multipart_embedding_does_not_resend_a_completed_item(stages, monkeypatch):
+    from app.services.embedding import EmbeddingService
+    from app.services.task_effect_context import effect_scope
+    from app.tasks.file_task_recovery import scan_once
+
+    calls = []
+    async def request(self, inputs, model_id):
+        calls.append(inputs)
+        if inputs == ['second'] and calls.count(inputs) == 1:
+            raise TimeoutError('second item timed out')
+        return [[1., 0.]]
+
+    monkeypatch.setattr(EmbeddingService, '_embed', request)
+    monkeypatch.setattr(dispatch, 'notify_task', lambda *args: None)
+    service = EmbeddingService(base_url='https://provider.invalid/api/embeddings', model='test')
+    old = submit('index', {'chunks_data': [{'content': 'durable source'}]})
+    with effect_scope(pipeline.EffectRunner(old)), pytest.raises(pipeline.UnconfirmedEffect) as exc:
+        asyncio.run(service.embed_documents(['first', 'second']))
+    dispatch._fail_claim(old, exc.value)
+    assert scan_once()['retried'] == 1
+    with effect_scope(pipeline.EffectRunner(dispatch.claim_task(old.task_id, 'embed'))):
+        assert asyncio.run(service.embed_documents(['first', 'second'])) == [[1., 0.], [1., 0.]]
+    assert calls == [['first'], ['second'], ['second']]
+
+
 def test_artifact_sweep_keeps_live_preview_and_effect_evidence_and_unknown(stages):
     claim = submit('parse', {})
     pipeline.execute_stage(claim)
