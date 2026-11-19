@@ -285,7 +285,8 @@ def process_file_parsing(
             print(f"❌ [ParseTask] 文件不存在: {file_id}")
             return {"error": "文件不存在"}
 
-        old_chunk = session.exec(select(DocumentChunk).where(DocumentChunk.file_id == file_id)).first()
+        had_chunks = session.exec(select(DocumentChunk.id)
+            .where(DocumentChunk.file_id == file_id).limit(1)).first() is not None
         try:
             _preflight_embedding(session, file_doc, vector_model)
             if not auto_vectorize:
@@ -310,8 +311,6 @@ def process_file_parsing(
 
 
         try:
-            print(f"📄 [ParseTask] 文件信息: {file_doc.name}, 路径: {file_doc.local_path}")
-            
             # 更新状态为解析中
             file_doc.status = FileStatus.PARSING
             file_doc.progress = 0
@@ -342,7 +341,6 @@ def process_file_parsing(
             file_doc.progress = 10
             session.add(file_doc)
             safe_commit(session)
-            print(f"✅ [ParseTask] 开始调用 parser.parse()... Mode: {chunk_mode}")
 
             # 同步调用解析
             try:
@@ -404,7 +402,6 @@ def process_file_parsing(
                           child_chunk_size=child_chunk_size, child_chunk_overlap=child_chunk_overlap)
                 event("ingest.parsed", file_id=file_id, chunk_count=len(parsed_chunks),
                       image_descriptions=description_summary)
-                print(f"✅ [ParseTask] 解析完成，获得 {len(parsed_chunks)} 个块")
             except Exception as parse_err:
                 print(f"❌ [ParseTask] parser.parse() 内部抛出异常: {parse_err}")
                 import traceback
@@ -427,7 +424,6 @@ def process_file_parsing(
                 return {"file_id": file_id, "chunk_count": len(parsed_chunks), "status": "parsed", "image_descriptions": description_summary}
 
             # 清理旧的 Chunks (支持重解析)
-            print("🧹 [ParseTask] 清理旧数据...")
             existing_chunks = session.exec(
                 select(DocumentChunk).where(DocumentChunk.file_id == file_id)
             ).all()
@@ -438,10 +434,6 @@ def process_file_parsing(
             session.flush()
 
             # This preview path has no active vectors. Only the indexing path replaces vectors.
-            # 保存 Chunks
-            db_chunks = []
-            print("🔄 [ParseTask] 开始保存分块...")
-
             for idx, chunk in enumerate(parsed_chunks):
                 # 映射 ContentType
                 try:
@@ -468,11 +460,9 @@ def process_file_parsing(
                     token_count=chunk.token_count, # Add token_count
                     start_offset=metadata.get("start_offset"), end_offset=metadata.get("end_offset"),
                 )
-                db_chunks.append(db_chunk)
                 session.add(db_chunk)
 
-            event("ingest.chunks", file_id=file_id, chunk_count=len(db_chunks))
-            print(f"✅ [ParseTask] 分块处理完成，共生成 {len(db_chunks)} 个数据库记录块")
+            event("ingest.chunks", file_id=file_id, chunk_count=len(parsed_chunks))
 
             # 更新文件状态为解析完成 (PENDING_CONFIRM)
             file_doc.status = FileStatus.PENDING_CONFIRM
@@ -480,15 +470,11 @@ def process_file_parsing(
             file_doc.updated_at = datetime.utcnow()
             session.add(file_doc)
             
-            # 暂时不更新知识库分块计数，因为还未入库
-            # ...
-
             safe_commit(session)
-            print("🎉 [ParseTask] 解析完成，等待用户确认入库。")
             
             return {
                 "file_id": file_id,
-                "chunk_count": len(db_chunks) if 'db_chunks' in locals() else 0,
+                "chunk_count": len(parsed_chunks),
                 "status": "pending_confirm",
                 "image_descriptions": description_summary,
             }
@@ -506,8 +492,8 @@ def process_file_parsing(
             session.rollback()
             file_doc = session.get(FileDocument, file_id)
             if file_doc:
-                file_doc.status = previous_status if old_chunk else FileStatus.FAILED
-                if old_chunk:
+                file_doc.status = previous_status if had_chunks else FileStatus.FAILED
+                if had_chunks:
                     file_doc.progress = previous_progress
                 file_doc.error_message = str(e)
                 file_doc.updated_at = datetime.utcnow()

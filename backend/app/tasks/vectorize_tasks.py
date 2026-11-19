@@ -91,26 +91,23 @@ def vectorize_file_task(self, file_id: str, expected_revision: str = None):
                 session.commit()
                 return {"file_id": file_id, "chunk_count": 0}
 
-            # 获取知识库信息 (为了获取 embedding_model)
             kb = session.get(KnowledgeBase, file_doc.kb_id)
-            embedding_model_id = kb.embedding_model if kb else None
 
             from app.services.model_bindings import resolve_model
             if kb is None:
                 raise ValueError("KNOWLEDGE_BASE_NOT_FOUND")
-            binding = resolve_model(session, "embedding", embedding_model_id, use_default=False)
+            binding = resolve_model(session, "embedding", kb.embedding_model, use_default=False)
             embedding_service = EmbeddingService(base_url=binding.base_url,
                 api_key=binding.api_key, model=binding.model_name)
             target_model_id = binding.model_name
 
             vector_service = VectorStoreService()
 
-            # 准备文档数据
+            from app.services.pdf_provenance import index_provenance
             documents = []
             contents = []
 
             for chunk in chunks:
-                from app.services.pdf_provenance import index_provenance
                 provenance = index_provenance(file_doc.local_path, chunk)
                 documents.append({
                     "id": chunk.id,

@@ -4,10 +4,10 @@ import sys
 import types
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models import ChunkIndex, DocumentChunk, FileDocument, IndexStats, KnowledgeBase
-from app.services.bm25 import BM25Index, tokenize
+from app.services.bm25 import BM25Index, BM25TokenizerDependencyError, tokenize
 
 
 @pytest.fixture(autouse=True)
@@ -21,9 +21,13 @@ def isolated_runtime_and_models(monkeypatch):
             model_name=identity, context_length=8196))
 
 
-def test_chinese_fallback_and_stats_are_idempotent(monkeypatch):
-    monkeypatch.setitem(sys.modules, 'jieba', None)
-    assert tokenize('量子计算')
+def test_missing_jieba_fails_and_bm25_stats_remain_idempotent(monkeypatch):
+    with monkeypatch.context() as missing_dependency:
+        missing_dependency.setitem(sys.modules, 'jieba', None)
+        with pytest.raises(BM25TokenizerDependencyError, match='BM25_JIEBA_REQUIRED'):
+            tokenize('量子计算')
+        with pytest.raises(BM25TokenizerDependencyError, match='BM25_JIEBA_REQUIRED'):
+            BM25Index()
     engine = create_engine('sqlite:///:memory:')
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
@@ -40,7 +44,7 @@ def test_chinese_fallback_and_stats_are_idempotent(monkeypatch):
         stats = session.get(IndexStats, 'kb')
         assert stats.total_docs == 0
         assert json.loads(stats.term_doc_freq) == {}
-        assert session.query(ChunkIndex).count() == 0
+        assert not session.exec(select(ChunkIndex)).first()
 
 
 def test_dimension_failure_preserves_other_and_existing_vectors(monkeypatch):
@@ -208,6 +212,8 @@ def test_reparse_and_submit_preflight_preserve_existing_data(monkeypatch):
         def parse(self, **kwargs):
             from app.services.parser import ParsedChunk
             return [ParsedChunk(content='new B', page_number=None, content_type='text')]
+        def chunk_document(self, blocks, *, parent_child_config):
+            return blocks
     monkeypatch.setattr(module, 'FileParser', Parser)
     with pytest.raises(ValueError, match='dimension mismatch'):
         module.process_file_parsing('B', auto_vectorize=True)
@@ -227,8 +233,7 @@ def test_reparse_and_submit_preflight_preserve_existing_data(monkeypatch):
         async def embed_documents(self, texts, **kwargs): return [[1., 0.] for _ in texts]
     class RejectedWriteStore(Store):
         def add_documents(self, **kwargs): raise RuntimeError('synthetic write rejected')
-    class FullParser:
-        def __init__(self, **kwargs): pass
+    class FullParser(Parser):
         def parse(self, **kwargs):
             return [types.SimpleNamespace(content='new B', page_number=0, content_type='text', image_path='', token_count=2, metadata={})]
     monkeypatch.setattr(module, 'EmbeddingService', GoodEmbedding)
@@ -284,6 +289,8 @@ def test_reparse_and_manual_index_preserve_structure_and_bm25(monkeypatch):
         def parse(self, **kwargs):
             return [types.SimpleNamespace(content='new heading', page_number=0, content_type='text', image_path='', token_count=2,
                                           metadata={'parent_id': 'chunk_1', 'heading_level': 2, 'heading_text': 'Title', 'chunk_type': 'content'})]
+        def chunk_document(self, blocks, *, parent_child_config):
+            return blocks
     monkeypatch.setattr(module, 'VectorStoreService', Store); monkeypatch.setattr(module, 'EmbeddingService', Embed)
     monkeypatch.setattr(module, 'FileParser', Parser)
     # Missing Chroma rows do not make an existing BM25 projection disposable.
