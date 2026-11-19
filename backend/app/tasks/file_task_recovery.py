@@ -40,6 +40,15 @@ def scan_once(at=None, limit=100):
         session.commit()
     with Session(d.engine) as session:
         receipt = d.FileTaskReceipt
+        uncertain = session.exec(select(receipt.task_id, receipt.attempt_no).where(
+            receipt.status == 'UNKNOWN', receipt.stage.in_(['parse', 'embed']),
+            receipt.next_run_at != d.UNKNOWN_REVIEWED,
+        ).order_by(receipt.updated_at, receipt.task_id).limit(limit)).all()
+    for task_id, attempt_no in uncertain:
+        if d.reconcile_unknown(task_id, attempt_no):
+            stats['retried'] += 1
+    with Session(d.engine) as session:
+        receipt = d.FileTaskReceipt
         runnable = (receipt.status.in_(['QUEUED', 'PUBLISH_UNKNOWN', 'RETRY_WAIT']),
                     receipt.next_run_at <= at,
                     receipt.last_dispatched_at.is_(None) | (receipt.last_dispatched_at <= at - RENOTIFY_MS))

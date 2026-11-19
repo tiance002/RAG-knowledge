@@ -180,14 +180,14 @@ def test_selected_binding_reuses_exact_evidence_and_does_not_retry(monkeypatch):
     assert 'evidence' in request['messages'][0]['content']
 
 
-def test_provider_timeout_is_not_replayed(monkeypatch):
+def test_provider_timeout_retries_same_model_without_rerouting(monkeypatch):
     fake_router(monkeypatch)
     baseline, baseline_call = service()
     selected, selected_call = service('test-model', error=TimeoutError('uncertain'))
     monkeypatch.setattr(generation, '_role_service', lambda role, expected: selected)
     with pytest.raises(TimeoutError):
         invoke(baseline)
-    assert selected_call.await_count == 1
+    assert selected_call.await_count == 3
     baseline_call.assert_not_awaited()
 
 
@@ -334,7 +334,7 @@ def test_router_outcome_distinguishes_completed_from_transport_return(monkeypatc
     assert outcomes[0]['status'] == status
     assert outcomes[0]['cost'] == {'status': 'UNKNOWN'}
     assert outcomes[0]['retry_count'] == 0
-    assert call.await_count == 1
+    assert call.await_count == (3 if isinstance(error, TimeoutError) else 1)
 
 
 @pytest.mark.parametrize('content', ['', '  ', None])
@@ -363,7 +363,7 @@ def test_router_exception_outcome_reuses_provider_classification(monkeypatch, er
         invoke(baseline)
     assert caught.value is error
     assert next(data['status'] for name, data in events if name == 'router.outcome') == status
-    assert call.await_count == 1
+    assert call.await_count == (1 if isinstance(error, asyncio.CancelledError) else 3)
 
 
 @pytest.mark.parametrize('invalid', [True, -1, None])

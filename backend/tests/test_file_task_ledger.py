@@ -77,10 +77,11 @@ def test_expired_pending_effect_is_unknown_not_replayed(ledger, monkeypatch):
     assert d.begin_effect(c, 'effect', 'hash') == 'NEW'
     assert d.begin_effect(c, 'effect', 'hash') == 'PENDING'
     stats=scan_once(at=1000+d.LEASE_MS+1)
-    assert stats['unknown'] == 1
+    assert stats['unknown'] == 1 and stats['sent'] == 0
     with Session(ledger) as s:
         row=s.get(d.FileTaskReceipt,'t')
         assert row.status == 'UNKNOWN' and row.active_file == 'f'
+        assert row.next_run_at == d.UNKNOWN_REVIEWED
         assert s.get(d.FileTaskAttempt, ('t',1)).outcome == 'UNKNOWN'
     d.resolve_unknown('f','t','retry','user explicitly accepts possible charge')
     c2=d.claim_task('t','parse')

@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from app.core.config import get_settings
 from app.services.observability import event, model_response, snapshot, capture, observe_model_history
 from app.services.llm import provider_generation, _provider_id, _response_usage, _update_generation, _completion_status, is_unknown_provider_error, attach_provider_usage, GenerationInputBudgetExceeded
+from app.services.llm import retry_answer_call
 from app.services.grounded_request_budget import PreparedGroundedRequest, pack_grounded_request, request_chars
 
 
@@ -424,7 +425,7 @@ async def generate_grounded_candidate(llm, messages, citations, *, model_id=None
         escalations = calls_used
         calls_used += 1
         try:
-            return await _generate_once(current_llm, target)
+            return await retry_answer_call(lambda: _generate_once(current_llm, target), stage='grounded_answer')
         except BaseException as error:
             _router_outcome(route, target, escalations=escalations, error=error)
             raise
@@ -535,11 +536,16 @@ async def stream_grounded_candidate(llm, messages, citations, *, model_id=None,
 
 
 async def generate_no_results_fallback(llm, question):
+    return await retry_answer_call(lambda: _generate_no_results_fallback_once(llm, question),
+                                   stage='no_results_fallback')
+
+
+async def _generate_no_results_fallback_once(llm, question):
     """Return (text, strategy, finish_reason, usage) for confirmed NO_RESULTS.
 
     The caller must authorize the provider call and must never invoke this for
     failed/unknown retrieval, omitted images, or existing usable evidence.
-    Provider errors propagate unchanged; no retry is performed.
+    Propagate provider errors to the caller's bounded retry policy.
     """
     settings = get_settings()
     strategy = settings.FALLBACK_STRATEGY.strip().lower()

@@ -18,7 +18,8 @@ import asyncio
 from urllib.parse import urlsplit
 from pathlib import Path
 from datetime import datetime
-from contextlib import contextmanager, nullcontext, asynccontextmanager
+from contextlib import contextmanager, nullcontext, asynccontextmanager, aclosing
+from functools import wraps
 from contextvars import ContextVar
 from types import SimpleNamespace
 from openai import APIStatusError
@@ -29,6 +30,50 @@ from app.services.provider_http import ProviderBorrowingTransport, _await_cleanu
 settings = get_settings()
 logger = logging.getLogger(__name__)
 _owned_llm_services = ContextVar("owned_llm_services", default=None)
+
+
+ANSWER_RETRY_DELAYS = (0.5, 1.0)
+
+
+def _transient_answer_error(exc):
+    if isinstance(exc, (APIStatusError, httpx.HTTPStatusError, requests.exceptions.HTTPError)):
+        code = getattr(exc, 'status_code', None) or getattr(exc.response, 'status_code', None)
+        return code in (408, 429, 500, 502, 503, 504)
+    return (isinstance(exc, (APIConnectionError, TimeoutError, httpx.TimeoutException,
+                             httpx.NetworkError, httpx.RemoteProtocolError, requests.exceptions.Timeout,
+                             requests.exceptions.ConnectionError))
+            or isinstance(exc, ProviderStreamError) and exc.provider_status == 'UNKNOWN')
+
+
+async def retry_answer_call(call, *, stage):
+    for attempt in range(len(ANSWER_RETRY_DELAYS) + 1):
+        try:
+            return await call()
+        except Exception as exc:
+            if attempt == len(ANSWER_RETRY_DELAYS) or not _transient_answer_error(exc):
+                raise
+            event('llm.answer_retry', stage=stage, retry_number=attempt + 1, error_type=type(exc).__name__)
+            await asyncio.sleep(ANSWER_RETRY_DELAYS[attempt])
+
+
+def _retry_answer_stream(stream):
+    @wraps(stream)
+    async def wrapped(*args, **kwargs):
+        stage = kwargs.get('stage', 'answer_stream')
+        emitted = False
+        for attempt in range(len(ANSWER_RETRY_DELAYS) + 1):
+            try:
+                async with aclosing(stream(*args, **kwargs)) as response:
+                    async for chunk in response:
+                        emitted = True
+                        yield chunk
+                return
+            except Exception as exc:
+                if emitted or attempt == len(ANSWER_RETRY_DELAYS) or not _transient_answer_error(exc):
+                    raise
+                event('llm.answer_retry', stage=stage, retry_number=attempt + 1, error_type=type(exc).__name__)
+                await asyncio.sleep(ANSWER_RETRY_DELAYS[attempt])
+    return wrapped
 
 
 async def close_quietly(close):
@@ -389,6 +434,14 @@ def invoke_provider_http(send, *, stage, model_name, check_status=True, messages
 
 
 async def invoke_provider_model(model, messages, *, config, stage, model_name, timeout_seconds=None):
+    call = lambda: _invoke_provider_model_once(model, messages, config=config, stage=stage,
+                                               model_name=model_name, timeout_seconds=timeout_seconds)
+    if stage in ('agent', 'agent_chat'):
+        return await retry_answer_call(call, stage=stage)
+    return await call()
+
+
+async def _invoke_provider_model_once(model, messages, *, config, stage, model_name, timeout_seconds=None):
     from app.services.observability import native_enabled, generation, langchain_callback_config
 
     async def invoke_once(invocation_config):
@@ -623,6 +676,7 @@ class LLMService:
         return result['rewrite_query']
 
     @observe("llm.generate_stream")
+    @_retry_answer_stream
     async def generate_stream(
         self,
         messages: List[Dict[str, str]],
@@ -729,6 +783,14 @@ class LLMService:
 
     @observe("llm.generate")
     async def generate(
+        self,
+        messages: List[Dict[str, str]],
+        system_prompt: str = None,
+        model_id: str = None,
+    ) -> str:
+        return await retry_answer_call(lambda: self._generate_once(messages, system_prompt, model_id), stage='answer')
+
+    async def _generate_once(
         self,
         messages: List[Dict[str, str]],
         system_prompt: str = None,

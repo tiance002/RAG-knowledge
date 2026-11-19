@@ -300,11 +300,15 @@ def test_write_before_effect_cas_can_resume_without_provider_replay(stages, monk
         receipt.status, receipt.owner_token, receipt.lease_until = 'UNKNOWN', None, None
         effects = session.exec(select(dispatch.FileTaskEffect)).all()
         assert effects[0].state == 'PENDING'
-        assert pipeline.recover_materialized_effects_for_resume(session, receipt, effects)
-        assert pipeline.verify_checkpoint_for_resume(receipt, effects)
         assert receipt.checkpoint_ref is None
-        receipt.status = 'QUEUED'
         session.add(receipt); session.commit()
+    monkeypatch.setattr(dispatch, 'notify_task', lambda *args: None)
+    from app.tasks.file_task_recovery import scan_once
+    result = scan_once()
+    assert result['retried'] == result['sent'] == 1
+    with Session(stages[0]) as session:
+        assert session.get(dispatch.FileTaskReceipt, claim.task_id).status == 'RETRY_WAIT'
+        assert session.exec(select(dispatch.FileTaskEffect)).one().state == 'COMPLETED'
     pipeline.execute_stage(dispatch.claim_task(claim.task_id, 'embed'))
     assert calls == [['durable response']]
 

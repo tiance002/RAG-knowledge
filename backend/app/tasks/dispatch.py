@@ -20,6 +20,7 @@ from app.tasks.celery_app import celery_app
 LEASE_MS = int(os.getenv('FILE_TASK_LEASE_MS', '90000'))
 HEARTBEAT_SECONDS = float(os.getenv('FILE_TASK_HEARTBEAT_SECONDS', '20'))
 MAX_STAGE_ATTEMPTS = 4
+UNKNOWN_REVIEWED = -1
 ATTEMPT_LIMIT_MS = get_settings().CELERY_TASK_TIME_LIMIT * 1000
 
 def now_ms():
@@ -407,6 +408,53 @@ def cancel_in_session(session, file_id, reason='cancelled'):
                 finished_at=now_ms(), error_code=reason))
     return len(rows)
 
+def _verify_unknown_resume(session, row, *, require_effect=False):
+    from app.tasks.staged_pipeline import recover_materialized_effects_for_resume, verify_checkpoint_for_resume
+    effects = session.exec(select(FileTaskEffect).where(FileTaskEffect.task_id == row.task_id,
+        FileTaskEffect.stage == row.stage)).all()
+    if require_effect and not effects:
+        raise FileTaskConflict('VERIFIED_EFFECT_RESULT_REQUIRED')
+    if not recover_materialized_effects_for_resume(session, row, effects):
+        raise FileTaskConflict('VERIFIED_EFFECT_RESULT_REQUIRED')
+    if not verify_checkpoint_for_resume(row, effects):
+        raise FileTaskConflict('VERIFIED_CHECKPOINT_REQUIRED')
+
+
+def reconcile_unknown(task_id, attempt_no):
+    """Check each uncertain model attempt once, without resending any request."""
+    with Session(engine) as session:
+        if engine.dialect.name == 'sqlite':
+            session.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        row = session.get(FileTaskReceipt, task_id)
+        if (not row or row.status != 'UNKNOWN' or row.stage not in ('parse', 'embed')
+                or row.next_run_at == UNKNOWN_REVIEWED or row.attempt_no != attempt_no):
+            return False
+        from app.models import FileDocument
+        doc = session.get(FileDocument, row.file_id)
+        resumed = False
+        if (doc and not doc.deleted_at and row.target_generation is not None
+                and doc.desired_generation == row.target_generation
+                and row.stage_attempts < MAX_STAGE_ATTEMPTS):
+            try:
+                with session.begin_nested():
+                    _verify_unknown_resume(session, row, require_effect=True)
+                resumed = True
+            except FileTaskConflict:
+                pass
+        row.next_run_at = 0 if resumed else UNKNOWN_REVIEWED
+        if resumed:
+            row.status = 'RETRY_WAIT'
+            row.last_dispatched_at = None
+        row.updated_at = datetime.utcnow()
+        project_failure_in_session(session, row, row.status, 'USER_ACTION_REQUIRED')
+        session.add(row)
+        session.add(FileTaskEvent(event_id=str(uuid4()), task_id=task_id,
+            action='auto_resume' if resumed else 'auto_review', reason='verified_result' if resumed else 'user_action_required',
+            created_at=now_ms()))
+        session.commit()
+        return resumed
+
+
 def resolve_unknown(file_id, task_id, action, reason):
     if action not in ('retry', 'terminate', 'resume') or not isinstance(reason, str) or not reason.strip():
         raise ValueError('INVALID_UNKNOWN_RESOLUTION')
@@ -417,15 +465,21 @@ def resolve_unknown(file_id, task_id, action, reason):
             raise FileTaskConflict('TASK_NOT_UNKNOWN')
         if action != 'terminate' and row.target_generation is None:
             raise FileTaskConflict('LEGACY_TASK_CANNOT_REPLAY')
+        if action != 'terminate':
+            from app.models import FileDocument, KnowledgeBase
+            doc = session.get(FileDocument, file_id)
+            kb = session.get(KnowledgeBase, doc.kb_id) if doc else None
+            if not doc or doc.deleted_at or doc.desired_generation != row.target_generation or not kb or kb.is_deleted:
+                raise FileTaskConflict('TASK_FILE_UNAVAILABLE_OR_SUPERSEDED')
         if action == 'resume':
-            effects = session.exec(select(FileTaskEffect).where(FileTaskEffect.task_id == task_id,
-                FileTaskEffect.stage == row.stage)).all()
-            from app.tasks.staged_pipeline import recover_materialized_effects_for_resume, verify_checkpoint_for_resume
-            if not recover_materialized_effects_for_resume(session, row, effects):
-                raise FileTaskConflict('VERIFIED_EFFECT_RESULT_REQUIRED')
-            if not verify_checkpoint_for_resume(row, effects):
-                raise FileTaskConflict('VERIFIED_CHECKPOINT_REQUIRED')
+            _verify_unknown_resume(session, row)
         if action == 'retry':
+            if row.stage in ('parse', 'embed'):
+                try:
+                    with session.begin_nested():
+                        _verify_unknown_resume(session, row, require_effect=True)
+                except FileTaskConflict:
+                    pass
             session.exec(update(FileTaskEffect).where(FileTaskEffect.task_id == task_id,
                 FileTaskEffect.state == 'PENDING').values(state='REPLAY_AUTHORIZED', updated_at=now_ms()))
         row.status = 'CANCELLED' if action == 'terminate' else 'RETRY_WAIT'
