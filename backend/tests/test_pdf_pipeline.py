@@ -44,6 +44,9 @@ def make_pdf(path, *, scan=False, table=False, mixed=False):
 
 @pytest.fixture
 def parser(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.services import runtime_settings
+    monkeypatch.setattr(runtime_settings,'get_runtime_settings',lambda:SimpleNamespace(chunk_size=500,chunk_overlap=50))
     settings = parser_module.settings
     monkeypatch.setattr(settings, 'IMAGE_DIR', str(tmp_path/'images'))
     monkeypatch.setattr(settings, 'PDF_AUDIT_DIR', str(tmp_path/'manifests'))
@@ -84,8 +87,8 @@ def test_native_table_rows_and_cell_locations(tmp_path, parser):
     rows = [c for c in chunks if c.content_type == 'table']
     assert any('ALPHA' in c.content and '12345' in c.content for c in rows)
     row = next(c for c in rows if 'ALPHA' in c.content)
-    assert row.metadata['source_locator']['cells'][0]['bbox']
-    assert row.metadata['source_locator']['row'] == 2
+    locators = row.metadata['source_locators']
+    assert any(loc.get('row') == 2 and loc['cells'][0]['bbox'] for loc in locators)
     assert parser.pdf_page_records[0]['route'] == 'native'
     assert sum('12345' in c.content for c in chunks) == 1
 
@@ -124,8 +127,10 @@ def test_mixed_document_keeps_page_numbers(tmp_path, parser):
     path = tmp_path/'mixed.pdf'
     make_pdf(path, scan=True, mixed=True)
     chunks = parser.parse(str(path))
-    assert next(c for c in chunks if '7319' in c.content).page_number == 1
-    assert next(c for c in chunks if '4921' in c.content).page_number == 2
+    assert 1 in next(c for c in chunks if '7319' in c.content).metadata['source_locator']['pages']
+    chunk = next(c for c in chunks if '4921' in c.content)
+    assert 2 in chunk.metadata['source_locator']['pages']
+    assert any(loc.get('page') == 2 for loc in chunk.metadata['source_locators'])
     assert [p['route'] for p in parser.pdf_page_records] == ['ocr', 'native']
 
 
@@ -149,7 +154,7 @@ def test_scanned_grid_is_separate_opt_in(tmp_path, parser, monkeypatch):
     chunks = parser.parse(str(path))
     rows = [c for c in chunks if c.content_type == 'table']
     assert any('ALPHA' in c.content and '12345' in c.content for c in rows)
-    assert rows[0].metadata['source_locator']['method'] == 'raster-grid+local-ocr'
+    assert any(loc.get('method') == 'raster-grid+local-ocr' for loc in rows[0].metadata['source_locators'])
     assert 'SCAN_TABLE_OCR_UNVERIFIED' in parser.pdf_page_records[0]['warnings']
 
 
@@ -263,10 +268,10 @@ def test_semi_bordered_native_table_preserves_headers_and_caption(tmp_path, pars
     path=tmp_path/'semi-bordered.pdf'
     make_semi_bordered_table(path)
     chunks=parser.parse(str(path))
-    rows=[c for c in chunks if c.content_type=='table']
-    assert len(rows)==10
-    assert any('Group=Group 0' in c.content and 'Sample size=500' in c.content for c in rows)
-    assert rows[0].metadata['source_locator']['method']=='native-ruled-aligned-text'
+    locations=[loc for c in chunks for loc in c.metadata['source_locators'] if loc.get('kind')=='pdf-table-row']
+    assert len({loc['row'] for loc in locations})==10
+    assert any('Group=Group 0' in c.content and 'Sample size=500' in c.content for c in chunks)
+    assert all(loc['method']=='native-ruled-aligned-text' for loc in locations)
     text='\n'.join(c.content for c in chunks)
     assert 'Survey caption must remain.' in text
     assert 'Preamble outside' in text and 'Footer outside' in text

@@ -146,7 +146,7 @@ def main():
     for q in frozen['questions']:
         seeds=candidates(q,chunks)
         with Session(engine) as session:
-            expanded=rerank.expand_context(copy.deepcopy(seeds),session,window_size=1,max_parent_length=4000,include_source_members=True)
+            expanded=rerank.expand_context(copy.deepcopy(seeds),session,window_size=1,include_source_members=True)
         expansion_hash=sha(canon(expanded)); seed_ids=[x['id'] for x in seeds]
         gold_ids=[x['id'] for x in frozen['chunks'] if q['source_sha256'] in x['file_id'] and matches(q['qid'],x['content'])]
         assert gold_ids, ('no source-linked target field',q['qid'])
@@ -157,7 +157,7 @@ def main():
             result=asyncio.run(arm(q,expanded,strategy)); actual={x['id'] for x in result['delivered'] if x['exact_content_in_provider_request']}; hit=sorted(set(gold_ids)&actual)
             present=set(gold_ids)&set(seed_ids); recoverable=(not present and bool(set(gold_ids)&possible))
             row={'qid':q['qid'],'arm':label,'run_id':'e20-'+uuid.uuid4().hex,'request_sha256':result['request_sha256'],
-                 'experiment_id':'e20-historical-delivery-ab-v1','trace_id':None,
+                 'experiment_id':'e20-historical-delivery-ab-v2-no-parent-cap','trace_id':None,
                  'expanded_snapshot_sha256':expansion_hash,'gold_unit_granularity':q['unit_granularity'],'gold_evidence_ids':gold_ids,
                  'gold_coverage':1 if hit else 0,'delivered_gold_ids':hit,'seed_preservation':all(x in actual for x in seed_ids),
                  'expanded_group_seed_preservation':all(x in actual for x in expanded_seed_ids),
@@ -178,7 +178,7 @@ def main():
     (a.output_dir/'evidence.json').write_text(json.dumps(details,ensure_ascii=False,indent=2),encoding='utf8')
     summary={'status':'PASS','snapshot_sha256':hashlib.sha256(raw).hexdigest(),'snapshot_subset_fingerprint':frozen['actual_snapshot_chunk_subset_fingerprint'],
         'case_count':len(frozen['questions']),'rows':len(ledger),'source':'historical candidate replay; no live retrieval',
-        'controlled_factors':{'window_size':1,'max_parent_length':4000,'top_k':20,'rerank':False,'rewrite':False,'pdf_grounding':False,'spreadsheet_grounding':False},
+        'controlled_factors':{'window_size':1,'single_parent_length_cap':'removed','top_k':20,'rerank':False,'rewrite':False,'pdf_grounding':False,'spreadsheet_grounding':False},
         'actual_external_model_calls':0,'network_guard':'outbound denied; loopback permitted only inside Windows asyncio socketpair construction',
         'fake_provider':'fixed synthetic response, never scored','index_fingerprint':'historical full index NOT_CAPTURED; subset fingerprint recorded',
         'gold_granularities':'five Word table fields, one Excel cell; no cross-granularity aggregate',

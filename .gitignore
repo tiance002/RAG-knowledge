@@ -54,3 +54,9 @@ var/
 
 # Source-derived manifests and private image-description receipts
 /storage/pdf_manifests/
+
+# Local plans, frozen evaluation data, and generated tool scratch
+/.planning/**
+/.playwright-mcp/
+/.workbuddy/
+/draft_*_folder/

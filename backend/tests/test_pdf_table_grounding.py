@@ -142,7 +142,9 @@ def test_mocked_chat_sends_expansion_before_generation_and_preserves_raw(source_
     assert len(sent) == 3 and sent[0]['content'] == citation['content']
     assert events[-1][1]['answer_mode'] == 'GROUNDED_GENERATION'
     updates = [d for k,d in events if k == 'rag_result']
-    assert len(updates) == 2 and len(updates[0]['citations']) == 1 and len(updates[1]['citations']) == 3
+    assert len(updates) == 3 and len(updates[0]['citations']) == 1 and len(updates[1]['citations']) == 3
+    assert updates[-1]['citations'] == sent
+    assert updates[-1]['request_budget']['delivered_citation_count'] == 3
     trace = next(v for n,v in traces if n == 'qa.source_expansion')
     assert trace['original_count'] == 1 and trace['added_count'] == 2 and trace['status'] == 'VERIFIED'
     assert '14,009.54' not in str(trace)

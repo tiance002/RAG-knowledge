@@ -5,7 +5,7 @@
 | 主题 | 复盘重点 | 报告入口 |
 | --- | --- | --- |
 | 异步入库和任务恢复 | 为什么 SQLite 记录任务状态，Redis/Celery 负责投递。租约、重复通知、迟到响应和旧索引保护分别解决什么问题。 | [Worker 运行说明](file-task-workers.md)、[单请求补发实测](../var/ecs-file-failure-states-20261119/isolated.log)、[发布回执](../var/ecs-file-failure-states-20261119/deploy.log) |
-| BM25 倒排和写入优化 | 为什么把查询从旧 JSON 词频记录切到倒排表。写入统计少做了哪些工作，SQL 次数、WAL 和总耗时如何权衡。 | [倒排索引改造](bm25-inverted-index-20261107.md)、[统计写入改造](bm25-statistics-write-optimization-20261112.md)、[ECS 对照记录](../.planning/2026-11-18-bm25-write-publish-60-validation/findings.md) |
+| BM25 倒排和写入优化 | 为什么把查询从旧 JSON 词频记录切到倒排表。写入统计少做了哪些工作，SQL 次数、WAL 和总耗时如何权衡。 | [倒排索引改造](bm25-inverted-index-20261107.md)、[统计写入改造](bm25-statistics-write-optimization-20261112.md)、[正式发布审查](formal-code-audit-20261119.md) |
 | 混合检索并行与容量 | 向量与 BM25 两路怎样并行，线程和 I/O 约束为何会抵消并行收益，如何对照单题延迟和并发吞吐。 | [混合检索并行验证](hybrid-concurrency-implementation-and-validation-20261114.md)、[Chroma 异步改造](chroma-async-ecs-20261114.md) |
 | 统一分块、父子块和旧索引复用 | Parser 与 Chunker 如何分工。命中子块、父块正文和引用定位分别承担什么责任。哪些旧索引经过保留，哪些格式进行了重解析。 | [统一分块与 ECS 验证](unified-document-chunker-ecs-20261116.md)、[最终重放结果](unified-chunker-ecs-final-results-20261116.md)、[父块来源身份](parent-source-identity-20261115.md) |
 | 上下文超限和错引 | 为什么分块小仍可能超出最终请求预算。如何处理历史消息、父块扩展、证据引用和最终提示词。 | [总请求预算复测](total-request-budget-ecs-results-20261116.md)、[引用偏差诊断](agent-citation-partial-investigation-20261115.md) |

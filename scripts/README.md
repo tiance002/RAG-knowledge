@@ -9,6 +9,6 @@
 | QA500 和路由评测 | 从 [评测资产入口](../docs/RSI-TEST-ASSETS.md) 与 [E 路由报告](../docs/router-e-formal-release-20261119.md) 开始，按具体报告进入归档时期的回放 |
 | RSI | `rsi_quality_worker.py`、`rsi_playbook_verify.py`、`rsi_preparation/` 和 [RSI-kit](../RSI-kit/) |
 
-已有报告、评测脚本和回归测试可能依赖具体的历史文件名或相对路径。保留仍被引用的脚本。已退役的单次 ECS 启动、重试和检查入口在 `var/formal-layout-archive-20261120/scripts/`，归档清单记录了原路径，可按原版本复现。
+已有报告、评测脚本和回归测试可能依赖具体的历史文件名或相对路径。保留仍被引用的脚本。已退役的单次 ECS 启动、重试和检查入口仅在本机 `var/formal-layout-archive-20261120/scripts/` 归档，归档清单记录了原路径；该历史归档不随公开 GitHub 发布。
 
-旧前端快照位于 `var/formal-layout-archive-20261120/frontend/`。两项历史界面测试需要在该快照安装自己的依赖，并通过 `RAG_LEGACY_FRONTEND_DIR` 显式指定路径。正式前端开发与构建只需要 `frontend-weknora/`。
+旧前端快照仅在本机 `var/formal-layout-archive-20261120/frontend/` 保留。两项历史界面测试需要在该快照安装自己的依赖，并通过 `RAG_LEGACY_FRONTEND_DIR` 显式指定路径；该快照不随公开 GitHub 发布。正式前端开发与构建只需要 `frontend-weknora/`。

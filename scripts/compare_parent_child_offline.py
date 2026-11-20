@@ -61,7 +61,7 @@ def evaluate(root, temporary):
             rows = [{"id": piece.metadata["id"], "file_id": "offline-file", "kb_id": "offline-kb", "file_name": "README.md",
                      "content": piece.content, "score": 1.0-index*.1} for index, piece in enumerate(selected)]
             started = perf_counter()
-            expanded = expand_parent_context(rows, session, window_size=0, max_parent_length=4096,
+            expanded = expand_parent_context(rows, session, window_size=0,
                                               max_context_chars=24000, allowed_kb_ids=["offline-kb"], include_source_members=True)
             citations, summary = build_chat_context(expanded, lambda row, body: {"id": row["id"], "fileId": row["file_id"]})
             expand_ms = (perf_counter()-started)*1000

@@ -59,7 +59,8 @@ def bulk_bm25(session,kb_id,chunks):
 
 def verify_bulk_bm25():
  from sqlmodel import SQLModel,Session,create_engine,select
- from app.models import KnowledgeBase,FileDocument,DocumentChunk,ChunkIndex,IndexStats
+ from app.models import KnowledgeBase,FileDocument,DocumentChunk,ChunkIndex,IndexStats,BM25Posting
+ from sqlalchemy import func
  from app.services.bm25 import BM25Index
  samples=['中文检索 alpha alpha 12345','中文表格 beta beta 67890','alpha beta evidence','']
  engine=create_engine('sqlite://')
@@ -75,7 +76,11 @@ def verify_bulk_bm25():
   s.commit();bulk_bm25(s,'bulk',[('bulk'+str(i),text) for i,text in enumerate(samples)])
   a=s.get(IndexStats,'incremental');b=s.get(IndexStats,'bulk')
   assert a.total_docs==b.total_docs and a.avg_doc_length==b.avg_doc_length
-  assert json.loads(a.term_doc_freq)==json.loads(b.term_doc_freq)
+  # The persisted JSON is a legacy snapshot. Compare authoritative posting DF.
+  def posting_df(kb):
+   return dict(s.exec(select(BM25Posting.term,func.count(BM25Posting.index_id))
+       .where(BM25Posting.kb_id==kb).group_by(BM25Posting.term)).all())
+  assert posting_df('incremental')==posting_df('bulk')
   for query in ('中文 alpha','beta 67890','12345'):
    x=service.search(s,query,'incremental',top_k=10);y=service.search(s,query,'bulk',top_k=10)
    assert [(r['chunk_id'].replace('incremental',''),r['bm25_score']) for r in x]==[(r['chunk_id'].replace('bulk',''),r['bm25_score']) for r in y]
