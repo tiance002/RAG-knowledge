@@ -220,6 +220,7 @@ def run(config, *, launch=None):
     log=EventLog(directory/'events.sqlite')
     baseline_round=Path(config['baseline_round']);arm='B';history=[];round_number=0
     memory={'schema':'rsi-autonomy-memory/v1','rounds':0,'evicted_entries':0,'entries':[]}
+    prior_proposal_rows = []
     if plan.get('previous_search_memory') is not None:
         from copy import deepcopy
         memory = deepcopy(validate_memory_archive(read_binding(plan['previous_search_memory'])))
@@ -420,9 +421,25 @@ def run(config, *, launch=None):
                 items=remember_round(memory,history,result,frame['worker'],initial_memory_rounds+round_number, **memory_scope)
                 atomic_write(trial/'outcomes.json',canonical(items),exclusive=True)
                 atomic_write(directory/'search-memory.json',canonical(memory))
+                from .analytics.proposal_repeats import project_proposal_repeats
+                repeat_receipt = project_proposal_repeats(
+                    result.get('proposal_instances', {}), items, round_number=round_number,
+                    scope={'parent_id': frame['parent_id'], 'parent_worker_sha256': bytes_hash(frame['worker']),
+                           'parent_config_sha256': bytes_hash(frame['config']), 'fixture_freezes_sha256': digest(freezes),
+                           'objective_sha256': digest(objective) if objective else 'NOT_CONFIGURED',
+                           'compatibility_fingerprint': memory_scope.get('compatibility_fingerprint', config['freeze_sha256'])},
+                    prior_rows=prior_proposal_rows)
+                prior_proposal_rows.extend(repeat_receipt['rows'])
+                repeat_path = trial/'proposal-repeats.json'
+                repeat_bytes = canonical(repeat_receipt)
+                atomic_write(repeat_path, repeat_bytes, exclusive=True)
+                repeat_binding = {'proposal_repeats_path': str(repeat_path.resolve()),
+                                  'proposal_repeats_sha256': bytes_hash(repeat_bytes)}
                 state['last_outcomes']=items
+                state.update(repeat_binding)
                 log.append('round:'+str(round_number),'AUTONOMY_ROUND_FINISHED',{'round':round_number,
-                    'outcomes':items,'parent_id':state['current_parent_id'],'candidate_author':'RSI_OPENAI_MODEL',**selection_binding})
+                    'outcomes':items,'parent_id':state['current_parent_id'],'candidate_author':'RSI_OPENAI_MODEL',
+                    **selection_binding, **repeat_binding})
                 save()
                 if result.get('execution_state')=='FAILED':
                     reason=result.get('stop_reason','INTEGRATED_ROUND_FAILED')

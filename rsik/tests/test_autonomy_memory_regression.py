@@ -139,6 +139,9 @@ def test_controller_dispatches_integrated_pipeline_and_shared_advisory_budget(tm
     assert role_calls[1][1]['seam_profile']=='legacy'
     assert calls[0]['roles'] is role_calls[0][2] and calls[0]['advisory_roles'] is role_calls[1][2]
     assert (directory/'search-memory.json').is_file()
+    repeat_path = directory/'round-000001'/'proposal-repeats.json'
+    assert result['proposal_repeats_sha256'] == controller.bytes_hash(repeat_path.read_bytes())
+    assert json.loads(repeat_path.read_bytes())['rows'] == []
 
 
 
