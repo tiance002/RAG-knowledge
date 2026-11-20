@@ -9,6 +9,7 @@ from rsik.events import canonical
 from rsik.handbook.store import Handbook
 from rsik.objectives import CONTRACT_VERSION
 from rsik.query_learning import _delta_files
+from rsik.redact import validate_handbook_summaries
 from rsik.tests.test_handbook_and_promotion import entry, evidence_context, delta
 
 
@@ -38,7 +39,9 @@ def test_legacy_hash_and_event_retrieval_are_unchanged(tmp_path):
     key = book.commit_delta(delta(body), context(), idempotency_key='legacy', created_at='fixed')
     expected = {**body, 'evidence_mode': 'REAL_REPLAY', 'created_at': 'fixed'}
     assert key == hashlib.sha256(canonical(expected)).hexdigest()
-    assert len(retrieve(book)) == 1
+    legacy = retrieve(book)
+    assert len(legacy) == 1
+    validate_handbook_summaries(legacy, [key])
     assert retrieve(book, profile()) == []
     assert 'objective_profile_id' not in book.get(key)
 
@@ -57,7 +60,7 @@ def test_scoped_success_survives_hard_and_secondary_revision_not_new_primary(tmp
     summary = retrieve(book, revised)[0]
     assert summary['entry_id'] == key
     assert summary['objective_applicability'] == 'COMPATIBILITY_UNKNOWN'
-    assert summary['hard_constraint_statuses'] == {'context_chars': 'UNKNOWN'}
+    assert summary['hard_constraint_statuses'] == ['UNKNOWN']
     revised['secondary_metrics'] = ['replay_seconds']
     revised['required_metric_contracts']['replay_seconds'] = CONTRACT_VERSION
     assert retrieve(book, revised)[0]['metric_effects']['replay_seconds'] == 'UNKNOWN'
@@ -77,6 +80,9 @@ def test_only_suitable_failures_cross_objectives(tmp_path, failure, expected):
     key = book.commit_delta(delta(entry()), ctx, idempotency_key='failure')
     result = retrieve(book, profile('replay_seconds'))
     assert bool(result) is expected
+    if result:
+        assert result[0]['objective_kind'] == 'FAILURE'
+        validate_handbook_summaries(result, [key], objective_profile=profile('replay_seconds'))
     if failure == 'NO_GAIN':
         assert retrieve(book, current)[0]['entry_id'] == key
         assert not retrieve(book, {**current, 'objective_profile_id': 'another-goal'})
@@ -166,9 +172,7 @@ def test_normal_training_verification_and_learning_bind_frozen_objective(tmp_pat
     assert case['handbook'].log.read() == before
 
 
-def test_regressed_metric_is_a_tradeoff_or_hard_conflict(tmp_path):
-    from rsik.redact import validate_handbook_summaries
-
+def test_regressed_metric_is_a_tradeoff_or_directional_risk(tmp_path):
     book = Handbook(tmp_path)
     current = profile('candidate_chars')
     refs = ['evidence-one', 'evidence-two']
@@ -184,12 +188,77 @@ def test_regressed_metric_is_a_tradeoff_or_hard_conflict(tmp_path):
     assert summary['objective_applicability'] == 'TRADEOFF'
     assert summary['metric_effects']['shorter_cases'] == 'REGRESSED'
     assert summary['metric_effects']['candidate_chars'] == 'IMPROVED'
-    revised['hard_constraints'] = [{'metric_id': 'shorter_cases', 'operator': '>=', 'value': 1}]
+    revised['hard_constraints'] = [{'metric_id': 'shorter_cases', 'operator': operator, 'value': 1}
+                                    for operator in ('>=', '<=', '==')]
     result = retrieve(book, revised)
-    assert result[0]['objective_applicability'] == 'HARD_CONSTRAINT_CONFLICT'
-    assert result[0]['hard_constraint_statuses'] == {'shorter_cases': 'CONFLICT'}
-    validate_handbook_summaries(result, [key])
-    result[0]['hard_constraint_statuses']['shorter_cases'] = 'PASS'
-    with pytest.raises(ContractError, match='INVALID_HANDBOOK_OBJECTIVE_SUMMARY'):
-        validate_handbook_summaries(result, [key])
+    assert result[0]['objective_applicability'] == 'CONSTRAINT_RISK'
+    assert result[0]['hard_constraint_statuses'] == ['CONSTRAINT_RISK', 'UNKNOWN', 'UNKNOWN']
+    validate_handbook_summaries(result, [key], objective_profile=revised)
     assert book.get(key) == before
+
+
+@pytest.mark.parametrize(('effect', 'expected'), [
+    ('IMPROVED', 'DIRECT_REUSE'), ('UNCHANGED', 'DIRECT_REUSE'),
+    ('REGRESSED', 'TRADEOFF'), ('UNKNOWN', 'COMPATIBILITY_UNKNOWN'),
+])
+def test_explicit_tie_breaker_effects_are_projected(tmp_path, effect, expected):
+    book = Handbook(tmp_path)
+    goal = profile()
+    goal['tie_breakers'] = ['shorter_cases']
+    goal['required_metric_contracts']['shorter_cases'] = CONTRACT_VERSION
+    refs = ['evidence-one', 'evidence-two']
+    key = book.commit_delta(delta(entry()), context(goal, metric_effects={
+        'context_chars': {'status': 'IMPROVED', 'evidence_refs': refs},
+        'shorter_cases': {'status': effect, 'evidence_refs': refs},
+    }), idempotency_key='tie-breaker')
+    summaries = retrieve(book, goal)
+    assert summaries[0]['metric_effects']['shorter_cases'] == effect
+    assert summaries[0]['objective_applicability'] == expected
+    validate_handbook_summaries(summaries, [key], objective_profile=goal)
+
+
+def test_final_request_rejects_incomplete_or_invented_objective_summary(tmp_path):
+    from rsik.budgets import Budget
+    from rsik.objectives import prompt_objective
+    from rsik.openai_roles import OpenAIRoles
+    from rsik.redact import LeakScanner
+    from rsik.tests.test_autonomy_boundary import public
+    from rsik.tests.test_openai_roles import response
+
+    book = Handbook(tmp_path / 'handbook')
+    goal = profile()
+    goal['hard_constraints'] = [{'metric_id': 'context_chars', 'operator': '<=', 'value': 100}]
+    goal['secondary_metrics'] = ['shorter_cases', 'answer_tokens']
+    goal['required_metric_contracts'].update(shorter_cases=CONTRACT_VERSION, answer_tokens=CONTRACT_VERSION)
+    key = book.commit_delta(delta(entry()), context(goal), idempotency_key='boundary')
+    original = retrieve(book, goal)[0]
+    payload = public()
+    payload.update(objective=prompt_objective(goal), handbook_entry_ids=[key], handbook_entries=[original])
+    sent = []
+
+    def transport(body, *_):
+        sent.append(body)
+        return response({'status': 'ABSTAIN', 'result': None, 'reason': 'SYNTHETIC'})
+
+    roles = OpenAIRoles(Budget(tmp_path / 'budget.sqlite'), tmp_path / 'roles', tmp_path / 'unused',
+                        LeakScanner(), transport=transport, seam_profile='query-autonomous-v1')
+    for change in ('missing_constraint', 'missing_secondary', 'claimed_pass', 'invented_usage', 'empty_summary'):
+        invalid = deepcopy(payload)
+        summary = invalid['handbook_entries'][0]
+        if change == 'missing_constraint':
+            summary['hard_constraint_statuses'].clear()
+        elif change == 'missing_secondary':
+            summary['metric_effects'].pop('shorter_cases')
+            summary['objective_applicability'] = 'DIRECT_REUSE'
+        elif change == 'claimed_pass':
+            summary['hard_constraint_statuses'][0] = 'PASS'
+        elif change == 'invented_usage':
+            summary['metric_effects']['answer_tokens'] = 'IMPROVED'
+        else:
+            for field in ('objective_kind', 'objective_applicability', 'metric_effects', 'hard_constraint_statuses'):
+                summary.pop(field)
+        with pytest.raises(ContractError, match='INVALID_HANDBOOK_OBJECTIVE_SUMMARY'):
+            roles.call('P2_BUDGET', invalid)
+    assert not sent
+    roles.call('P2_BUDGET', payload)
+    assert len(sent) == 1

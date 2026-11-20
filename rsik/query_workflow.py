@@ -367,7 +367,7 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
                 attributed.update(injected_ids)
         public['handbook_entries'] = entries
         public['handbook_entry_ids'] = [e['entry_id'] for e in entries]
-        validate_handbook_summaries(entries, public['handbook_entry_ids'])
+        validate_handbook_summaries(entries, public['handbook_entry_ids'], objective_profile=objective)
     scanner.check(public)
     frontier = experience_session.verify() if experience_session is not None else None
     models = {r: getattr(roles, 'models', {}).get(r, 'gpt-6-luna')

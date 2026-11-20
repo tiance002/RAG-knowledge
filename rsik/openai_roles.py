@@ -265,7 +265,8 @@ class OpenAIRoles:
             round_id=public['round_id'], handbook_entry_ids=public['handbook_entry_ids'], scanner=self.scanner)
         if 'handbook_entries' in public:
             from .redact import validate_handbook_summaries
-            validate_handbook_summaries(public['handbook_entries'],public['handbook_entry_ids'])
+            validate_handbook_summaries(public['handbook_entries'], public['handbook_entry_ids'],
+                                        objective_profile=objective)
         ids=public['handbook_entry_ids']
         if (not isinstance(ids,list) or len(ids)>3 or len(ids)!=len(set(ids))
                 or any(not isinstance(v,str) or not re.fullmatch(r'[0-9a-f]{64}',v) for v in ids)
@@ -309,18 +310,19 @@ class OpenAIRoles:
                     'within the existing interface and evaluation rules. Treat unavailable metrics as unknown. '
                     'The host owns the objective.'
                 )
-                unavailable = [metric for metric in objective['secondary_metrics']
-                               if not context_selection_measures(metric)]
+                optional_metrics = dict.fromkeys([*objective['secondary_metrics'], *objective['tie_breakers']])
+                unavailable = [metric for metric in optional_metrics if not context_selection_measures(metric)]
                 if unavailable:
+                    label = 'optional' if objective['tie_breakers'] else 'secondary'
                     context['objective_instructions'] += (
-                        ' Unavailable secondary metrics (UNKNOWN): ' + ', '.join(unavailable) + '.'
+                        f' Unavailable {label} metrics (UNKNOWN): ' + ', '.join(unavailable) + '.'
                     )
                 if any('objective_applicability' in entry for entry in public.get('handbook_entries', [])):
                     context['objective_instructions'] += (
-                        ' Handbook HARD_CONSTRAINT_CONFLICT entries are not recommendations. '
-                        'COMPATIBILITY_UNKNOWN requires new evidence before reuse under a hard constraint. '
-                        'Use metric_effects to account for tradeoffs and missing evidence. '
-                        'Relative effects do not prove that a hard constraint passes.'
+                        ' Handbook CONSTRAINT_RISK means a relative change moved against a bound. '
+                        'CONFIRMED_FAIL requires a verified absolute value outside the bound. '
+                        'Risk and UNKNOWN do not establish that a constraint is satisfied. '
+                        'Read hard_constraint_statuses in the order of the objective constraints.'
                     )
             if assignment is not None: context['assignment'] = deepcopy(assignment)
             if attempt:

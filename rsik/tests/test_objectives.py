@@ -28,6 +28,21 @@ def profile(primary='context_chars', version=1, *, secondary=None, constraints=N
             'components': ['context_selection']}
 
 
+def test_trusted_absolute_constraint_value_takes_precedence_over_direction():
+    from rsik.objectives import constraint_evidence_status
+
+    bound = {'metric_id': 'shorter_cases', 'operator': '>=', 'value': 5}
+    assert constraint_evidence_status(bound, 'REGRESSED') == 'CONSTRAINT_RISK'
+    assert constraint_evidence_status(bound, 'REGRESSED', measured_value=6) == 'PASS'
+    assert constraint_evidence_status(bound, 'IMPROVED', measured_value=4) == 'CONFIRMED_FAIL'
+    upper = {**bound, 'operator': '<='}
+    assert constraint_evidence_status(upper, 'REGRESSED') == 'UNKNOWN'
+    exact = {**bound, 'operator': '=='}
+    assert constraint_evidence_status(exact, 'REGRESSED') == 'UNKNOWN'
+    assert constraint_evidence_status(exact, measured_value=5) == 'PASS'
+    assert constraint_evidence_status(exact, measured_value=4) == 'CONFIRMED_FAIL'
+
+
 def test_profile_revision_freezes_source_and_does_not_overwrite(tmp_path):
     first = profile()
     constraints = [{'metric_id': 'necessary_fact_status', 'operator': '==', 'value': 'PASS'}]

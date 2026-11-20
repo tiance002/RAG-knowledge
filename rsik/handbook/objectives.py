@@ -85,26 +85,39 @@ def objective_reuse_summary(entry, profile):
     from ..objectives import canonical_metric, context_selection_measures
 
     scope = entry.get('applicability_scope', {})
-    if profile is None or scope.get('kind', 'SUCCESS') != 'SUCCESS':
+    if profile is None:
         return {}
-    hard_metrics = {constraint['metric_id'] for constraint in profile['hard_constraints']}
-    secondary = set(profile['secondary_metrics'])
+    kind = scope.get('kind', 'SUCCESS')
+    if kind != 'SUCCESS':
+        return {'objective_kind': kind}
     stored = entry.get('metric_effects', {})
     effects = {}
-    for metric in sorted(hard_metrics | secondary | {profile['primary_metric']}):
+    for metric in sorted(objective_summary_metrics(profile)):
         equivalent = {item['status'] for key, item in stored.items()
                       if canonical_metric(key) == canonical_metric(metric)}
         effects[metric] = (equivalent.pop() if len(equivalent) == 1 and context_selection_measures(metric)
                            else 'UNKNOWN')
-    hard_status = {metric: 'CONFLICT' if effects[metric] == 'REGRESSED' else 'UNKNOWN'
-                   for metric in sorted(hard_metrics)}
-    reuse = reuse_status(effects, hard_status)
-    return {'objective_applicability': reuse, 'metric_effects': effects, 'hard_constraint_statuses': hard_status}
+    hard_status = relative_constraint_statuses(profile, effects)
+    return {'objective_kind': kind, 'objective_applicability': reuse_status(effects, hard_status),
+            'metric_effects': effects, 'hard_constraint_statuses': hard_status}
+
+
+def objective_summary_metrics(profile):
+    return {profile['primary_metric'], *profile['secondary_metrics'], *profile['tie_breakers'],
+            *(constraint['metric_id'] for constraint in profile['hard_constraints'])}
+
+
+def relative_constraint_statuses(profile, effects):
+    from ..objectives import constraint_evidence_status
+
+    # Positional coverage preserves multiple bounds on the same metric.
+    return [constraint_evidence_status(constraint, effects[constraint['metric_id']])
+            for constraint in profile['hard_constraints']]
 
 
 def reuse_status(effects, hard_status):
-    if 'CONFLICT' in hard_status.values():
-        return 'HARD_CONSTRAINT_CONFLICT'
+    if 'CONSTRAINT_RISK' in hard_status:
+        return 'CONSTRAINT_RISK'
     if hard_status or 'UNKNOWN' in effects.values():
         return 'COMPATIBILITY_UNKNOWN'
     if 'REGRESSED' in effects.values():

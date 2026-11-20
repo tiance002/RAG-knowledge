@@ -2,19 +2,14 @@
 from collections import defaultdict
 from pathlib import Path
 import math
-import operator
 
 from .analytics.reader import canonical, digest, read_artifact
 from .analytics.projections import project_sources
 from .locking import atomic_write
-from .objectives import METRIC_CONTRACTS, validate_objective_axes, validate_profile
+from .objectives import METRIC_CONTRACTS, constraint_evidence_status, validate_objective_axes, validate_profile
 
 
 _NUMERIC = ('parent_chars', 'candidate_chars', 'shorter_cases', 'longer_cases', 'unchanged_cases')
-_OPERATORS = {'==': operator.eq, '!=': operator.ne, '<=': operator.le,
-              '>=': operator.ge, '<': operator.lt, '>': operator.gt,
-              'eq': operator.eq, 'ne': operator.ne, 'lte': operator.le,
-              'gte': operator.ge, 'lt': operator.lt, 'gt': operator.gt}
 
 
 def _status(values):
@@ -86,13 +81,8 @@ def _constraint_status(profile, values, statuses):
         if statuses.get(metric) != 'KNOWN':
             results.append('UNKNOWN')
             continue
-        comparison = _OPERATORS.get(constraint['operator'])
-        if comparison is None:
-            raise ValueError('OBJECTIVE_COMPARISON_OPERATOR_UNSUPPORTED')
-        try:
-            results.append('PASS' if comparison(values[metric], constraint['value']) else 'FAIL')
-        except TypeError:
-            results.append('UNKNOWN')
+        status = constraint_evidence_status(constraint, measured_value=values[metric])
+        results.append('FAIL' if status == 'CONFIRMED_FAIL' else status)
     return 'FAIL' if 'FAIL' in results else 'UNKNOWN' if 'UNKNOWN' in results else 'PASS'
 
 

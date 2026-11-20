@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import math
+import operator
 import re
 
 from .locking import atomic_write
@@ -40,6 +41,25 @@ PROFILE_FIELDS = {
     'objective_profile_id', 'version', 'description', 'primary_metric', 'direction',
     'hard_constraints', 'secondary_metrics', 'tie_breakers', 'required_metric_contracts', 'components',
 }
+CONSTRAINT_OPERATORS = {'==': operator.eq, '<=': operator.le,
+                        '>=': operator.ge, '<': operator.lt, '>': operator.gt}
+
+
+def constraint_evidence_status(constraint, effect='UNKNOWN', *, measured_value=None):
+    """Use a trusted absolute value when supplied, otherwise report only directional risk."""
+    operator_id = constraint['operator']
+    if measured_value is not None:
+        try:
+            return ('PASS' if CONSTRAINT_OPERATORS[operator_id](measured_value, constraint['value'])
+                    else 'CONFIRMED_FAIL')
+        except TypeError:
+            return 'UNKNOWN'
+    if effect not in {'IMPROVED', 'REGRESSED'} or operator_id == '==':
+        return 'UNKNOWN'
+    direction = METRIC_CONTRACTS[constraint['metric_id']]['direction']
+    moved_up = (direction == 'max') == (effect == 'IMPROVED')
+    bad_if_up = operator_id in {'<', '<='}
+    return 'CONSTRAINT_RISK' if moved_up == bad_if_up else 'UNKNOWN'
 
 
 def validate_profile(profile):
