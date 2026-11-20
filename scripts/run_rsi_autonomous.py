@@ -38,6 +38,16 @@ def main():
     if bytes_hash(Path(validation['log_path']).read_bytes())!=validation['log_sha256']:raise ValueError('VALIDATION_LOG_CHANGED')
     baseline=load(a.baseline_verification)
     if baseline.get('verdict')!='VERIFIED' and baseline.get('status')!='BASELINE_QUALIFIED':raise ValueError('QUALIFIED_BASELINE_REQUIRED')
+    plan_bytes = a.launch_plan.read_bytes()
+    if bytes_hash(plan_bytes) != a.launch_plan_sha256:
+        raise ValueError('LAUNCH_PLAN_CHANGED')
+    plan = json.loads(plan_bytes)
+    from rsik.query_parent_pool import validate_parent_selection
+    from rsik.objectives import validate_transition
+    parent_selection = plan.get('experiment', {}).get('parent_selection')
+    objective = (validate_transition(plan['objective_transition'])['current_objective_profile']
+                 if plan.get('objective_transition') is not None else None)
+    parent_selection = validate_parent_selection(parent_selection, objective)
     a.directory.mkdir(parents=True);restrict_directory(a.directory)
     fixtures=[a.primary,a.query_stress,a.next_stress,a.previous_stress]
     from rsik.query_workflow import implementation_hashes
@@ -55,6 +65,8 @@ def main():
         'handbook_features':features,'handbook_fingerprint_override':a.handbook_fingerprint,
         'models':{'default':'gpt-6-luna','coding_failure_escalation':'gpt-6.2-sol'},
         'initial_memory_sha256':bytes_hash(learning.initial.read_bytes()),'no_external_learning':True}
+    if parent_selection is not None:
+        strategy['parent_selection'] = parent_selection
     atomic_write(a.directory/'strategy-config.json',canonical(strategy),exclusive=True)
     fixed.append(a.directory/'strategy-config.json')
     path=a.directory/'system-freeze.json'

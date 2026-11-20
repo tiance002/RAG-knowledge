@@ -4,6 +4,7 @@ This controller never modifies RSI system code or admits production changes.
 Diagnosis and patches come from isolated OpenAI roles; verdicts are recomputed.
 """
 import ast,json,uuid
+from dataclasses import replace
 from pathlib import Path
 from .autonomy_contract import validate_history,remember,project_search_memory,validate_memory_archive
 from .budgets import Budget
@@ -148,18 +149,67 @@ def remember_round(memory,history,result,worker,round_number, **memory_scope):
     return items
 
 
+def parent_archive_files(directory):
+    directory = Path(directory).absolute()
+    def unsafe(path):
+        # Reparse points include Windows junctions; works on Python 3.11 too.
+        return path.is_symlink() or bool(getattr(path.lstat(), 'st_file_attributes', 0) & 0x400)
+    if directory.resolve() != directory or unsafe(directory):
+        raise ValueError('AUTONOMY_POOL_ARCHIVE_PATH_UNSAFE')
+    paths = []; pending = list(directory.iterdir())
+    while pending:
+        path = pending.pop()
+        if unsafe(path) or not path.resolve().is_relative_to(directory):
+            raise ValueError('AUTONOMY_POOL_ARCHIVE_PATH_UNSAFE')
+        if path.is_dir():
+            pending.extend(path.iterdir())
+        elif path.is_file():
+            paths.append(path)
+    return sorted(paths)
+
+
+def parent_frame_identity(directory, frame):
+    """Bind a replay frame to its own immutable ordinary archive, without copying it."""
+    directory = Path(directory).resolve()
+    return {'ordinary_round': str(directory), 'arm': 'B', 'candidate_id': frame['parent_id'],
+            'worker_sha256': bytes_hash(frame['worker']), 'config_sha256': bytes_hash(frame['config']),
+            'entries_sha256': digest(frame['entries']), 'suite_decisions_sha256': digest(frame['suite_decisions']),
+            'evidence_files': {p.relative_to(directory).as_posix(): bytes_hash(p.read_bytes())
+                               for p in parent_archive_files(directory)}}
+
+
+def checked_parent_frame(registry, directory, fixtures, candidate_id):
+    parent_archive_files(directory)
+    registry.require_not_quarantined(candidate_id)
+    candidate = registry.get(candidate_id)
+    frame = frames(directory, fixtures, 'B')
+    if (frame['parent_id'] != candidate_id or frame['worker'] != candidate['worker']
+            or frame['config'] != candidate['config']):
+        raise ValueError('AUTONOMY_POOL_PARENT_ARTIFACT_CHANGED')
+    return frame, candidate
+
+
 def run(config, *, launch=None):
     from .launch import validate_launch
     validate_launch(launch,phase='AUTONOMOUS_SEARCH',fixtures=config['fixtures'],directory=config.get('directory'))
     from .launch import read_binding, read_frozen_launch_plan
     plan = read_frozen_launch_plan(launch) if getattr(launch, 'plan_path', None) else {}
     objective_transition = plan.get('objective_transition')
+    from .query_parent_pool import validate_parent_selection, measure_parent, select_parent
+    parent_spec = plan.get('experiment', {}).get('parent_selection')
+    objective = None
     memory_scope = {}
     if objective_transition is not None:
         from .objectives import validate_context_selection_objective, validate_transition
         change = validate_transition(objective_transition)
         memory_scope['objective_profile'] = change['current_objective_profile']
         validate_context_selection_objective(memory_scope['objective_profile'])
+        objective = memory_scope['objective_profile']
+    parent_spec = validate_parent_selection(parent_spec, objective)
+    if 'parent_selection' in config:
+        raise ValueError('PARENT_SELECTION_RUNTIME_OVERRIDE_FORBIDDEN')
+    if parent_spec is not None and not plan['experiment'].get('allow_train_only_parents', False):
+        raise ValueError('LAUNCH_EXPLORATION_NOT_REGISTERED')
     directory=Path(config['directory']);registry=Path(config['query_registry']);fixtures=[Path(p) for p in config['fixtures']]
     budget=Budget(config['budget_ledger'])
     if 'search_start_nano' in config:
@@ -183,6 +233,7 @@ def run(config, *, launch=None):
             'fixtures': [fixture_identity(fixture) for fixture in fixtures]}))
     profile=config.get('profile','parallel')
     role_profile=config.get('role_profile','query-k3-dependency/v1')
+    strategy = {}
     if config.get('strategy_config'):
         path=Path(config['strategy_config'])
         if bytes_hash(path.read_bytes())!=config['strategy_config_sha256']:raise ValueError('STRATEGY_CONFIGURATION_CHANGED')
@@ -191,6 +242,10 @@ def run(config, *, launch=None):
                 or strategy['handbook_format']!=config.get('handbook_format','OTHER')
                 or strategy['handbook_features']!=config.get('handbook_features',{})):
             raise ValueError('STRATEGY_CONFIGURATION_CHANGED')
+    if parent_spec is not None and strategy.get('parent_selection') != parent_spec:
+        raise ValueError('PARENT_SELECTION_STRATEGY_ECHO_REQUIRED')
+    if parent_spec is None and strategy.get('parent_selection') is not None:
+        raise ValueError('PARENT_SELECTION_STRATEGY_CHANGED')
     if profile not in {'single','parallel'}:raise ValueError('INVALID_AUTONOMY_PROFILE')
     from .adjudicate import SLOTS
     enabled_slots=('P2_BUDGET',) if profile=='single' else SLOTS
@@ -203,6 +258,17 @@ def run(config, *, launch=None):
         'freeze_sha256':config['freeze_sha256'],'initial_parent_id':config['baseline_id'],'current_parent_id':config['baseline_id'],
         'current_parent_round':str(baseline_round),'rounds':0,'candidate_author':'RSI_OPENAI_MODEL',
         'monitor_supplies_strategy':False,'system_self_modification':False,'production_changed':False,'profile':profile}
+    parent_pool = []
+    selected_ids = []
+    selection_phase = None
+    if parent_spec is not None:
+        selection_phase = {'schema': 'rsi-parent-selection-phase/v1', 'config': parent_spec,
+            'config_sha256': digest(parent_spec), 'objective': objective, 'objective_sha256': digest(objective),
+            'launch_run_id': launch.run_id, 'launch_plan_sha256': launch.plan_sha256,
+            'root_receipt_path':str(Path(config['baseline_verification']).resolve()),
+            'root_receipt_sha256':bytes_hash(Path(config['baseline_verification']).read_bytes())}
+        atomic_write(directory/'parent-selection-phase.json', canonical(selection_phase), exclusive=True)
+        state['parent_selection_phase_sha256'] = digest(selection_phase)
     def save():
         state['budget']=budget.snapshot();atomic_write(directory/'state.json',canonical(state))
     def guard():
@@ -233,6 +299,13 @@ def run(config, *, launch=None):
         if verified.get('status')!='BASELINE_QUALIFIED' and not any(e['event_type']=='QUERY_SEALED_BUNDLE_FINISHED' and e['payload'].get('candidate_id')==config['baseline_id']
                    and e['payload'].get('verdict')=='VERIFIED' and e['payload'].get('receipt_sha256')==bytes_hash(seed_receipt.read_bytes()) for e in sealed_log.read()):
             raise ValueError('UNBOUND_INITIAL_VERIFICATION')
+        if parent_spec is not None:
+            root_frame, root_candidate = checked_parent_frame(QueryRegistry(registry), baseline_round, fixtures, config['baseline_id'])
+            validate_launch(replace(launch, exploration_training=None), phase='AUTONOMOUS_SEARCH',
+                            candidate=root_candidate, fixtures=fixtures)
+            parent_pool.append({'candidate_id': config['baseline_id'], 'kind': 'QUALIFIED_ROOT',
+                'admission_round': 0, **measure_parent(root_frame['suite_decisions'], arm='B'),
+                'frame': parent_frame_identity(baseline_round, root_frame)})
         log.append('started','AUTONOMY_TEST_STARTED',state);save()
         try:
             while True:
@@ -243,7 +316,62 @@ def run(config, *, launch=None):
                     finish('BUDGET_EXHAUSTED');return state
                 round_number+=1;trial=directory/f'round-{round_number:06}';trial.mkdir();restrict_directory(trial)
                 state.update(rounds=round_number,stage='DIAGNOSIS',current_round=str(trial));save()
-                frame=frames(baseline_round,fixtures,arm)
+                selection_binding = {}
+                if parent_spec is not None:
+                    available = {}; population = []
+                    for admitted in parent_pool:
+                        record = {k: v for k, v in admitted.items() if k != 'frame'}
+                        try:
+                            selected_dir = Path(admitted['frame']['ordinary_round'])
+                            restored, candidate = checked_parent_frame(QueryRegistry(registry), selected_dir, fixtures, admitted['candidate_id'])
+                            if parent_frame_identity(selected_dir, restored) != admitted['frame']:
+                                raise ValueError('AUTONOMY_POOL_EVIDENCE_CHANGED')
+                            candidate_launch = replace(launch, exploration_training=(str(selected_dir) if admitted['kind']=='TRAINING_EXPLORATION' else None))
+                            validate_launch(candidate_launch, phase='AUTONOMOUS_SEARCH', candidate=candidate, fixtures=fixtures)
+                            available[admitted['candidate_id']] = (candidate_launch, selected_dir, admitted['frame'])
+                            del restored
+                        except (ValueError, OSError, RuntimeError) as error:
+                            record['excluded_reason'] = str(error) if str(error).isupper() and len(str(error))<100 else type(error).__name__
+                        population.append(record)
+                    selection_error = None
+                    try:
+                        selection = select_parent(population, parent_spec, objective, previous_selected_ids=selected_ids)
+                    except ValueError as error:
+                        selection_error = error
+                        selection = {'selected_candidate_id':None, 'population':population,
+                                     'selection_mode':parent_spec['mode'], 'error':str(error)}
+                    selected_id = selection['selected_candidate_id']
+                    frame_identity = None
+                    if selected_id in available:
+                        launch, baseline_round, frame_identity = available[selected_id]
+                        frame, selected_candidate = checked_parent_frame(QueryRegistry(registry), baseline_round, fixtures, selected_id)
+                        if parent_frame_identity(baseline_round, frame) != frame_identity:
+                            raise ValueError('AUTONOMY_POOL_EVIDENCE_CHANGED')
+                        validate_launch(launch, phase='AUTONOMOUS_SEARCH', candidate=selected_candidate, fixtures=fixtures)
+                        selected_ids.append(selected_id)
+                        state.update(current_parent_id=selected_id, current_parent_round=str(baseline_round),
+                            current_parent_quality=('QUALIFIED_ROOT' if selected_id==config['baseline_id']
+                                else 'TRAINING_VALIDATED_EXPLORATION; new sealed verification required'))
+                    selection_record = {**selection, 'schema':'rsi-query-parent-selection-receipt/v1',
+                        'round':round_number, 'phase_sha256':digest(selection_phase),
+                        'config_sha256':digest(parent_spec), 'objective':objective,
+                        'launch_run_id':launch.run_id, 'launch_plan_sha256':launch.plan_sha256,
+                        'root_receipt_sha256':selection_phase['root_receipt_sha256'],
+                        'frame':frame_identity, 'frame_sha256':digest(frame_identity),
+                        'exclusions':[{ 'candidate_id':r['candidate_id'], 'reason':r['excluded_reason']}
+                                      for r in population if r.get('excluded_reason')]}
+                    selection_path = trial/'parent-selection.json'
+                    atomic_write(selection_path, canonical(selection_record), exclusive=True)
+                    selection_binding = {'parent_selection_path':str(selection_path.resolve()),
+                                         'parent_selection_sha256':bytes_hash(selection_path.read_bytes())}
+                    state.update(selection_binding); save()
+                    log.append('parent-selection:'+str(round_number), 'AUTONOMY_PARENT_SELECTED', selection_binding)
+                    if selection_error is not None:
+                        raise selection_error
+                    if selected_id not in available:
+                        raise ValueError('AUTONOMY_POOL_NO_ELIGIBLE_PARENT')
+                else:
+                    frame=frames(baseline_round,fixtures,arm)
                 if frame['parent_id']!=state['current_parent_id']:raise ValueError('AUTONOMY_PARENT_CHANGED')
                 scanner=LeakScanner([frame['parent_id']]+[str(f.resolve()) for f in fixtures])
                 primary=[b for b in frame['baseline'].values() if b['suite']==1]
@@ -273,7 +401,7 @@ def run(config, *, launch=None):
                 atomic_write(trial/'fixture-freezes.restricted.json',canonical(freezes),exclusive=True)
                 atomic_write(trial/'baseline.json',canonical({'parent_id':frame['parent_id'],'parent_worker_sha256':bytes_hash(frame['worker']),
                     'parent_config_sha256':bytes_hash(frame['config']),'ordinary_round':str(baseline_round.resolve()),
-                    'ordinary_round_sha256':bytes_hash((baseline_round/'round.json').read_bytes()),'arm':arm}),exclusive=True)
+                    'ordinary_round_sha256':bytes_hash((baseline_round/'round.json').read_bytes()),'arm':arm,**selection_binding}),exclusive=True)
                 roles=OpenAIRoles(budget,trial/'roles',config['key_file'],scanner,seam_profile='query-autonomous-v1',role_profile=role_profile,launch=launch,strategy_context=experience_session.verify if experience_session else None,
                     models={'P2_BUDGET':proposer_model(history)},before_request=guard)
                 advisory_roles=OpenAIRoles(budget,trial/'advisory-roles',config['key_file'],scanner,
@@ -294,7 +422,7 @@ def run(config, *, launch=None):
                 atomic_write(directory/'search-memory.json',canonical(memory))
                 state['last_outcomes']=items
                 log.append('round:'+str(round_number),'AUTONOMY_ROUND_FINISHED',{'round':round_number,
-                    'outcomes':items,'parent_id':state['current_parent_id'],'candidate_author':'RSI_OPENAI_MODEL'})
+                    'outcomes':items,'parent_id':state['current_parent_id'],'candidate_author':'RSI_OPENAI_MODEL',**selection_binding})
                 save()
                 if result.get('execution_state')=='FAILED':
                     reason=result.get('stop_reason','INTEGRATED_ROUND_FAILED')
@@ -306,8 +434,33 @@ def run(config, *, launch=None):
                 cid=result.get('adopted_candidate_id')
                 if cid:
                     ordinary=Path(result['selected_training_directory'])
+                    if parent_spec is not None:
+                        parent_archive_files(ordinary.parent)
+                        parent_archive_files(ordinary)
                     verify_training(registry,ordinary,fixtures,cid)
-                    from dataclasses import replace
+                    if parent_spec is not None:
+                        if ordinary.resolve().parent != (trial/'integrated').resolve():
+                            raise ValueError('AUTONOMY_POOL_TRAINING_DIRECTORY_CHANGED')
+                        training_record = load(ordinary/'round.json')
+                        coordinator = load(ordinary.parent/'round.json')
+                        if (training_record.get('adopted_candidate_id') != cid
+                                or training_record.get('family_id') != result.get('family_id')
+                                or not result.get('family_id')
+                                or coordinator.get('adopted_candidate_id') != cid
+                                or coordinator.get('family_id') != result['family_id']
+                                or coordinator.get('parent_id') != state['current_parent_id']
+                                or coordinator.get('launch_run_id') != launch.run_id
+                                or coordinator.get('launch_plan_sha256') != launch.plan_sha256):
+                            raise ValueError('AUTONOMY_POOL_ADOPTION_BINDING_CHANGED')
+                        admitted_frame, admitted_candidate = checked_parent_frame(QueryRegistry(registry), ordinary, fixtures, cid)
+                        if admitted_candidate['record'].get('parent_id') != state['current_parent_id']:
+                            raise ValueError('AUTONOMY_POOL_ADOPTION_PARENT_CHANGED')
+                        validate_launch(replace(launch, exploration_training=str(ordinary.resolve())),
+                                        phase='AUTONOMOUS_SEARCH', candidate=admitted_candidate, fixtures=fixtures)
+                        if not any(p['candidate_id']==cid for p in parent_pool):
+                            parent_pool.append({'candidate_id':cid, 'kind':'TRAINING_EXPLORATION',
+                                'admission_round':round_number, **measure_parent(admitted_frame['suite_decisions'], arm='B'),
+                                'frame':parent_frame_identity(ordinary, admitted_frame)})
                     launch=replace(launch,exploration_training=str(ordinary.resolve()))
                     baseline_round=ordinary;state.update(current_parent_id=cid,current_parent_round=str(ordinary),
                         current_parent_quality='TRAINING_VALIDATED_EXPLORATION; new sealed verification required')

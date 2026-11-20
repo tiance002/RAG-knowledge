@@ -18,7 +18,7 @@ from . import fixed_history_profile as fixed_history
 
 
 def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
-    ordinary_round=Path(ordinary_round);entries=[];baseline={};parent_id=None;worker=None;config=None
+    ordinary_round=Path(ordinary_round);entries=[];baseline={};parent_id=None;worker=None;config=None;suite_decisions=[]
     for suite,fixture in enumerate(fixtures,1):
         fixture=Path(fixture);freeze=adapters(fixture)[0](fixture,expected_count=20)
         fixed=freeze.get('profile')==fixed_history.PROFILE
@@ -26,6 +26,7 @@ def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
         run=ordinary_round/('suite-'+str(suite));manifest=load(run/'manifest.json')
         spec=manifest['arms']['B']
         audited=adapters(fixture)[2](run,fixture,spec['candidate_id'],{'angle':'P2_BUDGET','proposal_id':manifest['schema']},spec['worker_sha256'],spec['sha256'],evidence=evidence)
+        suite_decisions.append(audited)
         current=manifest['arms'][arm];raw_worker=(run/(arm+'_worker.py')).read_bytes();raw_config=(run/(arm+'.json')).read_bytes()
         if bytes_hash(raw_worker)!=current['worker_sha256'] or bytes_hash(raw_config)!=current['sha256']:raise ValueError('PREVIEW_PARENT_ARTIFACT_CHANGED')
         if parent_id is not None and (parent_id!=current['candidate_id'] or worker!=raw_worker or config!=raw_config):raise ValueError('MIXED_PREVIEW_PARENT')
@@ -57,7 +58,8 @@ def frames(ordinary_round,fixtures,arm='A',*,evidence=None):
             if fixed:
                 baseline[key]['history_sidecar']=load(fixture/fixture_manifest['history_sidecars'][item['qid']]['path'])
                 baseline[key]['query_derivation']=fixture_manifest.get('query_derivations',{}).get(item['qid'])
-    return {'parent_id':parent_id,'worker':worker,'config':config,'entries':entries,'baseline':baseline}
+    return {'parent_id':parent_id,'worker':worker,'config':config,'entries':entries,'baseline':baseline,
+            'suite_decisions':suite_decisions}
 
 
 def replay(capsule,frame,worker,output,candidate_id):
