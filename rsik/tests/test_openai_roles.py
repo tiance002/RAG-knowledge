@@ -1,4 +1,5 @@
 """No-network tests of the exact send boundary and post-usage bookkeeping."""
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -12,6 +13,7 @@ from rsik.contracts import ContractError
 from rsik.errors import StageFailure
 from rsik.openai_roles import OpenAIRoles
 from rsik.redact import LeakScanner, make_visible, project_summary
+from rsik.state import canonical, digest
 
 
 def public():
@@ -36,11 +38,27 @@ def test_real_send_shape_and_abstain_usage(tmp_path):
         seen.append(body)
         return response({'status': 'ABSTAIN', 'result': None, 'reason': 'insufficient detail'})
     client = roles(tmp_path, transport)
-    assert client.diagnose(public())['status'] == 'ABSTAIN'
+    context=public()
+    context['parent_code']+='\n# 中文请求内容'
+    assert client.diagnose(context)['status'] == 'ABSTAIN'
     assert seen[0]['model'] == 'gpt-6-luna'
     assert seen[0]['reasoning'] == {'effort': 'none'} and seen[0]['temperature'] == 0
     assert 'service_tier' not in seen[0]
     assert 'tools' not in seen[0] and not seen[0]['store']
+    receipt_path, = client.directory.glob('*.input-receipt.json')
+    input_receipt=json.loads(receipt_path.read_bytes())
+    request_path=client.directory/input_receipt['request_file']
+    archived_body=json.loads(request_path.read_bytes())
+    wire_bytes=json.dumps(seen[0],ensure_ascii=False,allow_nan=False).encode('utf-8')
+    wire_path=client.directory/input_receipt['request_wire_file']
+    assert archived_body==seen[0]
+    assert wire_path.read_bytes()==wire_bytes
+    assert len(wire_bytes)>len(canonical(seen[0]))
+    assert input_receipt['request_hash']==digest(seen[0])
+    assert input_receipt['request_wire_sha256']==hashlib.sha256(wire_bytes).hexdigest()
+    assert input_receipt['request_body_bytes']==len(wire_bytes)
+    assert input_receipt['search_history_items_in_request'] is None
+    assert input_receipt['search_memory_entries_in_request'] is None
     state = client.budget.snapshot()
     assert state['attempts'] == state['completed'] == 1
     assert state['reservation_usd'] == '0' and state['recorded_cost_nano_upper'] > 0

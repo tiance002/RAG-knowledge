@@ -39,8 +39,16 @@ def test_s1_memory_prioritizes_confirmed_failure_without_repeating_recent_feedba
         remember(memory, format(id(item), '064x'), number, item)
     assert [e['history']['outcome'] for e in project_search_memory(memory)['entries']] == [
         'REJECTED', 'OBSERVED', 'NO_GAIN']
-    assert project_search_memory(memory, recent=[observed])['entries'][0]['history'] == regression
-    assert all(e['history'] != observed for e in project_search_memory(memory, recent=[observed])['entries'])
+    projected=project_search_memory(memory, recent=[observed])
+    assert projected['entries'][0]['history'] == regression
+    observed_key=format(id(observed),'064x')
+    observed_entry=next(e for e in projected['entries'] if e['selector_sha256']==observed_key)
+    assert observed_entry['history']=={'recent_history_index':0}
+    assert (observed_entry['attempts'],observed_entry['first_round'],observed_entry['last_round'])==(1,8,8)
+    assert all(e['history'] != observed for e in projected['entries'])
+    invalid={**projected,'entries':[dict(e) for e in projected['entries']]}
+    next(e for e in invalid['entries'] if e['selector_sha256']==observed_key)['history']={'recent_history_index':1}
+    with pytest.raises(ContractError):validate_search_memory(invalid,recent=[observed])
     assert any(e['history'] == timeout for e in memory['entries'])
 
 def test_identity_ignores_ast_formatting_and_rejection_does_not_relax_guard():

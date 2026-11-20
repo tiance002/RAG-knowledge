@@ -85,6 +85,37 @@ def test_duplicate_input_does_not_double_count(event_file):
     assert a['statistics']==b['statistics']
 
 
+def test_legacy_metric_artifact_keeps_legacy_metrics_with_token_projection(event_file):
+    report=build_report([event_file])
+    assert report['metrics_schema']=='rsi-metrics/v1'
+    metric_ids={metric['metric_id'] for group in report['statistics']['groups']
+                for metric in group['metrics']}
+    assert {'C1','C2','C3','C4'} <= metric_ids
+    assert report['tokens']['totals']['requests']==1
+    assert report['tokens']['totals']['usage_status']=='UNKNOWN'
+
+
+def test_angle_rejection_does_not_turn_incomplete_pair_measurement_into_complete_stats(tmp_path):
+    ledger=tmp_path/'events.sqlite'
+    EventLog(ledger)
+    round_path=tmp_path/'round.json'
+    rows=[{'qid':'q1','pair_status':'PAIRED','pair_identity':True,'execution':'COMPLETED','chars_A':100,'chars_B':80},
+          {'qid':'q2','pair_status':'PAIRED','pair_identity':True,'execution':'COMPLETED','chars_A':120,'chars_B':90},
+          {'qid':'q3','pair_status':'FAILED','pair_identity':False,'execution':'FAILED','chars_A':110,'chars_B':None}]
+    round_path.write_text(json.dumps({'round_id':'round-'+'b'*32,'evidence_mode':'SYNTHETIC_CONTROL',
+        'launch_run_id':'run-angle','execution_state':'COMPLETED','adopted_candidate_id':None,
+        'attempted_replays':['P3_ORDER'],'candidate_decisions':[{'angle':'P3_ORDER','candidate_id':'angle-candidate',
+        'proposal_id':'angle-proposal','verdict':'REJECTED','reason_codes':['ANGLE_VIOLATION'],
+        'eligible_count':3,'per_question':rows}]}),encoding='utf-8')
+    artifact={'kind':'round','path':round_path,'sha256':hashlib.sha256(round_path.read_bytes()).hexdigest()}
+    report=build_report([ledger],[artifact])
+    candidate,=[row for row in report['projections'] if row['projection_type']=='Candidate']
+    measured=candidate['payload']['context_measurements']
+    assert measured['status']=='PARTIAL'
+    assert (measured['paired_cases'],measured['eligible_cases'])==(2,3)
+    assert candidate['payload'].get('delta_total') is None
+
+
 def test_s1_round_keeps_unselected_measurement_and_deduplicates_provider_usage(tmp_path):
     round_id = 'round-' + 'a' * 32
     ledger = tmp_path / 'budget.sqlite'

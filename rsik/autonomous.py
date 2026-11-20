@@ -244,10 +244,11 @@ def run(config, *, launch=None):
                     parent_selection=json.loads(frame['config'])['selection'],search_history=recent,
                     search_memory=search_memory)
                 atomic_write(trial/'public-context.json',canonical(public),exclusive=True)
-                atomic_write(trial/'search-input-receipt.json', canonical({
-                    'recent_items': len(recent), 'memory_items': len(search_memory['entries']),
-                    'duplicate_history_items_omitted': sum(entry['history'] in recent for entry in memory['entries']),
-                    'history_and_memory_bytes': len(canonical([recent, search_memory])),
+                atomic_write(trial/'search-context-plan.json', canonical({
+                    'schema':'rsi-search-context-plan/v1','measurement_scope':'PRE_REQUEST_CONTEXT',
+                    'history_items_planned': len(recent), 'memory_entries_planned': len(search_memory['entries']),
+                    'history_references_planned': sum('recent_history_index' in entry['history'] for entry in search_memory['entries']),
+                    'history_and_memory_bytes_planned': len(canonical([recent, search_memory])),
                 }), exclusive=True)
                 from .foundation import check_split
                 freezes={str(f.resolve()):check_split(f,expected_count=20) for f in fixtures}

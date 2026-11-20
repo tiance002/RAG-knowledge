@@ -57,8 +57,30 @@ def test_feedback_reaches_actual_next_diagnosis_request(tmp_path,kind,decision,q
     feedback=actual['search_history'][0]
     assert tuple(feedback[k] for k in ('outcome','quality_verdict','execution_status','failure_origin'))==expected
     assert feedback['reason_codes']==history[0]['reason_codes']
-    assert actual['search_memory']['entries']==[]
+    memory_entries=actual['search_memory']['entries']
+    if kind in {'statistics','facts','no_gain'}:
+        entry,=memory_entries
+        assert entry['history']=={'recent_history_index':0}
+        assert (entry['attempts'],entry['first_round'],entry['last_round'])==(1,1,1)
+        assert actual['search_history'][entry['history']['recent_history_index']]==feedback
+    else:
+        assert memory_entries==[]
     assert memory['entries'][0]['history']==feedback
+    receipts=list((tmp_path/'roles').glob('*.input-receipt.json'))
+    receipt,=receipts
+    input_receipt=json.loads(receipt.read_bytes())
+    request_body=json.loads((receipt.parent/input_receipt['request_file']).read_bytes())
+    wire_body=json.dumps(request_body,ensure_ascii=False,allow_nan=False).encode('utf-8')
+    from rsik.state import canonical,digest
+    assert input_receipt['request_hash']==digest(request_body)
+    assert (receipt.parent/input_receipt['request_wire_file']).read_bytes()==wire_body
+    assert input_receipt['request_wire_sha256']==hashlib.sha256(wire_body).hexdigest()
+    assert input_receipt['request_body_bytes']==len(wire_body)
+    assert input_receipt['search_history_items_in_request']==len(actual['search_history'])
+    assert input_receipt['search_memory_entries_in_request']==len(memory_entries)
+    assert input_receipt['user_message_utf8_bytes']==len(sent[0]['input'][1]['content'].encode('utf-8'))
+    assert input_receipt['search_context_canonical_bytes']==len(canonical({
+        'search_history':actual['search_history'],'search_memory':actual['search_memory']}))
     if kind=='statistics':assert feedback['counts']=={'favorable':8,'unfavorable':1,'ties':11,'delta_total':-15,'reduction_rate':0.015}
     if kind=='facts':assert feedback['counts']=={'failed_suites':2,'fact_loss_cases':3,'auxiliary_cases':60,'primary_questions':1}
     if kind=='no_gain':assert feedback['counts']=={'favorable':0,'unfavorable':0,'ties':20,'delta_total':0}

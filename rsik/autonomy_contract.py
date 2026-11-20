@@ -32,7 +32,7 @@ def validate_history(history):
 MEMORY_LIMIT=8
 
 
-def validate_search_memory(memory):
+def validate_search_memory(memory, *, recent=None):
     object_fields(memory,('schema','rounds','evicted_entries','entries'))
     if memory['schema']!='rsi-autonomy-memory/v1':raise ContractError('INVALID_AUTONOMY_MEMORY')
     if any(type(memory[k]) is not int or memory[k]<0 for k in ('rounds','evicted_entries')):
@@ -50,9 +50,15 @@ def validate_search_memory(memory):
             raise ContractError('INVALID_AUTONOMY_MEMORY')
         if not entry['first_round']<=entry['last_round']<=memory['rounds'] or entry['attempts']>3*memory['rounds']:
             raise ContractError('INVALID_AUTONOMY_MEMORY')
-        validate_history([entry['history']])
-        if any(len(entry['history'][key])>96 for key in ('hypothesis','change')):
-            raise ContractError('INVALID_AUTONOMY_MEMORY')
+        history=entry['history']
+        if isinstance(history,dict) and set(history)=={'recent_history_index'}:
+            index=history['recent_history_index']
+            if type(index)is not int or index<0 or (recent is not None and index>=len(recent)):
+                raise ContractError('INVALID_AUTONOMY_MEMORY')
+        else:
+            validate_history([history])
+            if any(len(history[key])>96 for key in ('hypothesis','change')):
+                raise ContractError('INVALID_AUTONOMY_MEMORY')
     return memory
 
 
@@ -85,7 +91,8 @@ def _confirmed_negative(item):
 
 def project_search_memory(memory, *, recent=()):
     """Project scoped evidence; process failures remain in the local archive."""
-    candidates = [e for e in memory['entries'] if e['history'] not in recent]
+    recent=list(recent)
+    candidates = list(memory['entries'])
     failures = [e for e in candidates if _confirmed_negative(e['history'])]
     frequent=sorted(failures,key=lambda e:(-e['attempts'],e['first_round'],e['selector_sha256']))[:4]
     chosen={e['selector_sha256']:e for e in frequent}
@@ -98,7 +105,13 @@ def project_search_memory(memory, *, recent=()):
         chosen.setdefault(entry['selector_sha256'],entry)
     entries=[]
     for entry in chosen.values():
+        try:
+            recent_index=recent.index(entry['history'])
+        except ValueError:
+            recent_index=None
         item={**entry['history']}
         for key in ('hypothesis','change'):item[key]=item[key][:96]
+        if recent_index is not None:
+            item={'recent_history_index':recent_index}
         entries.append({**entry,'history':item})
-    return validate_search_memory({**memory,'entries':entries})
+    return validate_search_memory({**memory,'entries':entries},recent=recent)

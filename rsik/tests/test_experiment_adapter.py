@@ -51,6 +51,7 @@ def test_s1_angle_rejection_keeps_later_measured_pairs(synthetic_replay, monkeyp
     assert result['reason_codes'] == ['ANGLE_VIOLATION']
     assert len(result['per_question']) == len(results['rows']) == 20
     assert result['per_question'][-1]['chars_B'] == synthetic_replay['decision']['per_question'][-1]['chars_B']
+    assert result['delta_total'] is None and 'question_counts' not in result
 
 
 def test_unit_worker_runs_twenty_frozen_invariant_probes_without_backend_imports():

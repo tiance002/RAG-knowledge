@@ -1,5 +1,5 @@
 from pathlib import Path
-import json,sys
+import hashlib,json,sys
 import pytest
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
 from rsik.test_phase import freeze,assert_frozen
@@ -65,7 +65,7 @@ def test_long_failure_memory_fits_request_without_deleting_local_history(tmp_pat
     from copy import deepcopy
     from rsik.autonomy_contract import remember,project_search_memory
     from rsik.tests.test_workflow import FakeRoles
-    value=public();value['parent_code']+='\n# '+('SYNTHETIC_PARENT_COMMENT ' * 60)
+    value=public();value['parent_code']+='\n# '+('SYNTHETIC_PARENT_COMMENT ' * 125)
     item={'hypothesis':'h'*512,'change':'c'*512,'outcome':'REJECTED',
         'feedback_schema':'rsi-search-feedback/v2','quality_verdict':'REJECTED',
         'execution_status':'COMPLETED','failure_origin':'CANDIDATE',
@@ -73,7 +73,9 @@ def test_long_failure_memory_fits_request_without_deleting_local_history(tmp_pat
         'counts':{'primary_questions':20,'auxiliary_cases':60,'fact_loss_cases':2,'failed_suites':2}}
     memory={'schema':'rsi-autonomy-memory/v1','rounds':0,'evicted_entries':0,'entries':[]}
     for i in range(1,33):remember(memory,format(i,'064x'),i,item)
-    value.update(search_history=[deepcopy(item) for _ in range(3)],search_memory=project_search_memory(memory))
+    recent=[{**item, 'hypothesis':prefix*512} for prefix in ('a','b')]+[deepcopy(item)]
+    memory['entries'][-1]['history']={**item, 'hypothesis':'different hypothesis'}
+    value.update(search_history=recent,search_memory=project_search_memory(memory,recent=recent))
     before=deepcopy(value);sent=[]
     def transport(body,*_):
         sent.append(body)
@@ -81,9 +83,28 @@ def test_long_failure_memory_fits_request_without_deleting_local_history(tmp_pat
             'output':[{'type':'message','content':[{'type':'output_text','text':json.dumps({'status':'ABSTAIN','result':None,'reason':'SYNTHETIC_TEST'})}]}]}}
     roles=OpenAIRoles(Budget(tmp_path/'budget.sqlite'),tmp_path/'roles',tmp_path/'unused',LeakScanner(),transport=transport,seam_profile='query-autonomous-v1')
     roles.propose('P2_BUDGET',value,FakeRoles().diagnose(value)['result'])
-    assert len(json.dumps(sent[0],ensure_ascii=False,sort_keys=True,separators=(',',':')).encode())<=16384
+    wire_bytes=json.dumps(sent[0],ensure_ascii=False,allow_nan=False).encode('utf-8')
+    assert len(wire_bytes)<=16384
     assert value==before and len(memory['entries'])==32
     actual=json.loads(sent[0]['input'][1]['content'])['public']
     assert actual['parent_code']==value['parent_code'] and actual['observations']==value['observations']
     assert len(actual['search_history'])<3 or len(actual['search_memory']['entries'])<8
+    assert len(actual['search_history'])<3
+    references=[entry['history']['recent_history_index'] for entry in actual['search_memory']['entries']
+                if 'recent_history_index' in entry['history']]
+    assert references and all(actual['search_history'][index]==item for index in references)
     assert list((tmp_path/'roles').glob('*.projection.json'))
+    receipt_path, = (tmp_path/'roles').glob('*.input-receipt.json')
+    input_receipt=json.loads(receipt_path.read_bytes())
+    request_body=json.loads((receipt_path.parent/input_receipt['request_file']).read_bytes())
+    from rsik.state import canonical,digest
+    assert request_body==sent[0]
+    wire_path=receipt_path.parent/input_receipt['request_wire_file']
+    assert wire_path.read_bytes()==wire_bytes
+    assert input_receipt['request_hash']==digest(sent[0])
+    assert input_receipt['request_wire_sha256']==hashlib.sha256(wire_bytes).hexdigest()
+    assert input_receipt['request_body_bytes']==len(wire_bytes)
+    assert input_receipt['search_history_items_in_request']==len(actual['search_history'])
+    assert input_receipt['search_memory_entries_in_request']==len(actual['search_memory']['entries'])
+    assert input_receipt['search_context_canonical_bytes']==len(canonical({
+        'search_history':actual['search_history'],'search_memory':actual['search_memory']}))

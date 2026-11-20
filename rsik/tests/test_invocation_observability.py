@@ -253,8 +253,9 @@ def test_response_storage_failure_keeps_unknown_cost_and_never_resends(tmp_path,
     context = public()
     from rsik import openai_roles
     original = openai_roles.atomic_write
+    response_path = c.directory / (context['round_id'] + '-diagnose-0.json')
     def fail(path, *args, **kwargs):
-        if path.name.endswith('.json') and not any(part in path.name for part in ('.request.', '.strategy.')):
+        if Path(path) == response_path:
             raise OSError('private response disk failure')
         return original(path, *args, **kwargs)
     monkeypatch.setattr(openai_roles, 'atomic_write', fail)

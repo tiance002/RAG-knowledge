@@ -68,6 +68,10 @@ def emit_receipt(value, destination=None):
     sys.stdout.buffer.write(body+b'\n');sys.stdout.buffer.flush()
 
 
+def request_wire_bytes(body):
+    return json.dumps(body, ensure_ascii=False, allow_nan=False).encode('utf-8')
+
+
 def main():
     request = json.loads(sys.stdin.buffer.read().decode('utf-8'))
     key = None
@@ -82,7 +86,7 @@ def main():
     identity = transport_identity()
     opener = build_opener()
     call = urllib.request.Request('https://api.openai.com/v1/responses',
-        data=json.dumps(request['body'], ensure_ascii=False, allow_nan=False).encode('utf-8'),
+        data=request_wire_bytes(request['body']),
         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
     try:
         with opener.open(call, timeout=request['timeout']) as response:
