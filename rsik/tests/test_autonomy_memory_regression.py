@@ -26,6 +26,23 @@ def test_global_failure_survives_long_gap_and_projection_is_bounded():
     projected['entries'][0]['history']['question']='private'
     with pytest.raises(ContractError):validate_search_memory(projected)
 
+
+def test_s1_memory_prioritizes_confirmed_failure_without_repeating_recent_feedback():
+    memory = {'schema':'rsi-autonomy-memory/v1', 'rounds':0, 'evicted_entries':0, 'entries':[]}
+    timeout = history_item(None, 'INCONCLUSIVE', ['INFRA_FAILURE'], execution_status='FAILED',
+                           failure_origin='INFRASTRUCTURE')
+    no_gain = history_item(None, 'NO_GAIN', ['NO_GAIN'], quality_verdict='REJECTED',
+                           execution_status='COMPLETED')
+    observed = history_item(None, 'OBSERVED', ['STATISTICS_PENDING_FAMILY'])
+    regression = history_item(None, 'REJECTED', ['FACT_LOSS'], failure_origin='CANDIDATE')
+    for number, item in enumerate([timeout] * 4 + [no_gain] * 3 + [observed, regression], 1):
+        remember(memory, format(id(item), '064x'), number, item)
+    assert [e['history']['outcome'] for e in project_search_memory(memory)['entries']] == [
+        'REJECTED', 'OBSERVED', 'NO_GAIN']
+    assert project_search_memory(memory, recent=[observed])['entries'][0]['history'] == regression
+    assert all(e['history'] != observed for e in project_search_memory(memory, recent=[observed])['entries'])
+    assert any(e['history'] == timeout for e in memory['entries'])
+
 def test_identity_ignores_ast_formatting_and_rejection_does_not_relax_guard():
     first={'old':'return []','new':'return [1 % 2]'}
     second={'old':'return []','new':'return [ 1%2 ]'}

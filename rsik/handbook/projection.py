@@ -29,7 +29,7 @@ def project(events, *, evidence_mode='REAL_REPLAY'):
         outcome = outcomes[candidate]
         if kind == 'CANDIDATE_ADOPTED': outcome['adopted'] = True
         elif kind == 'HOLDOUT_PASSED': outcome['verified'] = True
-        elif kind in {'CANDIDATE_REJECTED', 'CANDIDATE_NOT_SELECTED'}: outcome['miss'] = True
+        elif kind == 'CANDIDATE_REJECTED': outcome['miss'] = True
         elif kind == 'HOLDOUT_FAILED':
             if payload.get('reason') in {'INFRA_FAILURE', 'UNKNOWN', 'PARTIAL_REPLAY'}: outcome['excluded'] = True
             else: outcome['miss'] = True
@@ -45,7 +45,8 @@ def project(events, *, evidence_mode='REAL_REPLAY'):
         if len(adopted) > 1:
             raise ValueError('AMBIGUOUS_EPISODE_ADOPTION')
         if not adopted:
-            label = 'miss' if any(outcomes[cid].get('miss') for cid in episode['candidate_ids']) else 'excluded'
+            label = 'miss' if any(outcomes[cid].get('miss') and not outcomes[cid].get('excluded')
+                                  for cid in episode['candidate_ids']) else 'excluded'
         else:
             outcome = outcomes[adopted[0]]
             if outcome.get('excluded'): label = 'excluded'

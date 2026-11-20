@@ -24,6 +24,35 @@ def test_wrong_candidate_identity_is_global_failure(synthetic_replay):
     assert caught.value.global_stop
 
 
+def test_s1_angle_rejection_keeps_later_measured_pairs(synthetic_replay, monkeypatch):
+    from rsik.experiment import executor
+
+    run = synthetic_replay['run']
+    manifest = json.loads((run / 'manifest.json').read_bytes())
+    results = json.loads((run / 'results.json').read_bytes())
+    first = results['rows'][0]
+    first_capture = json.loads((run / first['arms']['B']['receipt_path']).read_bytes())
+    first['arms']['B']['member_ids'] = ['SYNTHETIC-other-member']
+    write(run / 'results.json', results)
+    assess = executor.assess
+
+    def assessed(case, capture, rubric, arm):
+        score = assess(case, capture, rubric, arm)
+        if arm == 'B' and capture == first_capture:
+            score['member_ids'] = first['arms']['B']['member_ids']
+        return score
+
+    monkeypatch.setattr(executor, 'assess', assessed)
+    spec = manifest['arms']['B']
+    result = read_decision(run, synthetic_replay['fixture'], spec['candidate_id'],
+        {'angle': 'P3_ORDER', 'proposal_id': 'SYNTHETIC'}, spec['worker_sha256'],
+        spec['sha256'], evidence=ExecutionEvidence.synthetic_control())
+    assert result['verdict'] == 'REJECTED'
+    assert result['reason_codes'] == ['ANGLE_VIOLATION']
+    assert len(result['per_question']) == len(results['rows']) == 20
+    assert result['per_question'][-1]['chars_B'] == synthetic_replay['decision']['per_question'][-1]['chars_B']
+
+
 def test_unit_worker_runs_twenty_frozen_invariant_probes_without_backend_imports():
     parent=(ROOT/'scripts/rsi_delivery_worker.py').read_bytes()
     code=unit_worker(parent,parent,'P3_ORDER')

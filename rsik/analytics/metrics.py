@@ -63,6 +63,89 @@ def _unique(records, field):
     return list(result.values())
 
 
+def token_statistics(records):
+    """Aggregate provider totals once per ledger and request key."""
+    requests = _unique([r for r in records if _kind(r) == 'CostEvent'], 'request_key')
+    round_experiments, roles, candidate_experiments = defaultdict(set), defaultdict(set), defaultdict(set)
+    for record in records:
+        payload, dim = record['payload'], record['dimensions']
+        round_id, exp = payload.get('round_id'), dim.get('experiment_id')
+        if not round_id:
+            continue
+        if _kind(record) == 'Round' and exp not in (None, 'UNKNOWN'):
+            round_experiments[round_id].add(exp)
+        if _kind(record) == 'Candidate':
+            candidate_id = dim.get('candidate_id')
+            if candidate_id not in (None, 'UNKNOWN'):
+                roles[round_id, dim.get('agent_role')].add(candidate_id)
+                if exp not in (None, 'UNKNOWN'):
+                    candidate_experiments[candidate_id].add(exp)
+
+    def totals(items):
+        known = [r for r in items if r.get('usage_status') == 'KNOWN'
+                 and all(type(r.get(key)) is int and r[key] >= 0 for key in ('input_tokens', 'output_tokens'))]
+        inputs = sum(r['input_tokens'] for r in known) if known else None
+        outputs = sum(r['output_tokens'] for r in known) if known else None
+        unknown = len(items) - len(known)
+        return {'requests': len(items), 'known_requests': len(known), 'unknown_requests': unknown,
+                'usage_status': 'UNKNOWN' if not known else 'PARTIAL' if unknown else 'KNOWN',
+                'input_tokens': inputs, 'output_tokens': outputs,
+                'total_tokens': inputs + outputs if known else None}
+
+    def only(values):
+        return next(iter(values)) if len(values) == 1 else 'UNKNOWN'
+
+    buckets = {axis: defaultdict(list) for axis in ('model', 'stage', 'round', 'experiment', 'candidate')}
+    for ids in roles.values():
+        for candidate_id in ids:
+            buckets['candidate'][candidate_id]
+    request_rows = []
+    for record in requests:
+        p, dim = record['payload'], record['dimensions']
+        round_id = p.get('round_id') or 'UNKNOWN'
+        role = dim.get('agent_role') or 'UNKNOWN'
+        experiment = dim.get('experiment_id')
+        candidate = dim.get('candidate_id')
+        model = p.get('model') or 'UNKNOWN'
+        stage = p.get('stage') or role
+        experiment = only(round_experiments[round_id]) if experiment in (None, 'UNKNOWN') else experiment
+        candidate = only(roles[round_id, role]) if candidate in (None, 'UNKNOWN') else candidate
+        for axis, key in zip(buckets, (model, stage, round_id, experiment, candidate)):
+            buckets[axis][key].append(p)
+        measured = totals([p])
+        request_rows.append({'request_key': p['request_key'], 'model_id': model, 'stage': stage,
+                             'round_id': round_id, 'experiment_id': experiment, 'candidate_id': candidate,
+                             'source_id': record.get('source_refs', [{}])[0].get('source_id')
+                             if record.get('source_refs') else None,
+                             **{key: measured[key] for key in ('usage_status', 'input_tokens', 'output_tokens', 'total_tokens')}})
+    breakdown = {axis: {key: totals(items) for key, items in sorted(values.items())}
+                 for axis, values in buckets.items()}
+    completed = {r['dimensions'].get('experiment_id') for r in records if _kind(r) == 'Experiment'
+                 and r['payload'].get('event_type') in {'EXPERIMENT_COMPLETED', 'EXPERIMENT_FINISHED', 'AUTONOMY_TEST_ENDED'}
+                 and r['payload'].get('execution_state', r['payload'].get('status', 'COMPLETED')) == 'COMPLETED'}
+    by_experiment = breakdown['experiment']
+    completed_experiments = {key: by_experiment.get(key, totals([]))
+                             for key in sorted(completed - {None, 'UNKNOWN'})}
+    efficiency = {}
+    for key, items in by_experiment.items():
+        if key == 'UNKNOWN':
+            continue
+        scoped = [r for r in records if _kind(r) == 'Holdout' and (
+            r['dimensions'].get('experiment_id') == key
+            or (r['dimensions'].get('experiment_id') in (None, 'UNKNOWN')
+                and candidate_experiments.get(r['payload'].get('candidate_id')) == {key}))]
+        c4 = next(m for m in _group_metrics(scoped)['metrics'] if m['metric_id'] == 'C4')
+        n = c4['denominator'] if any(r['payload'].get('completed') is True
+                                    and r['payload'].get('independent') is True for r in scoped) else None
+        efficiency[key] = {'verified_improvements': n,
+            'status': 'N/A' if n == 0 else 'OK' if n and items['usage_status'] == 'KNOWN' else 'UNKNOWN',
+            'tokens_per_verified_improvement': items['total_tokens'] / n if n and items['usage_status'] == 'KNOWN' else None}
+    return {'totals': totals([r['payload'] for r in requests]), 'by': breakdown,
+            'completed_experiments': completed_experiments, 'efficiency_by_experiment': efficiency,
+            'requests': request_rows,
+            'scope': 'Reported usage in supplied ledgers only; candidate attribution requires a unique round/role binding.'}
+
+
 def _group_metrics(records):
     kinds = defaultdict(list)
     for record in records:

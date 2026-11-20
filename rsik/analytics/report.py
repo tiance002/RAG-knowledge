@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .reader import canonical, digest, read_artifact, read_event_log
 from .projections import DIMENSIONS, project_sources
-from .metrics import compute_metrics
+from .metrics import compute_metrics, token_statistics
 from .schemas import GROUP_DIMENSIONS, METRICS
 from .selection import SELECTION_CONTRACT_VERSION, SELECTION_DEFINITIONS
 
@@ -83,7 +83,8 @@ def build_report(paths, artifact_specs=(), filters=None, expected_hashes=None, *
             'filters': {k: v for k, v in sorted((filters or {}).items()) if v is not None},
             'projection_count_before_filter': len(projected), 'projection_count': len(records),
             'projection_types': dict(sorted(Counter(r['projection_type'] for r in records).items())),
-            'statistics': statistics, 'transport_status_distribution': dict(sorted(transport.items())),
+            'statistics': statistics, 'tokens': token_statistics(records),
+            'transport_status_distribution': dict(sorted(transport.items())),
             'search_tree': {'groups': search,
                             'limitation': 'Archived round parents are a coverage-limited proxy, not all parent selection events.'},
             'failure_origin_unknown_count': sum(r['payload'].get('failure_origin', 'UNKNOWN') == 'UNKNOWN' for r in invocations),
@@ -107,6 +108,12 @@ def render_markdown(report):
              '## 能力矩阵', '', '| 模块 | 状态 | 实际入口 | 数据缺口 |', '|---|---|---|---|']
     for row in report['capabilities']:
         lines.append('| ' + ' | '.join(str(row[k]).replace('|', '/') for k in ('module', 'status', 'entrypoint', 'gap')) + ' |')
+    tokens = report.get('tokens')
+    if tokens:
+        # Request-level rows remain available in JSON for reconciliation.
+        summary = {key: value for key, value in tokens.items() if key != 'requests'}
+        lines += ['', '## Token 用量', '', '部分已知时显示已知小计及未知请求数。', '',
+                  '```json', json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2), '```']
     lines += ['', '## 分区统计', '']
     for group in report['statistics']['groups']:
         if group.get('metric_contract_version'):
@@ -115,13 +122,14 @@ def render_markdown(report):
         lines += ['维度：`' + json.dumps(group['dimensions'], ensure_ascii=False, sort_keys=True) + '`', '',
                   '| 指标 | 状态 | 分子 | 分母 | 值 | 单位 |', '|---|---|---:|---:|---:|---|']
         for m in group['metrics']:
+            if m['metric_id'] in {'C1', 'C2', 'C3', 'C4'}:
+                continue
             show = lambda x: 'UNKNOWN' if x is None else str(x)
             lines.append('| ' + ' | '.join([m['metric_id'], m['status'], show(m['numerator']), show(m['denominator']), show(m['value']), m['unit']]) + ' |')
         if 'selection_metrics' in group:
             lines += ['', '独立选择指标（已完成有效操作；未知操作另列）：', '',
                       '```json', json.dumps(group['selection_metrics'], ensure_ascii=False, sort_keys=True, indent=2), '```', '']
         lines += ['', '六角色/其他已记录角色的调用指标：', '', '```json', json.dumps(group.get('agent_roles', []), ensure_ascii=False, sort_keys=True, indent=2), '```', '',
-                  '费用分布（usage、供应商账单、账本上界与未知分别保留）：', '', '```json', json.dumps(group['cost_breakdown'], ensure_ascii=False, sort_keys=True, indent=2), '```', '',
                   'Proposal Portfolio：', '', '```json', json.dumps(group['portfolio'], ensure_ascii=False, sort_keys=True, indent=2), '```', '']
     if not report['statistics']['groups']:
         lines += ['无符合筛选条件的可观测记录；指标 N/A/UNKNOWN，不填零。', '']

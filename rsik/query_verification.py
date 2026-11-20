@@ -159,7 +159,10 @@ def verify_sealed(*,registry,training,train_fixtures,sealed_fixtures,used_holdou
                 production_changed=False,answer_quality='NOT_RUN',retrieval_quality='NOT_RUN')
             path=output/'receipt.restricted.json';atomic_write(path,canonical(result),exclusive=True)
             log.append('sealed-finish:'+bundle_hash,'QUERY_SEALED_BUNDLE_FINISHED',{'candidate_id':candidate_id,
-                'verdict':result['verdict'],'receipt_path':str(path.resolve()),'receipt_sha256':bytes_hash(path.read_bytes()),'bundle_hash':bundle_hash})
+                'verdict':result['verdict'],'receipt_path':str(path.resolve()),'receipt_sha256':bytes_hash(path.read_bytes()),
+                'bundle_hash':bundle_hash, 'evidence_mode': result['evidence_mode'],
+                # VERIFIED already requires G1–G6 and the independent statistical test.
+                'improvement': True if result['verdict'] == 'VERIFIED' and result['real_eligible'] else None})
             # Registry quarantine can dispatch immutable learned-book updates.
             # When this verification owns a learning session those writes must
             # share its trusted transaction, or the next guard misclassifies

@@ -67,6 +67,8 @@ def test_long_failure_memory_fits_request_without_deleting_local_history(tmp_pat
     from rsik.tests.test_workflow import FakeRoles
     value=public();value['parent_code']+='\n# '+('SYNTHETIC_PARENT_COMMENT ' * 60)
     item={'hypothesis':'h'*512,'change':'c'*512,'outcome':'REJECTED',
+        'feedback_schema':'rsi-search-feedback/v2','quality_verdict':'REJECTED',
+        'execution_status':'COMPLETED','failure_origin':'CANDIDATE',
         'reason_codes':['FACT_LOSS','SOURCE_SUITE_HARD_GATE_FAILED'],
         'counts':{'primary_questions':20,'auxiliary_cases':60,'fact_loss_cases':2,'failed_suites':2}}
     memory={'schema':'rsi-autonomy-memory/v1','rounds':0,'evicted_entries':0,'entries':[]}

@@ -96,6 +96,21 @@ def test_helpful_pending_harmful_transition_counts_one_equivalent_episode():
     assert project(events)['counts']['entry'] == {'pending': 0, 'helpful': 0, 'miss': 0, 'harmful': 1, 'excluded': 0}
 
 
+def test_s1_learning_separates_non_adoption_and_independent_association(tmp_path):
+    from rsik.query_learning import record_query_round_learning
+
+    book = Handbook(tmp_path)
+    record = {'round_id': 'r', 'candidate_decisions': [
+        {'angle': 'P2_BUDGET', 'candidate_id': 'c', 'verdict': 'OBSERVED', 'reason_codes': []}],
+        'proposal_instances': {'P2_BUDGET': {'worker_patch': {'old': 'a', 'new': 'b'},
+                                            'proposal_id': 'p', 'handbook_entry_ids': ['e']}},
+        'attempted_replays': ['P2_BUDGET'], 'adopted_candidate_id': None}
+    record_query_round_learning(handbook=book, record=record, public={'handbook_entry_ids': ['e']},
+                                compatibility_fingerprint='scope')
+    assert {e['event_type'] for e in book.log.read()} >= {'EXPERIENCE_USED', 'CANDIDATE_NOT_SELECTED'}
+    assert book.view()['counts']['e'] == {'pending': 0, 'helpful': 0, 'miss': 0, 'harmful': 0, 'excluded': 1}
+
+
 def test_unrelated_or_unknown_rollback_and_infrastructure_are_excluded_not_harmful():
     events = [{'event_type': 'ENTRY_CREATED', 'payload': {'entry_id': 'e'}},
               {'event_type': 'PROPOSAL_REFERENCED', 'payload': {'entry_id': 'e', 'round_id': 'r',

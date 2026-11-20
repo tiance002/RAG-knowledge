@@ -43,7 +43,7 @@ def test_feedback_reaches_actual_next_diagnosis_request(tmp_path,kind,decision,q
             'candidate_decisions':[{'angle':'P2_BUDGET',**decision}] if decision else [],
             'execution_state':state,'stop_reason':'OWNER_REQUESTED_STOP' if state=='FAILED' else None}
     remember_round(memory,history,result,WORKER,1)
-    value=public();value.update(search_history=history,search_memory=project_search_memory(memory))
+    value=public();value.update(search_history=history,search_memory=project_search_memory(memory, recent=history))
     sent=[]
     def transport(body,*_):
         sent.append(body)
@@ -57,7 +57,8 @@ def test_feedback_reaches_actual_next_diagnosis_request(tmp_path,kind,decision,q
     feedback=actual['search_history'][0]
     assert tuple(feedback[k] for k in ('outcome','quality_verdict','execution_status','failure_origin'))==expected
     assert feedback['reason_codes']==history[0]['reason_codes']
-    assert actual['search_memory']['entries'][0]['history']==feedback
+    assert actual['search_memory']['entries']==[]
+    assert memory['entries'][0]['history']==feedback
     if kind=='statistics':assert feedback['counts']=={'favorable':8,'unfavorable':1,'ties':11,'delta_total':-15,'reduction_rate':0.015}
     if kind=='facts':assert feedback['counts']=={'failed_suites':2,'fact_loss_cases':3,'auxiliary_cases':60,'primary_questions':1}
     if kind=='no_gain':assert feedback['counts']=={'favorable':0,'unfavorable':0,'ties':20,'delta_total':0}

@@ -436,6 +436,7 @@ def read_decision(run_dir, fixture, candidate_id, proposal, worker_hash, config_
     if len(by_qid) != len(results['rows']):
         raise StageFailure('EVALUATION_ERROR', 'INVALID_PAIR', global_stop=True)
     rows = []
+    angle_rejection = None
     for index, (item, position) in enumerate(zip(cases, proof['rows'], strict=True), 1):
         qid = item['qid']; raw = by_qid.get(qid, {})
         row = {'qid': qid, 'source_group': position['source_group'], 'chars_A': None, 'chars_B': None,
@@ -483,19 +484,17 @@ def read_decision(run_dir, fixture, candidate_id, proposal, worker_hash, config_
             row['upstream_hash'] = raw['upstream_sha256']
             if runtime_identity: row['execution_environment_hash'] = digest(runtime_identity)
             row['fault_origin'] = 'CANDIDATE' if row['candidate_faults'] else 'NONE'
-            if proposal['angle'] == 'P3_ORDER' and set(raw['arms']['A']['member_ids']) != set(raw['arms']['B']['member_ids']):
-                decision = evaluate_candidate({'angle': proposal['angle'], 'proposal_id': proposal['proposal_id'],
+            if (angle_rejection is None and proposal['angle'] == 'P3_ORDER'
+                    and set(raw['arms']['A']['member_ids']) != set(raw['arms']['B']['member_ids'])):
+                angle_rejection = evaluate_candidate({'angle': proposal['angle'], 'proposal_id': proposal['proposal_id'],
                     'candidate_id': candidate_id, 'worker_hash': worker_hash, 'config_hash': config_hash},
                     rows+[row], [i['qid'] for i in cases], total_questions=len(cases))
-                decision.update(verdict='REJECTED', reason_codes=['ANGLE_VIOLATION'], gates_passed=False)
-                decision.update(evidence_mode=policy.mode, real_eligible=policy.real_eligible, execution_policy=policy.projection(),
-                    execution_evidence_hash=digest({p.relative_to(run_dir).as_posix():bytes_hash(p.read_bytes())
-                        for p in run_dir.rglob('execution-receipt.json')}))
-                return decision
         rows.append(row)
-    decision = evaluate_candidate({'angle': proposal['angle'], 'proposal_id': proposal['proposal_id'],
+    decision = angle_rejection or evaluate_candidate({'angle': proposal['angle'], 'proposal_id': proposal['proposal_id'],
         'candidate_id': candidate_id, 'worker_hash': worker_hash, 'config_hash': config_hash},
         rows, [i['qid'] for i in cases], total_questions=len(cases))
+    if angle_rejection:
+        decision.update(verdict='REJECTED', reason_codes=['ANGLE_VIOLATION'], gates_passed=False, per_question=rows)
     decision.update(evidence_mode=policy.mode, real_eligible=policy.real_eligible, execution_policy=policy.projection(),
                     execution_evidence_hash=digest({p.relative_to(run_dir).as_posix():bytes_hash(p.read_bytes())
                         for p in run_dir.rglob('execution-receipt.json')}))

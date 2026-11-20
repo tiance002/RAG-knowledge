@@ -85,6 +85,62 @@ def test_duplicate_input_does_not_double_count(event_file):
     assert a['statistics']==b['statistics']
 
 
+def test_s1_round_keeps_unselected_measurement_and_deduplicates_provider_usage(tmp_path):
+    round_id = 'round-' + 'a' * 32
+    ledger = tmp_path / 'budget.sqlite'
+    log = EventLog(ledger)
+    for role, usage in [('P2_BUDGET', {'input_tokens': 12, 'output_tokens': 3,
+                                      'input_tokens_details': {'cached_tokens': 7}}), ('diagnose', None)]:
+        key = f'{round_id}-{role}-0'
+        log.append('start:' + key, 'MODEL_REQUEST_STARTED', {'request_key': key, 'role': role, 'model': 'test'})
+        log.append('end:' + key, 'MODEL_REQUEST_COMPLETED', {'request_key': key, 'usage': usage,
+                   'usage_status': 'KNOWN' if usage else 'UNKNOWN', 'status': 'RECEIVED'})
+    log.append('finish', 'AUTONOMY_TEST_ENDED', {'experiment_id': 'run-1', 'execution_state': 'COMPLETED'})
+    round_path = tmp_path / 'round.json'
+    round_path.write_text(json.dumps({'round_id': round_id, 'evidence_mode': 'SYNTHETIC_CONTROL',
+        'launch_run_id': 'run-1', 'execution_state': 'COMPLETED', 'adopted_candidate_id': None,
+        'attempted_replays': ['P2_BUDGET'], 'candidate_decisions': [{'angle': 'P2_BUDGET',
+        'candidate_id': 'loser', 'verdict': 'OBSERVED', 'eligible_count': 1,
+        'per_question': [{'qid': 'q1', 'pair_status': 'PAIRED', 'pair_identity': True,
+                          'execution': 'COMPLETED', 'chars_A': 100, 'chars_B': 80}]}]}), encoding='utf8')
+    archived = round_path.read_bytes()
+    artifact = {'kind': 'round', 'path': round_path, 'sha256': hashlib.sha256(archived).hexdigest()}
+    copy = tmp_path / 'mirror.sqlite'
+    copy.write_bytes(ledger.read_bytes())
+    report = build_report([ledger, ledger, copy], [artifact])
+    candidate, = [r for r in report['projections'] if r['projection_type'] == 'Candidate']
+    assert candidate['payload']['adopted'] is False
+    assert candidate['payload']['verdict'] == 'OBSERVED'
+    assert candidate['payload']['context_measurements']['candidate_chars'] == 80
+    assert candidate['payload']['context_measurements']['final_answer_quality_status'] == 'UNKNOWN'
+    tokens = report['tokens']
+    assert tokens['totals'] == {'requests': 2, 'known_requests': 1, 'unknown_requests': 1,
+        'usage_status': 'PARTIAL', 'input_tokens': 12, 'output_tokens': 3, 'total_tokens': 15}
+    assert tokens['by']['round'][round_id] == tokens['totals']
+    assert tokens['completed_experiments']['run-1'] == tokens['totals']
+    assert tokens['by']['candidate']['loser']['total_tokens'] == 15
+    assert tokens['by']['stage']['diagnose']['total_tokens'] is None
+    assert tokens['by']['model']['test'] == tokens['totals']
+    assert tokens['efficiency_by_experiment']['run-1']['status'] == 'UNKNOWN'
+    assert round_path.read_bytes() == archived
+
+
+def test_s1_efficiency_requires_explicit_independent_improvement(tmp_path):
+    ledger = tmp_path / 'events.sqlite'
+    log = EventLog(ledger)
+    log.append('start', 'MODEL_REQUEST_STARTED', {
+        'request_key': 'k', 'role': 'diagnose', 'model': 'synthetic', 'experiment_id': 'e'})
+    log.append('end', 'MODEL_REQUEST_COMPLETED', {'request_key': 'k', 'usage_status': 'KNOWN',
+        'usage': {'input_tokens': 10, 'output_tokens': 0}})
+    # Simulated evidence metadata exercises the report joins, not a live verification.
+    log.append('adopted', 'CANDIDATE_ADOPTED', {'candidate_id': 'c', 'experiment_id': 'e'})
+    assert build_report([ledger])['tokens']['efficiency_by_experiment']['e']['status'] == 'UNKNOWN'
+    log.append('sealed', 'QUERY_SEALED_BUNDLE_FINISHED', {
+        'candidate_id': 'c', 'experiment_id': 'e', 'verdict': 'VERIFIED', 'improvement': True})
+    assert build_report([ledger])['tokens']['efficiency_by_experiment']['e'] == {
+        'verified_improvements': 1, 'status': 'OK', 'tokens_per_verified_improvement': 10}
+
+
 def test_repeat_budget_flag(event_file,tmp_path):
     main(['--budget-ledger',str(event_file),'--budget-ledger',str(event_file),'--output',str(tmp_path/'out')])
     assert json.loads((tmp_path/'out/report.json').read_bytes())['projection_count']==2

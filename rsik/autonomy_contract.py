@@ -70,13 +70,30 @@ def remember(memory,key,round_number,item):
 
 
 
-def project_search_memory(memory):
-    # Frequent failures remain visible across distant rounds; remaining slots show
-    # recent distinct candidates. Selection is factual, not an algorithm prescription.
-    failures=[e for e in memory['entries'] if e['history']['outcome']!='VALIDATED']
+def _confirmed_negative(item):
+    if item.get('failure_origin') in {'INFRASTRUCTURE', 'PARENT', 'GLOBAL_STOP', 'UNKNOWN'}:
+        return False
+    codes = set(item['reason_codes'])
+    if item['outcome'] == 'PATCH_INVALID':
+        return any(code.startswith(('STATIC_', 'AST_')) for code in codes)
+    if item['outcome'] == 'UNIT_FAILED':
+        return 'QUERY_UNIT_FAILED' in codes and item.get('failure_origin') == 'CANDIDATE'
+    return (item['outcome'] == 'REJECTED' and item.get('quality_verdict') == 'REJECTED'
+            and item.get('execution_status') == 'COMPLETED' and item.get('failure_origin') == 'CANDIDATE'
+            and bool(codes & {'FACT_LOSS', 'LOCAL_REGRESSION', 'EXEC_FAULT'}))
+
+
+def project_search_memory(memory, *, recent=()):
+    """Project scoped evidence; process failures remain in the local archive."""
+    candidates = [e for e in memory['entries'] if e['history'] not in recent]
+    failures = [e for e in candidates if _confirmed_negative(e['history'])]
     frequent=sorted(failures,key=lambda e:(-e['attempts'],e['first_round'],e['selector_sha256']))[:4]
     chosen={e['selector_sha256']:e for e in frequent}
-    for entry in sorted(memory['entries'],key=lambda e:(-e['last_round'],e['selector_sha256'])):
+    observations = [e for e in candidates if _confirmed_negative(e['history']) or (
+        e['history']['outcome'] in {'NO_GAIN', 'OBSERVED', 'VALIDATED'}
+        and e['history'].get('execution_status', 'COMPLETED') == 'COMPLETED'
+        and e['history'].get('failure_origin', 'NONE') == 'NONE')]
+    for entry in sorted(observations,key=lambda e:(-e['last_round'],e['selector_sha256'])):
         if len(chosen)>=MEMORY_LIMIT:break
         chosen.setdefault(entry['selector_sha256'],entry)
     entries=[]

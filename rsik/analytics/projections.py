@@ -3,11 +3,13 @@ from .reader import digest
 from .schemas import GROUP_DIMENSIONS
 from pathlib import Path
 from hashlib import sha256
+import re
 
 DIMENSIONS = ('experiment_id', 'epoch', 'role_profile', 'agent_role', 'evidence_mode',
               'parent_id', 'candidate_id', 'compatibility_fingerprint', 'evaluator_version', 'profile')
 REQUEST_EVENTS = {'MODEL_REQUEST_STARTED', 'MODEL_REQUEST_COMPLETED', 'MODEL_REQUEST_POSTHOC_COST_BOUND'}
 SAFE = {'round_id', 'lineage_id', 'entry_id', 'proposal_id', 'candidate_id', 'parent_id', 'family_id',
+        'stage', 'improvement',
         'request_key', 'request_hash', 'model', 'price_version', 'usage_status', 'cost_nano_upper',
         'verdict', 'reason_codes', 'reason', 'status', 'execution_state', 'stop_reason', 'bundle_hash',
         'receipt_sha256', 'receipt_hash', 'result_hash', 'round_result_sha256', 'holdout_freeze_hash',
@@ -132,11 +134,19 @@ def _project_legacy_sources(sources, artifacts=()):
                            [bucket['ref']], [e['event_id'] for e in events.values()], dims)
             usage = end.get('usage') if isinstance(end.get('usage'), dict) else {}
             details = usage.get('input_tokens_details') or {}
+            if not isinstance(details, dict):
+                details = {}
+            # Historical role keys are round UUID + exact role + attempt.
+            role = start.get('role')
+            round_match = (re.fullmatch(r'(round-[0-9a-f]{32})-' + re.escape(role) + r'-[0-9]+', key)
+                           if isinstance(role, str) else None)
             cost['payload'].update(request_key=key, cost_nano_upper=bound.get('cost_nano_upper', end.get('cost_nano_upper')),
                 input_tokens=usage.get('input_tokens'), output_tokens=usage.get('output_tokens'),
                 cached_tokens=details.get('cached_tokens'), usage_status=bound.get('usage_status', end.get('usage_status', 'UNKNOWN')),
                 bounded=bool(bound), pending=not bool(end), provider_invoiced_charge=None, provider_invoiced_nano=None,
                 transport_status=end.get('status', 'UNKNOWN'))
+            if round_match:
+                cost['payload'].setdefault('round_id', round_match[1])
             records.append(cost)
     seen_artifacts = {}
     for artifact in artifacts:
@@ -149,6 +159,8 @@ def _project_legacy_sources(sources, artifacts=()):
         refs = [{k: artifact[k] for k in ('source_id', 'sha256', 'path')}]
         dims = _dimensions(data)
         if kind == 'round':
+            if dims['experiment_id'] == 'UNKNOWN' and data.get('launch_run_id'):
+                dims['experiment_id'] = data['launch_run_id']
             records.append(_record('Round', identity + ':round', data, refs, dimensions=dims))
             for slot, proposal in data.get('proposal_instances', {}).items():
                 record = _record('Proposal', identity + ':proposal:' + slot,
@@ -169,7 +181,30 @@ def _project_legacy_sources(sources, artifacts=()):
             for decision in data.get('candidate_decisions', []):
                 cdims = {**dims, 'candidate_id': decision.get('candidate_id') or 'UNKNOWN',
                          'agent_role': data.get('proposal_roles', {}).get(decision.get('angle'), decision.get('angle', 'UNKNOWN'))}
-                records.append(_record('Candidate', identity + ':candidate:' + decision['angle'], decision, refs, dimensions=cdims))
+                candidate = _record('Candidate', identity + ':candidate:' + decision['angle'], decision, refs, dimensions=cdims)
+                adopted = 'UNKNOWN'
+                if decision.get('candidate_id') and 'adopted_candidate_id' in data:
+                    adopted = decision['candidate_id'] == data['adopted_candidate_id']
+                    if 'adopted_proposal_id' in data:
+                        adopted = adopted and decision.get('proposal_id') == data['adopted_proposal_id']
+                candidate['payload'].update(round_id=data['round_id'], adopted=adopted)
+                rows = decision.get('per_question') or []
+                pairs = [row for row in rows if row.get('pair_status') == 'PAIRED'
+                         and row.get('pair_identity') is True and row.get('execution') == 'COMPLETED'
+                         and all(type(row.get(key)) is int and row[key] >= 0 for key in ('chars_A', 'chars_B'))]
+                if pairs:
+                    deltas = [row['chars_B'] - row['chars_A'] for row in pairs]
+                    candidate['payload']['context_measurements'] = {
+                        'status': 'KNOWN' if len(pairs) == decision.get('eligible_count') else 'PARTIAL',
+                        'paired_cases': len(pairs), 'eligible_cases': decision.get('eligible_count'),
+                        'parent_chars': sum(row['chars_A'] for row in pairs),
+                        'candidate_chars': sum(row['chars_B'] for row in pairs),
+                        'shorter_cases': sum(delta < 0 for delta in deltas),
+                        'longer_cases': sum(delta > 0 for delta in deltas),
+                        'unchanged_cases': deltas.count(0),
+                        'final_answer_quality_status': 'UNKNOWN',
+                    }
+                records.append(candidate)
                 if decision.get('per_question'):
                     # The row bodies are deliberately not projected.
                     replay = _record('Replay', identity + ':replay:' + decision['angle'], decision, refs, dimensions=cdims)
@@ -475,5 +510,8 @@ def project_sources(sources, artifacts=()):
         for cost in records:
             if cost['projection_type'] == 'CostEvent' and cost['payload'].get('request_key') == key and cost['source_refs'] == old['source_refs']:
                 cost['dimensions'] = dict(invocation['dimensions'])
+                for field in ('round_id', 'stage'):
+                    if invocation['payload'].get(field) not in (None, '', 'UNKNOWN'):
+                        cost['payload'][field] = invocation['payload'][field]
                 cost['source_refs'] += [ref for ref in invocation['source_refs'] if ref not in cost['source_refs']]
     return sorted(records + new, key=lambda r: (r['projection_type'], r['id']))

@@ -192,7 +192,9 @@ def run(config, *, launch=None):
         if experience_session:experience_session.verify()
     def finish(reason,execution='COMPLETED'):
         state.update(execution_state=execution,stop_reason=reason);save()
-        log.append('finished','AUTONOMY_TEST_ENDED',state)
+        experiment_id = getattr(launch, 'run_id', None)
+        log.append('finished','AUTONOMY_TEST_ENDED',
+                   {**state, 'experiment_id': experiment_id} if experiment_id else state)
     with WorkspaceLock(registry/'autonomy.lock','frozen-autonomy-test'), WorkspaceLock(registry/'writer.lock','frozen-autonomy-query-writer'):
         try:guard()
         except StageFailure as error:
@@ -236,9 +238,17 @@ def run(config, *, launch=None):
                 counts.update(structural_counts(baseline_round/'suite-1',arm))
                 public=make_visible([project_summary('REPLAY_SUMMARY',counts,include_count_evidence=True)],
                     parent_code=selector(frame['worker'].decode())[1],round_id='round-'+uuid.uuid4().hex,scanner=scanner)
+                recent = history[-3:]
+                search_memory = project_search_memory(memory, recent=recent)
                 public.update(selector_contract=interface_contract(),experiment_intent='STRUCTURAL_POLICY_SEARCH',
-                    parent_selection=json.loads(frame['config'])['selection'],search_history=history[-3:],search_memory=project_search_memory(memory))
+                    parent_selection=json.loads(frame['config'])['selection'],search_history=recent,
+                    search_memory=search_memory)
                 atomic_write(trial/'public-context.json',canonical(public),exclusive=True)
+                atomic_write(trial/'search-input-receipt.json', canonical({
+                    'recent_items': len(recent), 'memory_items': len(search_memory['entries']),
+                    'duplicate_history_items_omitted': sum(entry['history'] in recent for entry in memory['entries']),
+                    'history_and_memory_bytes': len(canonical([recent, search_memory])),
+                }), exclusive=True)
                 from .foundation import check_split
                 freezes={str(f.resolve()):check_split(f,expected_count=20) for f in fixtures}
                 atomic_write(trial/'fixture-freezes.restricted.json',canonical(freezes),exclusive=True)
