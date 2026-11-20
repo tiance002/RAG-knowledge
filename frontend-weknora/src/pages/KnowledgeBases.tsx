@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppstoreOutlined, ArrowLeftOutlined, FileTextOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
-import TaskMonitor from '../../../frontend/src/file-tasks/TaskMonitor';
-import { submitOnce } from '../../../frontend/src/file-tasks/requestKey';
+import TaskMonitor from '../file-tasks/TaskMonitor';
+import { submitOnce } from '../file-tasks/requestKey';
 import './KnowledgeBases.css';
 
 type KnowledgeBase = { id: string; name: string; description: string | null; embedding_model: string; vlm_model: string; chunk_count: number; updated_at: string };

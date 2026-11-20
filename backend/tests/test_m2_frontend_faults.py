@@ -10,10 +10,11 @@ import time
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
 def test_preference_faults_and_refresh():
+    legacy_frontend = os.getenv("RAG_LEGACY_FRONTEND_DIR")
+    if not legacy_frontend:
+        pytest.skip("This test covers the retired frontend. Set RAG_LEGACY_FRONTEND_DIR to replay it.")
+    legacy_frontend = Path(legacy_frontend).expanduser().resolve(strict=True)
     playwright = pytest.importorskip("playwright.sync_api")
     import uvicorn
     from fastapi import FastAPI
@@ -28,7 +29,7 @@ def test_preference_faults_and_refresh():
     with tempfile.TemporaryDirectory(prefix="rag-prefs-fault-ui-") as temp:
         dist = Path(temp) / "dist"
         subprocess.run(["node", "node_modules/vite/bin/vite.js", "build", "--outDir", str(dist),
-                        "--logLevel", "error"], cwd=ROOT / "frontend", check=True)
+                        "--logLevel", "error"], cwd=legacy_frontend, check=True)
         app = FastAPI()
 
         @app.get("/api/v1/{path:path}")

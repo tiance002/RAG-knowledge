@@ -32,14 +32,13 @@ debug_run.log
 /pytest_html_report.html
 /backend/pytest_html_report.html
 /archive/output_*.json
+/backend/archive/output_*.json
 /storage/observations/events.jsonl
 
 # Frontend dependencies and builds
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
 frontend-weknora/node_modules/
 frontend-weknora/dist/
+frontend-weknora/.vite/
 *.tsbuildinfo
 
 # Local-only diagrams and reports

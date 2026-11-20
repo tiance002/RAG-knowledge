@@ -180,6 +180,10 @@ def test_redis_hash_restart_and_independent_backup(monkeypatch):
 
 def test_settings_browser_with_real_preference_api():
     """Built settings page -> real HTTP router -> disposable Redis. Other settings use fixtures."""
+    legacy_frontend = os.getenv("RAG_LEGACY_FRONTEND_DIR")
+    if not legacy_frontend:
+        pytest.skip("This test covers the retired frontend. Set RAG_LEGACY_FRONTEND_DIR to replay it.")
+    legacy_frontend = Path(legacy_frontend).expanduser().resolve(strict=True)
     playwright = pytest.importorskip("playwright.sync_api")
     import uvicorn
     from fastapi.responses import FileResponse
@@ -189,7 +193,7 @@ def test_settings_browser_with_real_preference_api():
         root = Path(temp)
         dist = root / "dist"
         subprocess.run(["node", "node_modules/vite/bin/vite.js", "build", "--outDir", str(dist),
-                        "--logLevel", "error"], cwd=ROOT / "frontend", check=True)
+                        "--logLevel", "error"], cwd=legacy_frontend, check=True)
         with local_redis(root / "data") as (url, admin):
             from contextlib import asynccontextmanager
             db = AsyncRedis.from_url(url, decode_responses=True)

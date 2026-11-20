@@ -1,234 +1,73 @@
-<div align="center">
+# RAG Knowledge
 
-# Agentic Multimodal RAG
+面向 PDF、Word、Excel、Markdown、文本和图片的知识库问答系统。仓库当前的应用由 FastAPI 后端和 WeKnora 风格的 React 前端组成。
 
-**把 PDF、Word、表格和图片变成可检索、可追溯的 Agent 知识库**
+## 当前正式版本
 
-面向复杂文档的 Agentic Multimodal Retrieval-Augmented Generation (RAG) 系统：组合向量检索与 BM25，经过重排和上下文扩展后，由 LangGraph Agent 判断结果质量并在必要时重新检索。
-
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-TypeScript-149ECA?logo=react&logoColor=white)](https://react.dev/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Agent-1C3C3C)](https://github.com/langchain-ai/langgraph)
-[![License](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
-
-[功能亮点](#功能亮点) · [界面预览](#界面预览) · [工作流程](#工作流程) · [快速开始](#快速开始)
-
-</div>
-
-## 为什么做这个项目？
-
-常见 RAG Demo 往往停留在“切块、向量搜索、生成回答”。Agentic Multimodal RAG 关注更完整的知识处理闭环：文档结构如何保留、图像如何进入索引、关键词和语义召回如何融合、低质量检索如何被识别，以及整个过程如何在界面中被观察和调试。
-
-| 常见实现 | Agentic Multimodal RAG |
+| 环节 | 实现 |
 | --- | --- |
-| 主要处理纯文本 | 支持 PDF、Word、Markdown、文本、表格和图片 |
-| 仅使用向量相似度 | Vector、BM25、加权 Hybrid 三种检索模式 |
-| 固定长度切块 | 标题感知、语义切分和邻接上下文扩展 |
-| 一次检索后直接回答 | Agent 检查相关性，低质量结果可重写问题并重试 |
-| 检索过程难以观察 | 展示召回来源、相似度、延迟和 Agent 思考步骤 |
-| 模型配置耦合 | LLM、Embedding、VLM、Rerank 可分别配置 |
+| 文档入库 | FastAPI 接收文件操作，SQLite 记录任务状态，Redis/Celery 执行解析、向量化和索引发布 |
+| 解析与分块 | 各格式提取内容后走统一分块入口，可按知识库任务配置使用父子分块 |
+| 检索 | Chroma 向量检索与 SQLite 上的 BM25 倒排检索，支持 Hybrid、重排和来源引用 |
+| 问答 | 普通知识库问答与 LangGraph Agent；ECS 正式模型路由为 E（`RISK_E`），Qwen 为默认角色，风险达到 45 分时选择 GLM |
+| 运行结构 | ECS 使用独立的 API、Chroma、解析、索引和任务恢复进程；前端由 Nginx 提供页面和 API 代理 |
 
-## 功能亮点
+入库失败时会先检查能否复用已保存的结果。同一不确定的模型请求最多自动补发一次，仍失败时可从前端任务页取消或重新处理。已发布索引在新构建通过校验并激活前继续提供检索。
 
-- **多模态文档解析**：提取正文、标题层级、表格与图片内容，并保留文档结构信息。
-- **查询增强与并行召回**：支持复杂问题拆分、HyDE 假设文档生成，并针对多个子问题并行执行检索。
-- **双路混合检索**：结合 Chroma 向量检索和 BM25 全文检索，兼顾语义理解与精确关键词命中。
-- **父子 Chunk 与上下文恢复**：命中子 Chunk 后可拼接父文档及相邻 Chunk，减少孤立片段带来的语义缺失。
-- **本地与远程双模式 Rerank**：本地 Cross-Encoder 自动选择 CUDA 或 CPU，也可接入远程 Rerank API。
-- **可解释的 Agent 执行轨迹**：基于 LangGraph 展示意图分析、任务拆分、工具调用、检索耗时、质量判断和低相关性重试。
-- **图文联合召回**：图片描述和文本 Chunk 可统一进入检索流程，回答中保留引用来源。
-- **异步文档处理链路**：可通过 Celery 与 Redis 在后台执行文档解析、图片理解和向量化任务。
-- **模型能力解耦**：LLM、Embedding、VLM 与 Rerank 分别配置，可自由组合本地模型和兼容 API 服务。
-- **召回质量分析**：在 Web UI 中查看 Top K、相似度、召回详情、耗时及检索历史。
+## 仓库导航
 
-## 界面预览
+| 路径 | 用途 |
+| --- | --- |
+| [`backend/app/`](backend/app/) | 正式 API、检索、任务和数据模型 |
+| [`frontend-weknora/`](frontend-weknora/) | 唯一正式前端，含任务面板和请求去重代码 |
+| [`config/`](config/) | 部署配置模板 |
+| [`backend/tests/`](backend/tests/)、[`tests/`](tests/) | 回归测试及其依赖 |
+| [`scripts/`](scripts/README.md) | 运维、回归、评测及 RSI 工具，应用启动无需运行 |
+| [`docs/`](docs/PROJECT-INTERVIEW-INDEX.md) | 项目学习索引、设计报告和复盘记录 |
+| [`RSI-kit/`](RSI-kit/)、[评测资产索引](docs/RSI-TEST-ASSETS.md) | RSI 复用入口、QA500 输入、Gold、证据和逐题结果位置 |
 
-### 1. 知识库与多格式文档管理
+## 本地开发
 
-集中管理不同类型的知识库、解析状态、Chunk 数量及其 Embedding 配置。
-
-![知识库管理](docs/assets/knowledge-base-management.png)
-
-### 2. Agent 思考与检索过程
-
-Agent 会分析意图、拆分子问题、生成检索查询、调用工具并记录每一步耗时。
-
-![Agent 思考与检索过程](docs/assets/agent-reasoning.png)
-
-### 3. 多模态回答
-
-回答结果支持结构化 Markdown，可结合图片内容给出分析，并继续追溯引用上下文。
-
-![多模态回答](docs/assets/multimodal-answer.png)
-
-### 4. 召回详情与相似度评分
-
-召回面板同时呈现图片和文本结果、所属文件、Chunk 位置以及相似度分数。
-
-![召回详情](docs/assets/retrieval-details.png)
-
-<details>
-<summary><strong>查看完整端到端测试长图</strong></summary>
-
-从 Agent 任务分解、回答生成到图文来源展示的完整页面记录：
-
-![完整端到端测试](docs/assets/end-to-end-test.png)
-
-</details>
-
-## 工作流程
-
-```mermaid
-flowchart LR
-    A["PDF / Word / Excel / Markdown / Image"] --> B["结构化解析"]
-    B --> C["标题感知与语义切分"]
-    C --> D["Chroma 向量索引"]
-    C --> E["BM25 全文索引"]
-
-    Q["用户问题"] --> F["检索策略"]
-    D --> F
-    E --> F
-    F --> G["融合、去重、上下文扩展、Rerank"]
-    G --> H["LangGraph Agent"]
-    H --> I{"相关性足够？"}
-    I -- "否" --> J["重写问题并重新检索"]
-    J --> F
-    I -- "是" --> K["生成带来源的回答"]
-```
-
-## 检索模式
-
-| 模式 | 适用场景 | 说明 |
-| --- | --- | --- |
-| `vector` | 语义相似、同义表达、自然语言问题 | 使用 Embedding 计算语义相似度 |
-| `fulltext` | 文件名、术语、编号、精确关键词 | 使用 BM25 进行全文匹配 |
-| `hybrid` | 通用知识问答与复杂检索 | 对 Vector 和 BM25 结果进行加权融合 |
-
-Hybrid 结果还可以继续执行 Rerank、阈值过滤、去重和邻接 Chunk 扩展，从而为 Agent 提供更完整的上下文。
-
-## 技术架构
-
-```text
-React + TypeScript + Vite
-            |
-            v
-        FastAPI API
-            |
-     +------+-------------------+
-     |                          |
-Document Pipeline          Agent Workflow
-     |                          |
-Parser -> Chunk -> Index    Intent -> Retrieve -> Observe -> Retry
-     |                          |
-     +----> Chroma / BM25 <-----+
-                 |
-       Rerank / Context Expansion
-                 |
-        LLM / Embedding / VLM
-```
-
-主要技术组件：
-
-- Backend：FastAPI、SQLModel、LangGraph、Celery（可选）
-- Frontend：React、TypeScript、Vite、Ant Design
-- Retrieval：Chroma、BM25、Cross-Encoder/API Rerank
-- Models：Ollama 或 OpenAI-compatible API
-- Storage：SQLite、文件存储、Chroma 持久化目录
-
-## 快速开始
-
-### 环境要求
-
-- Python 3.10+
-- Node.js 18+
-- Ollama 或其他 OpenAI-compatible 模型服务
-- Redis（可选，用于后台解析与向量化任务）
-- [长期回答偏好与 Redis 恢复](docs/user-preference-memory.md)。在“系统设置 → 长期回答偏好”管理，或在聊天中明确说“以后回答都简洁一点”。
-- NVIDIA GPU（可选，仅本地模型推理或本地 Rerank 加速时使用）
-
-### 1. 克隆项目
+所有后端进程从 `backend/` 启动，并复用同一个 Python 环境与 `.env`。先准备 Redis，并启动独立 Chroma 服务。API 和前端开发服务器默认分别使用 `8000` 和 `3001`。
 
 ```bash
-git clone https://github.com/futureYYY/Agentic-Multimodal-RAG.git
-cd Agentic-Multimodal-RAG
-```
-
-### 2. 启动后端
-
-```bash
-python -m venv .venv
-
-# Linux / macOS
-source .venv/bin/activate
-
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
-
-pip install -r requirements.txt \
-  --extra-index-url https://download.pytorch.org/whl/cu118
-copy backend\.env.example backend\.env  # Windows
-# cp backend/.env.example backend/.env   # Linux / macOS
-
+# 先在仓库根目录激活项目 Python 环境并安装依赖
+python -m pip install -r requirements.txt
 cd backend
-python -c "from app.core.database import init_db; init_db()"
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+cp .env.example .env
 ```
 
-文件处理还需要启动 Redis、本机 Chroma、恢复进程和两类 Celery Worker。[单机并发入库的启动、升级和任务核对](docs/file-task-workers.md)
-
-编辑 `backend/.env`，配置自己的模型服务：
-
-```dotenv
-LLM_BASE_URL=http://localhost:11434/v1
-LLM_API_KEY=ollama
-LLM_MODEL=qwen2.5:7b
-
-EMBEDDING_BASE_URL=http://localhost:11434/v1
-EMBEDDING_API_KEY=ollama
-EMBEDDING_MODEL=nomic-embed-text
-
-VLM_BASE_URL=http://localhost:11434/v1
-VLM_API_KEY=ollama
-VLM_MODEL=llava:7b
-```
-
-### 3. 启动前端
+在 `backend/.env` 中设置 Redis、Chroma 地址和本地数据目录。在 Linux 上，可分别在常驻进程中运行以下命令。Chroma 的存储路径应与要加载的索引一致。
 
 ```bash
-cd frontend
-npm ci
+# Chroma（单独进程）
+chroma run --path ./storage/chroma_db --host 127.0.0.1 --port 8001
+
+# API（单独进程）
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+
+# 后台入库（三个独立进程）
+python -m app.tasks.file_task_recovery
+FILE_TASK_WORKER_ROLE=parse python -m celery -A app.tasks.celery_app:celery_app worker -Q document.parse -n parse@%h --pool=prefork -l INFO
+FILE_TASK_WORKER_ROLE=index python -m celery -A app.tasks.celery_app:celery_app worker -Q document.index -n index@%h --pool=prefork -l INFO
+```
+
+前端在仓库根目录执行：
+
+```bash
+cd frontend-weknora
+npm install
 npm run dev
+# 生产构建产物位于 dist/
+npm run build
 ```
 
-启动完成后访问：`http://localhost:3000`
+访问 `http://localhost:3001`，在设置里配置模型。新环境的路由模板默认关闭。需要复现正式 E 路由时，从 [路由模板](config/router-v1.env.example) 创建 `config/model-router.env`，填入实际 Qwen 和 GLM 绑定，设置 `RAG_MODEL_ROUTER_MODE=DYNAMIC`、`RAG_MODEL_ROUTER_SELECTION_POLICY=RISK_E`、`RAG_MODEL_ROUTER_THRESHOLD=0.45`、`RAG_ROUTER_ALLOW_MODEL_CALLS=true` 和 `RAG_CHEAP_GROUNDING_ENABLED=true`。详见 [E 方案发布记录](docs/router-e-formal-release-20261119.md)。
 
-> 本地 Rerank 模型会自动选择 `cuda` 或 `cpu`；使用远程 Rerank API 时，FastAPI 进程不加载本地模型。
->
-> 当前依赖文件固定了 PyTorch CUDA 11.8 构建，因此安装命令包含 PyTorch 官方索引。没有 NVIDIA GPU 时仍可运行 CPU 回退路径，但依赖体积会更大。
+ECS 的正式 API 使用本机 `8200`，Chroma 使用 `8001`。前端部署时由 Nginx 将 `/api` 和 `/static` 转发到后端。Vite 的 `8000` 是本地开发代理目标。
 
-## 项目结构
+## 设计复盘和评测复用
 
-```text
-backend/app/
-├── api/                 API 路由
-├── core/                配置、数据库与本地 Rerank 加载器
-├── services/            解析、Embedding、检索、重排与 Agent 服务
-├── tasks/               Celery 后台任务
-└── tools/               Agent 检索工具
-
-frontend/src/
-├── components/          通用组件
-├── pages/               知识库、对话、召回测试与设置页面
-├── services/            API 客户端
-├── stores/              状态管理
-└── types/               TypeScript 类型
-```
-
-## Contributing
-
-欢迎提交 Issue 和 Pull Request。提交前请运行相关后端检查与前端构建。
-
-## License
-
-本项目采用 [MIT License](LICENSE)。
+- [项目学习与面试索引](docs/PROJECT-INTERVIEW-INDEX.md) 按入库、BM25、并发检索、父子分块、引用预算、E 路由和 Langfuse 串起原报告。
+- [RSI 测试资产索引](docs/RSI-TEST-ASSETS.md) 给出 QA500 开发集、冻结会话、Gold、原始证据和已有结果的路径。
+- [Langfuse 配置模板](backend/.env.langfuse.example) 可与 [可观测依赖](backend/requirements-observability.txt) 一起使用。各环境在本地配置凭据。
