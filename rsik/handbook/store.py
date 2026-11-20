@@ -13,6 +13,7 @@ from ..redact import LeakScanner
 from ..observability import observation_for
 from .contracts import conflicting, conditions_match, validate_entry
 from .projection import project
+from .objectives import OBJECTIVE_FIELDS, objective_metadata, objective_matches, scoped_entry
 
 
 class RetrievalReceipt(list):
@@ -52,6 +53,9 @@ class Handbook:
         if (entry['compatibility_fingerprint']!=context['compatibility_fingerprint']
                 or set(entry['support_refs'])-set(context['refs'])):
             raise ContractError('UNTRACEABLE_HANDBOOK_EVIDENCE')
+        expected_scope = objective_metadata(context, entry['support_refs'])
+        if {key: entry[key] for key in OBJECTIVE_FIELDS if key in entry} != expected_scope:
+            raise ContractError('HANDBOOK_OBJECTIVE_BINDING_CHANGED')
         refs={key:context['refs'][key] for key in entry['support_refs']}
         for ref in refs.values():
             if any(not isinstance(ref.get(k),str) or not ref[k] for k in
@@ -61,6 +65,7 @@ class Handbook:
                 raise ContractError('UNTRACEABLE_HANDBOOK_EVIDENCE')
         bundle={'entry_id':entry_id,'refs':refs,'verified_candidates':context.get('verified_candidates',{}),
                 'compatibility_fingerprint':context['compatibility_fingerprint']}
+        bundle.update(expected_scope)
         data=canonical(bundle);key=hashlib.sha256(data).hexdigest();path=self.directory/'evidence'/key
         if path.exists():
             if path.read_bytes()!=data:raise RuntimeError('HANDBOOK_EVIDENCE_HASH_MISMATCH')
@@ -121,6 +126,7 @@ class Handbook:
             self.get(target)
             if entry['supersedes'] != [target]:
                 raise ContractError()
+        entry = scoped_entry(entry, context)
         body = {**entry, 'evidence_mode':self.evidence_mode, 'created_at': created_at or datetime.now(timezone.utc).isoformat()}
         data = canonical(body);entry_id = hashlib.sha256(data).hexdigest()
         path=self.directory / 'entries' / entry_id
@@ -166,9 +172,12 @@ class Handbook:
                          'verified_candidate_ids': sorted(verified), 'evidence_refs': entry['support_refs']})
         return True
 
-    def retrieve(self, section, format, features, compatibility_fingerprint, *, limit=3, observer=None):
+    def retrieve(self, section, format, features, compatibility_fingerprint, *, limit=3, observer=None, objective_profile=None, component=None):
         if not 0 <= limit <= 3:
             raise ValueError('at most three compatible active entries may be injected')
+        if objective_profile is not None:
+            from ..objectives import validate_profile
+            validate_profile(objective_profile)
         observer = observer or observation_for(self)
         attempt = 1 + sum(e['event_type'] in {'MEMORY_RETRIEVAL_STARTED', 'MEMORY_RETRIEVAL_COMPLETED'} for e in observer.log.read())
         retrieval_id = digest({'context': observer.context, 'section': section, 'format': format,
@@ -176,6 +185,9 @@ class Handbook:
                                'attempt': attempt})
         common = {'retrieval_id': retrieval_id, 'section': section, 'format': format,
                   'compatibility_fingerprint': compatibility_fingerprint, 'attempt': attempt}
+        if objective_profile is not None:
+            common.update(objective_profile_id=objective_profile['objective_profile_id'],
+                          objective_version=objective_profile['version'], component=component)
         observer.emit('MEMORY_RETRIEVAL_STARTED', common)
         result, retained = [], []
         states = sorted(self.view()['states'].items())
@@ -201,6 +213,9 @@ class Handbook:
                 continue
             if not conditions_match(entry, {**features, 'format': format}):
                 observer.emit('MEMORY_FILTERED', {**payload, 'reason': 'CONDITIONS_MISMATCH'})
+                continue
+            if not objective_matches(entry, objective_profile, component):
+                observer.emit('MEMORY_FILTERED', {**payload, 'reason': 'OBJECTIVE_SCOPE_MISMATCH'})
                 continue
             public = {key: entry[key] for key in ('entry_id', 'section', 'applicable_format', 'conditions',
                       'action', 'explanation', 'falsification', 'compatibility_fingerprint')}

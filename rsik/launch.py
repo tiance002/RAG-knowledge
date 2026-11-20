@@ -5,6 +5,7 @@ Every actual network/execution boundary requires the same pinned context.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -39,7 +40,14 @@ def read_binding(record):
     data = Path(record['path']).read_bytes()
     if bytes_hash(data) != record['sha256']:
         raise ValueError('LAUNCH_STALE_BINDING')
-    return load(record['path'])
+    return json.loads(data)
+
+
+def read_frozen_launch_plan(context):
+    data = Path(context.plan_path).read_bytes()
+    if bytes_hash(data) != context.plan_sha256:
+        raise ValueError('LAUNCH_PLAN_CHANGED')
+    return json.loads(data)
 
 
 def fixture_identity(path):
@@ -66,10 +74,7 @@ def validate_launch(context, *, phase=None, candidate=None, fixtures=None, model
     """
     if not isinstance(context, LaunchContext):
         raise ValueError('TRUSTED_LAUNCH_CONTEXT_REQUIRED')
-    path = Path(context.plan_path)
-    if bytes_hash(path.read_bytes()) != context.plan_sha256:
-        raise ValueError('LAUNCH_PLAN_CHANGED')
-    plan = load(path)
+    plan = read_frozen_launch_plan(context)
     fixed_history = plan.get('evaluator_profile') == 'source-relations-fixed-history/v1'
     if any((load(Path(f)/'manifest.json').get('profile') == 'source-relations-fixed-history/v1') != fixed_history
            for f in plan.get('fixtures', {})):

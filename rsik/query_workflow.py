@@ -97,6 +97,13 @@ def resume_query_round(*, directory, registry, fixtures, evidence=None):
     public = load(directory / 'public-context.json')
     if bytes_hash(canonical(public)) != record['public_context_sha256']:
         raise ValueError('QUERY_COMPLETED_PUBLIC_CHANGED')
+    if 'objective_profile' in record:
+        from .objectives import prompt_objective
+        frozen = load(directory / 'objective-profile.json')
+        if (frozen['current_objective_profile'] != record['objective_profile']
+                or digest(frozen) != record['objective_freeze_sha256']
+                or prompt_objective(record['objective_profile']) != public.get('objective')):
+            raise ValueError('QUERY_COMPLETED_OBJECTIVE_CHANGED')
     profile = record['role_profile']['version']
     if record['role_profile'] != profile_manifest(profile) or record.get('proposal_roles') != roles_for(profile):
         raise ValueError('QUERY_COMPLETED_ROLE_PROFILE_CHANGED')
@@ -250,14 +257,14 @@ def assert_order_angle(run):
 def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry,
                     directory, capsule_factory, scanner, handbook=None,
                     compatibility_fingerprint=None, features=None, format='OTHER',
-                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None, launch=None, evidence=None, observer=None, runtime_identity=None):
+                    enabled_slots=SLOTS, deadline=None, guard=lambda: None, role_profile=LEGACY, experience_session=None, launch=None, evidence=None, observer=None, runtime_identity=None, objective_transition=None):
     """Run Diagnosis/P1/P2/P3, ordinary four-suite replay, then Curator/Meta.
 
     M1 advisory roles share the M1 profile/seam; legacy profiles retain their read-only client.
     The selected_training_directory uses the existing query verification format.
     It is training adoption only; fresh sealed verification remains mandatory.
     """
-    from .launch import guard_real,validate_launch
+    from .launch import guard_real, read_frozen_launch_plan, validate_launch
     from .execution_evidence import ExecutionEvidence
     expected_models={r:getattr(roles,'models',{}).get(r,'gpt-6-luna') for r in ('diagnose',)+tuple(roles_for(role_profile).values())}
     expected_models.update({r:getattr(advisory_roles,'models',{}).get(r,'gpt-6-luna') for r in ('curator','meta')})
@@ -276,6 +283,19 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         validate_launch(launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile,runtime_identity=runtime_identity)
     else:
         guard_real(evidence,launch,candidate=parent,fixtures=fixtures,directory=directory,models=expected_models,role_profile=role_profile,runtime_identity=runtime_identity)
+    if 'objective' in public:
+        raise ValueError('OBJECTIVE_MUST_COME_FROM_HOST_CONFIGURATION')
+    if launch is not None:
+        planned_transition = read_frozen_launch_plan(launch).get('objective_transition')
+        if objective_transition is not None and objective_transition != planned_transition:
+            raise ValueError('OBJECTIVE_LAUNCH_MISMATCH')
+        objective_transition = planned_transition
+    from .objectives import freeze_objective, prompt_objective, validate_transition
+    objective = None
+    if objective_transition is not None:
+        objective = validate_transition(objective_transition)['current_objective_profile']
+        if 'context_selection' not in objective['components']:
+            raise ValueError('OBJECTIVE_COMPONENT_NOT_ALLOWED')
     if hasattr(roles,'launch'):roles.launch=launch
     if hasattr(advisory_roles,'launch'):advisory_roles.launch=launch
     original_guard = guard
@@ -291,6 +311,8 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
     restrict_directory(directory)
+    frozen_objective = freeze_objective(directory, objective, previous=objective_transition['previous'],
+        reason=objective_transition['reason'], source_reference=objective_transition['source_reference']) if objective else None
     observer = observer if observer is not None else observation_for(directory)
     observer.update_context(round_id=public['round_id'], parent_id=parent['candidate_id'],
                             role_profile=role_profile, role_profile_hash=(runtime_identity['sha256'] if runtime_identity
@@ -312,6 +334,8 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         raise ValueError('QUERY_PUBLIC_PARENT_CODE_CHANGED')
     freezes = {str(f.resolve()): adapters(f)[0](f, expected_count=20) for f in fixtures}
     public = deepcopy(public)
+    if objective:
+        public['objective'] = prompt_objective(objective)
     if handbook is not None:
         if not compatibility_fingerprint:
             raise ValueError('HANDBOOK_COMPATIBILITY_REQUIRED')
@@ -320,6 +344,8 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         parameters = signature(handbook.retrieve).parameters
         observation_kwargs = {'observer': observer} if ('observer' in parameters or
             any(p.kind == Parameter.VAR_KEYWORD for p in parameters.values())) else {}
+        if objective:
+            observation_kwargs.update(objective_profile=objective, component='context_selection')
         for section in ('dedup', 'budget', 'order', 'format'):
             receipt = handbook.retrieve(section, format, features or {}, compatibility_fingerprint, **observation_kwargs)
             entries.extend(receipt)
@@ -509,6 +535,8 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
                   public_semantics_sha256=bytes_hash(canonical(public_semantics(public))),
                   role_models=models,
                   seam_profile=getattr(roles, 'seam_profile', 'SYNTHETIC'))
+    if objective:
+        result.update(objective_profile=objective, objective_freeze_sha256=digest(frozen_objective))
     if 'candidate_decisions' in result and set(d['angle'] for d in result['candidate_decisions']) == set(SLOTS):
         # Family input is the pre-Holm decisions archived by each replay. Reusing
         # adjusted items as inputs would erase their evidence provenance.
@@ -536,6 +564,8 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
             coordinator_round_id=public['round_id'], coordinator_selected_slot=slot,
             coordinator_directory=str(directory.resolve()),
             independent_holdout=False, production_changed=False)
+        if objective:
+            receipt.update(objective_profile=objective, objective_freeze_sha256=digest(frozen_objective))
         atomic_write(selected['output'] / 'family-decision.json', canonical(family), exclusive=True)
         atomic_write(selected['output'] / 'round.json', canonical(receipt), exclusive=True)
         result['selected_training_directory'] = str(selected['output'].resolve())

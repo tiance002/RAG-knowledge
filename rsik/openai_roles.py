@@ -226,8 +226,14 @@ class OpenAIRoles:
         allowed = {'round_id', 'parent_alias', 'observations', 'observation_refs', 'evidence_quotes',
                    'parent_code', 'handbook_entry_ids'}
         extra={'search_history','search_memory'} if self.seam_profile=='query-autonomous-v1' else set()
-        if not isinstance(public, dict) or set(public)-allowed-{'parent_selection','handbook_entries','selector_contract','experiment_intent','compatibility_fingerprint','completed_candidate'}-extra or not allowed<=set(public):
+        if not isinstance(public, dict) or set(public)-allowed-{'parent_selection','handbook_entries','selector_contract','experiment_intent','compatibility_fingerprint','completed_candidate','objective'}-extra or not allowed<=set(public):
             raise ContractError('UNAUTHORIZED_PROJECTION_FIELD')
+        from .objectives import prompt_objective, validate_prompt_objective, validate_transition
+        objective = public.get('objective')
+        if 'objective' in public:
+            if role in {'curator', 'meta'} or self.seam_profile not in {'query-aware-v1', 'query-autonomous-v1'}:
+                raise ContractError('UNAUTHORIZED_OBJECTIVE_ROLE')
+            validate_prompt_objective(objective)
         from .selector_contract import interface_contract,INTENTS
         if public.get('experiment_intent','').startswith('QUERY_') and self.seam_profile not in {'query-aware-v1','query-autonomous-v1'}:
             raise ContractError('QUERY_PROFILE_REQUIRED')
@@ -282,18 +288,31 @@ class OpenAIRoles:
             raise ContractError('ADAPTIVE_ASSIGNMENT_REQUIRED')
         for attempt in range(self.max_attempts):
             if self.transport is single_request:
-                from .launch import validate_launch
+                from .launch import read_frozen_launch_plan, validate_launch
                 options = ({'role_profile': self.role_profile, 'runtime_identity': self.runtime_identity}
                            if self.role_profile in M1_PROFILES else {})
                 validate_launch(self.launch, boundary="MODEL_REQUEST", **options)
+                launch_plan = read_frozen_launch_plan(self.launch)
+                if role not in {'curator', 'meta'} and self.seam_profile in {'query-aware-v1','query-autonomous-v1'}:
+                    transition = launch_plan.get('objective_transition')
+                    expected = (prompt_objective(validate_transition(transition)['current_objective_profile'])
+                                if transition is not None else None)
+                    if objective != expected:
+                        raise ContractError('OBJECTIVE_LAUNCH_MISMATCH')
             if self.before_request:self.before_request()
             context = {'public': deepcopy(public), 'diagnosis': diagnosis}
+            if objective is not None:
+                context['objective_instructions'] = (
+                    'Follow the frozen user objective in public. Respect its hard constraints and component scope '
+                    'within the existing interface and evaluation rules. Treat unavailable metrics as unknown. '
+                    'The host owns the objective.'
+                )
             if assignment is not None: context['assignment'] = deepcopy(assignment)
             if attempt:
                 context['repair_instruction'] = 'Previous output violated the local contract. Return a valid response or ABSTAIN.'
             model = self.models.get(role, 'gpt-6-luna')
             if self.transport is single_request:
-                configured=json.loads(Path(self.launch.plan_path).read_bytes())['models']
+                configured=launch_plan['models']
                 if configured.get(role)!=model:raise ValueError('LAUNCH_MODEL_IDENTITY_MISMATCH')
             policy=POLICY
             task=TASKS[role]
@@ -385,6 +404,14 @@ class OpenAIRoles:
             search_memory = context['public'].get('search_memory')
             search_context = (canonical({'search_history':search_history,
                 'search_memory':search_memory}) if self.seam_profile=='query-autonomous-v1' else None)
+            objective_fields = {} if objective is None else {
+                'objective_profile_id': objective['objective_profile_id'],
+                'objective_version': objective['version'],
+                'objective_prompt_sha256': digest(objective),
+                'proposal_request': role in ANGLES,
+                'search_memory_included': bool(search_memory and search_memory.get('entries')),
+                'handbook_included': bool(context['public'].get('handbook_entries')),
+            }
             input_receipt = canonical({
                 'schema':'rsi-request-input-receipt/v1','request_key':key,'role':role,'attempt':attempt,
                 'request_hash':request_hash,'request_file':request_path.name,'request_wire_file':request_path.name,
@@ -396,7 +423,7 @@ class OpenAIRoles:
                 'search_memory_entries_in_request':len(search_memory.get('entries',[])) if search_memory is not None else None,
                 'search_context_canonical_bytes':len(search_context) if search_context is not None else None,
                 'user_message_utf8_bytes':len(body['input'][1]['content'].encode('utf-8')),
-                'wire_encoding':'UTF-8 JSON','measurement_scope':'EXACT_HTTP_REQUEST_BODY'})
+                'wire_encoding':'UTF-8 JSON','measurement_scope':'EXACT_HTTP_REQUEST_BODY', **objective_fields})
             if input_receipt_path.exists():
                 if input_receipt_path.read_bytes()!=input_receipt:
                     raise ContractError('REQUEST_INPUT_RECEIPT_CHANGED')

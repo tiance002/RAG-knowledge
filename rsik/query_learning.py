@@ -15,6 +15,7 @@ from .locking import atomic_write
 from .query_aware import QueryRegistry, PROFILE
 from .redact import make_visible, project_summary
 from .state import canonical, digest
+from .handbook.objectives import objective_metadata, scoped_entry
 
 
 def record_query_round_learning(*, handbook, record, public, compatibility_fingerprint):
@@ -369,14 +370,15 @@ def file_bindings(paths):
 def recovery_implementation():
     root=Path(__file__).resolve().parent
     return {str(p.relative_to(root)):bytes_hash(p.read_bytes()) for p in
-            (root/'query_learning.py',root/'handbook/store.py',root/'handbook/contracts.py',root/'contracts.py',root/'events.py')}
+            (root/'query_learning.py',root/'handbook/store.py',root/'handbook/contracts.py',root/'handbook/objectives.py',root/'contracts.py',root/'events.py')}
 
 
 def _delta_files(handbook,delta,context,created_at):
-    body={**delta['proposed_entry'],'evidence_mode':handbook.evidence_mode,'created_at':created_at}
+    body={**scoped_entry(delta['proposed_entry'], context),'evidence_mode':handbook.evidence_mode,'created_at':created_at}
     data=canonical(body);entry_id=bytes_hash(data)
     bundle={'entry_id':entry_id,'refs':{k:context['refs'][k] for k in body['support_refs']},
             'verified_candidates':context.get('verified_candidates',{}),'compatibility_fingerprint':context['compatibility_fingerprint']}
+    bundle.update(objective_metadata(context, body['support_refs']))
     evidence=canonical(bundle)
     return entry_id,data,bytes_hash(evidence),evidence
 
@@ -409,7 +411,7 @@ def _plan_delta(handbook,delta,context,evidence_id,created_at):
         handbook.get(delta['target_entry_id'])
         return [{'key':'delta:'+evidence_id,'kind':'DEPRECATION_REQUESTED','payload':{'entry_id':delta['target_entry_id'],
             'delta_hash':digest(delta),'reason':delta['reason'],'evidence_refs':delta['evidence_refs']}}],delta['target_entry_id']
-    entry=validate_entry(delta['proposed_entry'])
+    entry=scoped_entry(validate_entry(delta['proposed_entry']), context)
     if ('allowed_actions' in context and entry['action'] not in context['allowed_actions']):raise ContractError('UNSUPPORTED_HANDBOOK_INFERENCE')
     if entry['compatibility_fingerprint']!=context['compatibility_fingerprint'] or set(entry['applicable_format'])-set(context['allowed_formats']):
         raise ContractError('INCOMPATIBLE_HANDBOOK_SCOPE')
@@ -512,6 +514,10 @@ class VerifiedCandidateEvidence:
         self.candidate, self.parent, self.receipt = candidate, parent, receipt
         self.training, self.receipt_path, self.mode = training, receipt_path, policy.mode
         self.family = load(training / 'family-decision.json')
+        self.objective_profile = load(training / 'round.json').get('objective_profile')
+        if self.objective_profile is not None:
+            from .objectives import validate_profile
+            validate_profile(self.objective_profile)
         self.evidence_id = digest({'receipt': bytes_hash(receipt_path.read_bytes()),
                                    'family': self.family['family_id'], 'mode': self.mode, 'version': 'verified-evidence/v1'})
         return self
@@ -551,6 +557,15 @@ class VerifiedCandidateEvidence:
         context = {'refs': refs, 'verified_candidates': {self.candidate['candidate_id']: bytes_hash(self.receipt_path.read_bytes())},
                    'allowed_actions': [action], 'allowed_formats': ['OTHER'],
                    'compatibility_fingerprint': fingerprint, 'evidence_mode': self.mode}
+        if self.objective_profile is not None:
+            context['objective_profile'] = self.objective_profile
+            # Char effects use the verified paired rows; never infer answer quality.
+            if rows and all(type(r.get('chars_A')) is int and type(r.get('chars_B')) is int for r in rows):
+                before = sum(r['chars_A'] for r in rows)
+                after = sum(r['chars_B'] for r in rows)
+                context['metric_effects'] = {'context_chars': {
+                    'status': 'IMPROVED' if after < before else 'REGRESSED' if after > before else 'UNCHANGED',
+                    'evidence_refs': list(refs)}}
         return scanner.check(public), context
 
 

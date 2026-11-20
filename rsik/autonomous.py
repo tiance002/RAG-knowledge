@@ -5,7 +5,7 @@ Diagnosis and patches come from isolated OpenAI roles; verdicts are recomputed.
 """
 import ast,json,uuid
 from pathlib import Path
-from .autonomy_contract import validate_history,remember,project_search_memory
+from .autonomy_contract import validate_history,remember,project_search_memory,validate_memory_archive
 from .budgets import Budget
 from .capsule import Capsule
 from .errors import StageFailure
@@ -122,7 +122,7 @@ def static_patch_reason(worker,patch,error):
     return 'STATIC_POLICY_GUARD_REJECTED'
 
 
-def remember_round(memory,history,result,worker,round_number):
+def remember_round(memory,history,result,worker,round_number, **memory_scope):
     """One factual memory entry per proposal instance, even identical policies."""
     items=[]
     decisions={d['angle']:d for d in result.get('candidate_decisions',[])}
@@ -133,7 +133,7 @@ def remember_round(memory,history,result,worker,round_number):
         item=history_item(proposal,outcome,reasons,counts,quality_verdict=quality,
             execution_status=execution,failure_origin=origin)
         key=patch_identity(worker,proposal['worker_patch'])
-        entry=remember(memory,key,round_number,item)
+        entry=remember(memory,key,round_number,item, **memory_scope)
         history.append(item);items.append({'slot':slot,**entry})
     if not items:
         from .response_audit import NON_STRATEGY_OUTPUT_FAILURES
@@ -143,7 +143,7 @@ def remember_round(memory,history,result,worker,round_number):
         stopped=result.get('execution_state')=='FAILED' or result.get('stop_reason') in {'OWNER_REQUESTED_STOP','TEST_INVALIDATED_BY_ENGINEER','FROZEN_SYSTEM_CHANGED'}
         item=history_item(None,'STOPPED' if stopped else 'ABSTAIN',[result.get('stop_reason') or 'NO_PROPOSAL_RETURNED'],
             execution_status='STOPPED' if stopped else 'NOT_STARTED',failure_origin='GLOBAL_STOP' if stopped else 'NONE')
-        entry=remember(memory,digest({'abstain_round':round_number}),round_number,item)
+        entry=remember(memory,digest({'abstain_round':round_number}),round_number,item, **memory_scope)
         history.append(item);items.append({'slot':'NONE',**entry})
     return items
 
@@ -151,18 +151,35 @@ def remember_round(memory,history,result,worker,round_number):
 def run(config, *, launch=None):
     from .launch import validate_launch
     validate_launch(launch,phase='AUTONOMOUS_SEARCH',fixtures=config['fixtures'],directory=config.get('directory'))
+    from .launch import read_binding, read_frozen_launch_plan
+    plan = read_frozen_launch_plan(launch) if getattr(launch, 'plan_path', None) else {}
+    objective_transition = plan.get('objective_transition')
+    memory_scope = {}
+    if objective_transition is not None:
+        from .objectives import validate_transition
+        change = validate_transition(objective_transition)
+        memory_scope['objective_profile'] = change['current_objective_profile']
     directory=Path(config['directory']);registry=Path(config['query_registry']);fixtures=[Path(p) for p in config['fixtures']]
     budget=Budget(config['budget_ledger'])
     if 'search_start_nano' in config:
         from .campaign import SearchBudget
-        from .launch import read_binding
-        plan=load(launch.plan_path)
         if (plan['experiment'].get('nominal_usd')!=config.get('search_nominal_usd','0.20')
                 or plan['experiment'].get('search_start_nano')!=config['search_start_nano']):raise ValueError('SEARCH_BUDGET_CONFIGURATION_CHANGED')
         budget=SearchBudget(config['budget_ledger'],start_nano=config['search_start_nano'],nominal_usd=config.get('search_nominal_usd','0.20'))
     log=EventLog(directory/'events.sqlite')
     baseline_round=Path(config['baseline_round']);arm='B';history=[];round_number=0
     memory={'schema':'rsi-autonomy-memory/v1','rounds':0,'evicted_entries':0,'entries':[]}
+    if plan.get('previous_search_memory') is not None:
+        from copy import deepcopy
+        memory = deepcopy(validate_memory_archive(read_binding(plan['previous_search_memory'])))
+    initial_memory_rounds = memory['rounds']
+    if memory_scope:
+        from .launch import fixture_identity
+        from .experiment import executor
+        memory_scope.update(component='context_selection', compatibility_fingerprint=digest({
+            'component': 'context_selection', 'interface_contract': interface_contract(),
+            'evaluator': executor.EVALUATOR, 'fixed': executor.FIXED,
+            'fixtures': [fixture_identity(fixture) for fixture in fixtures]}))
     profile=config.get('profile','parallel')
     role_profile=config.get('role_profile','query-k3-dependency/v1')
     if config.get('strategy_config'):
@@ -239,7 +256,7 @@ def run(config, *, launch=None):
                 public=make_visible([project_summary('REPLAY_SUMMARY',counts,include_count_evidence=True)],
                     parent_code=selector(frame['worker'].decode())[1],round_id='round-'+uuid.uuid4().hex,scanner=scanner)
                 recent = history[-3:]
-                search_memory = project_search_memory(memory, recent=recent)
+                search_memory = project_search_memory(memory, recent=recent, **memory_scope)
                 public.update(selector_contract=interface_contract(),experiment_intent='STRUCTURAL_POLICY_SEARCH',
                     parent_selection=json.loads(frame['config'])['selection'],search_history=recent,
                     search_memory=search_memory)
@@ -268,9 +285,10 @@ def run(config, *, launch=None):
                     parent=parent,fixtures=fixtures,registry=QueryRegistry(registry),directory=trial/'integrated',
                     capsule_factory=capsule_factory,scanner=scanner,enabled_slots=enabled_slots,guard=guard,
                     role_profile=role_profile,experience_session=experience_session,launch=launch,handbook=handbook,compatibility_fingerprint=config.get('handbook_compatibility_fingerprint'),
-                    features=config.get('handbook_features'),format=config.get('handbook_format','OTHER'))
+                    features=config.get('handbook_features'),format=config.get('handbook_format','OTHER'),
+                    **({'objective_transition': objective_transition} if objective_transition is not None else {}))
                 guard()
-                items=remember_round(memory,history,result,frame['worker'],round_number)
+                items=remember_round(memory,history,result,frame['worker'],initial_memory_rounds+round_number, **memory_scope)
                 atomic_write(trial/'outcomes.json',canonical(items),exclusive=True)
                 atomic_write(directory/'search-memory.json',canonical(memory))
                 state['last_outcomes']=items
