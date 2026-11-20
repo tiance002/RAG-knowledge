@@ -36,6 +36,9 @@ def test_profile_revision_freezes_source_and_does_not_overwrite(tmp_path):
     record = freeze_objective(tmp_path, second, previous=first, **reason)
     assert record['previous_objective_profile'] == first
     assert record['primary_changed'] is False
+    assert not record['goal_family_changed'] and not record['primary_metric_changed']
+    assert record['constraints_changed'] and record['secondary_metrics_changed']
+    assert not record['component_scope_changed']
     assert {'hard_constraints', 'secondary_metrics'} <= set(record['changed_fields'])
     archived = (tmp_path / 'objective-profile.json').read_bytes()
     second['description'] = 'different'
@@ -45,6 +48,10 @@ def test_profile_revision_freezes_source_and_does_not_overwrite(tmp_path):
     with pytest.raises(ValueError, match='OBJECTIVE_VERSION_MUST_ADVANCE'):
         profile_change(first, profile('shorter_cases'), **reason)
     assert profile_change(first, profile('shorter_cases', 2), **reason)['primary_changed'] is True
+    other = {**first, 'objective_profile_id': 'other', 'components': ['retrieval']}
+    change = profile_change(first, other, **reason)
+    assert change['goal_family_changed'] and change['component_scope_changed']
+    assert not change['primary_metric_changed']
 
 
 def test_launch_objective_reads_only_hash_verified_bytes(tmp_path):
@@ -94,7 +101,7 @@ def test_scope_usage_uses_provider_totals_and_does_not_infer_section_tokens(tmp_
     sent = []
 
     def transport(body, *_):
-        sent.append(json.loads(body['input'][1]['content'])['public'])
+        sent.append(json.loads(body['input'][1]['content']))
         return response({'status': 'ABSTAIN', 'result': None, 'reason': 'SYNTHETIC'})
 
     roles = OpenAIRoles(Budget(ledger), tmp_path / 'roles', tmp_path / 'unused', LeakScanner(),
@@ -104,18 +111,39 @@ def test_scope_usage_uses_provider_totals_and_does_not_infer_section_tokens(tmp_
                                               quality_verdict='REJECTED', execution_status='COMPLETED'))
     first, second = public(), public()
     first['objective'] = prompt_objective(profile())
-    second['objective'] = prompt_objective(profile('shorter_cases', 2))
+    second['objective'] = prompt_objective(profile('shorter_cases', 2, secondary=['answer_tokens']))
     second['search_memory'] = project_search_memory(memory)
     roles.call('P2_BUDGET', first)
     roles.call('P2_BUDGET', second)
     paths = list(roles.directory.glob('*.input-receipt.json'))
     data = objective_usage(ledger, paths + paths)
     early, later = data['groups']
-    assert sent[0]['objective']['primary_metric'] == 'context_chars'
-    assert sent[1]['objective']['primary_metric'] == 'shorter_cases'
+    assert sent[0]['public']['objective']['primary_metric'] == 'context_chars'
+    assert sent[1]['public']['objective']['primary_metric'] == 'shorter_cases'
+    assert 'Unavailable secondary metrics (UNKNOWN): answer_tokens.' in sent[1]['objective_instructions']
     assert later['requests'] == early['requests'] == 1
     assert data['all_usage']['input_tokens'] == 200
     assert data['all_usage']['output_tokens'] == 40
     assert later['proposal_input_tokens']['tokens'] == 100
     assert early['search_memory_tokens']['tokens'] == 0
     assert later['search_memory_tokens'] == {'status': 'UNKNOWN', 'tokens': None, 'unknown_requests': 1}
+
+
+@pytest.mark.parametrize(('selected', 'error'), [
+    (profile('answer_tokens'), 'OBJECTIVE_PRIMARY_UNAVAILABLE:answer_tokens'),
+    (profile('replay_seconds'), 'OBJECTIVE_PRIMARY_UNAVAILABLE:replay_seconds'),
+    (profile('parent_chars'), 'OBJECTIVE_REFERENCE_METRIC_AXIS:parent_chars'),
+    (profile(constraints=[{'metric_id': 'answer_tokens', 'operator': '<=', 'value': 100}]),
+     'OBJECTIVE_CONSTRAINT_UNAVAILABLE:answer_tokens'),
+])
+def test_workflow_rejects_unmeasurable_executable_objective_before_roles(monkeypatch, tmp_path, selected, error):
+    from rsik import query_workflow
+
+    setup = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'tests' / 'test_query_workflow.py'))['setup']
+    kwargs, _, _ = setup(monkeypatch, tmp_path)
+    transition = {'previous': None, 'current': selected, 'reason': 'Owner objective',
+                  'source_reference': 'DEV fixture'}
+    monkeypatch.setattr(kwargs['roles'], 'diagnose', lambda _: pytest.fail('Diagnosis unexpectedly started'))
+    with pytest.raises(ValueError, match=error):
+        query_workflow.run_query_round(**kwargs, objective_transition=transition)
+    assert not kwargs['directory'].exists()

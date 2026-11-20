@@ -47,14 +47,20 @@ def test_scoped_success_survives_hard_and_secondary_revision_not_new_primary(tmp
     book = Handbook(tmp_path)
     current = profile()
     key = book.commit_delta(delta(entry()), context(current), idempotency_key='scoped')
-    assert retrieve(book, current)[0]['entry_id'] == key
+    initial = retrieve(book, current)[0]
+    assert initial['entry_id'] == key
+    assert initial['objective_applicability'] == 'COMPATIBILITY_UNKNOWN'
+    assert not retrieve(book, {**current, 'objective_profile_id': 'another-goal'})
     revised = deepcopy(current)
     revised['version'] = 2
     revised['hard_constraints'] = [{'metric_id': 'context_chars', 'operator': '<=', 'value': 900}]
-    assert retrieve(book, revised)[0]['entry_id'] == key
+    summary = retrieve(book, revised)[0]
+    assert summary['entry_id'] == key
+    assert summary['objective_applicability'] == 'COMPATIBILITY_UNKNOWN'
+    assert summary['hard_constraint_statuses'] == {'context_chars': 'UNKNOWN'}
     revised['secondary_metrics'] = ['replay_seconds']
     revised['required_metric_contracts']['replay_seconds'] = CONTRACT_VERSION
-    assert retrieve(book, revised)[0]['entry_id'] == key
+    assert retrieve(book, revised)[0]['metric_effects']['replay_seconds'] == 'UNKNOWN'
     assert retrieve(book, profile('replay_seconds')) == []
     assert retrieve(book) == []
     assert retrieve(book, current, limit=0) == []
@@ -73,6 +79,7 @@ def test_only_suitable_failures_cross_objectives(tmp_path, failure, expected):
     assert bool(result) is expected
     if failure == 'NO_GAIN':
         assert retrieve(book, current)[0]['entry_id'] == key
+        assert not retrieve(book, {**current, 'objective_profile_id': 'another-goal'})
     assert not book.retrieve('dedup', 'OTHER', {'same_source': False}, 'SYNTHETIC-compatible',
                              objective_profile=current, component='context_selection')
     assert not book.retrieve('dedup', 'OTHER', {'same_source': True}, 'SYNTHETIC-compatible',
@@ -157,3 +164,32 @@ def test_normal_training_verification_and_learning_bind_frozen_objective(tmp_pat
     before = case['handbook'].log.read()
     assert bridge_tests.bridge(case) == receipt
     assert case['handbook'].log.read() == before
+
+
+def test_regressed_metric_is_a_tradeoff_or_hard_conflict(tmp_path):
+    from rsik.redact import validate_handbook_summaries
+
+    book = Handbook(tmp_path)
+    current = profile('candidate_chars')
+    refs = ['evidence-one', 'evidence-two']
+    ctx = context(current, metric_effects={
+        'context_chars': {'status': 'IMPROVED', 'evidence_refs': refs},
+        'shorter_cases': {'status': 'REGRESSED', 'evidence_refs': refs},
+    })
+    key = book.commit_delta(delta(entry()), ctx, idempotency_key='tradeoff')
+    before = book.get(key)
+    revised = {**current, 'version': 2, 'secondary_metrics': ['shorter_cases'],
+               'required_metric_contracts': {**current['required_metric_contracts'], 'shorter_cases': CONTRACT_VERSION}}
+    summary = retrieve(book, revised)[0]
+    assert summary['objective_applicability'] == 'TRADEOFF'
+    assert summary['metric_effects']['shorter_cases'] == 'REGRESSED'
+    assert summary['metric_effects']['candidate_chars'] == 'IMPROVED'
+    revised['hard_constraints'] = [{'metric_id': 'shorter_cases', 'operator': '>=', 'value': 1}]
+    result = retrieve(book, revised)
+    assert result[0]['objective_applicability'] == 'HARD_CONSTRAINT_CONFLICT'
+    assert result[0]['hard_constraint_statuses'] == {'shorter_cases': 'CONFLICT'}
+    validate_handbook_summaries(result, [key])
+    result[0]['hard_constraint_statuses']['shorter_cases'] = 'PASS'
+    with pytest.raises(ContractError, match='INVALID_HANDBOOK_OBJECTIVE_SUMMARY'):
+        validate_handbook_summaries(result, [key])
+    assert book.get(key) == before

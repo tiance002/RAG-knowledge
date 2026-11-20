@@ -290,12 +290,13 @@ def run_query_round(*, public, roles, advisory_roles, parent, fixtures, registry
         if objective_transition is not None and objective_transition != planned_transition:
             raise ValueError('OBJECTIVE_LAUNCH_MISMATCH')
         objective_transition = planned_transition
-    from .objectives import freeze_objective, prompt_objective, validate_transition
+    from .objectives import (
+        freeze_objective, prompt_objective, validate_context_selection_objective, validate_transition,
+    )
     objective = None
     if objective_transition is not None:
         objective = validate_transition(objective_transition)['current_objective_profile']
-        if 'context_selection' not in objective['components']:
-            raise ValueError('OBJECTIVE_COMPONENT_NOT_ALLOWED')
+        validate_context_selection_objective(objective)
     if hasattr(roles,'launch'):roles.launch=launch
     if hasattr(advisory_roles,'launch'):advisory_roles.launch=launch
     original_guard = guard

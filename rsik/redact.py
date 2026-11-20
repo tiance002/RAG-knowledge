@@ -66,11 +66,25 @@ def validate_handbook_summaries(entries, entry_ids):
     if not isinstance(entries,list) or len(entries)>3 or not isinstance(entry_ids,list) or len(entry_ids)>3:
         raise ContractError('UNAUTHORIZED_HANDBOOK_REFERENCE')
     from .handbook.contracts import validate_entry
+    from .handbook.objectives import EFFECT_STATUSES, reuse_status
+    from .objectives import METRIC_CONTRACTS
     for entry in entries:
         keys={'entry_id','section','applicable_format','conditions','action','explanation','falsification','compatibility_fingerprint'}
-        if not isinstance(entry,dict) or set(entry)!=keys or entry['entry_id'] not in entry_ids:
+        objective_keys = {'objective_applicability', 'metric_effects', 'hard_constraint_statuses'}
+        if not isinstance(entry,dict) or set(entry) not in (keys, keys | objective_keys) or entry['entry_id'] not in entry_ids:
             raise ContractError('UNAUTHORIZED_HANDBOOK_REFERENCE')
-        validate_entry({**{k:v for k,v in entry.items() if k!='entry_id'},'support_refs':[],'supersedes':[]})
+        validate_entry({**{k: entry[k] for k in keys - {'entry_id'}}, 'support_refs': [], 'supersedes': []})
+        if objective_keys <= set(entry):
+            reuse = entry['objective_applicability']
+            effects = entry['metric_effects']
+            constraints = entry['hard_constraint_statuses']
+            if (not isinstance(effects, dict) or not effects or set(effects) - set(METRIC_CONTRACTS)
+                    or any(not isinstance(status, str) or status not in EFFECT_STATUSES for status in effects.values())
+                    or not isinstance(constraints, dict) or set(constraints) - set(effects)
+                    or any(status != ('CONFLICT' if effects[metric] == 'REGRESSED' else 'UNKNOWN')
+                           for metric, status in constraints.items())
+                    or reuse != reuse_status(effects, constraints)):
+                raise ContractError('INVALID_HANDBOOK_OBJECTIVE_SUMMARY')
     if len({e['entry_id'] for e in entries})!=len(entries):raise ContractError()
 
 

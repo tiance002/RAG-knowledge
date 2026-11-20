@@ -302,11 +302,26 @@ class OpenAIRoles:
             if self.before_request:self.before_request()
             context = {'public': deepcopy(public), 'diagnosis': diagnosis}
             if objective is not None:
+                from .objectives import context_selection_measures
+
                 context['objective_instructions'] = (
                     'Follow the frozen user objective in public. Respect its hard constraints and component scope '
                     'within the existing interface and evaluation rules. Treat unavailable metrics as unknown. '
                     'The host owns the objective.'
                 )
+                unavailable = [metric for metric in objective['secondary_metrics']
+                               if not context_selection_measures(metric)]
+                if unavailable:
+                    context['objective_instructions'] += (
+                        ' Unavailable secondary metrics (UNKNOWN): ' + ', '.join(unavailable) + '.'
+                    )
+                if any('objective_applicability' in entry for entry in public.get('handbook_entries', [])):
+                    context['objective_instructions'] += (
+                        ' Handbook HARD_CONSTRAINT_CONFLICT entries are not recommendations. '
+                        'COMPATIBILITY_UNKNOWN requires new evidence before reuse under a hard constraint. '
+                        'Use metric_effects to account for tradeoffs and missing evidence. '
+                        'Relative effects do not prove that a hard constraint passes.'
+                    )
             if assignment is not None: context['assignment'] = deepcopy(assignment)
             if attempt:
                 context['repair_instruction'] = 'Previous output violated the local contract. Return a valid response or ABSTAIN.'

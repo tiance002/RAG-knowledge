@@ -7,7 +7,7 @@ import operator
 from .analytics.reader import canonical, digest, read_artifact
 from .analytics.projections import project_sources
 from .locking import atomic_write
-from .objectives import METRIC_CONTRACTS, validate_profile
+from .objectives import METRIC_CONTRACTS, validate_objective_axes, validate_profile
 
 
 _NUMERIC = ('parent_chars', 'candidate_chars', 'shorter_cases', 'longer_cases', 'unchanged_cases')
@@ -119,6 +119,7 @@ def compare_historical(profile, artifacts, *, metric_contracts=None):
     are frozen in the result, independently of objective preference.
     """
     profile = validate_profile(profile)
+    validate_objective_axes(profile)
     contracts = METRIC_CONTRACTS if metric_contracts is None else metric_contracts
     requested = list(dict.fromkeys([profile['primary_metric'], *profile['secondary_metrics'],
                                    *profile['tie_breakers'], *profile['required_metric_contracts'],
@@ -136,11 +137,9 @@ def compare_historical(profile, artifacts, *, metric_contracts=None):
     projected = {record['id']: record['payload'] for record in projections
                  if record['projection_type'] == 'Candidate'}
     results, seen = [], set()
-    directions = {metric: contracts[metric]['direction'] for metric in requested}
-    directions[profile['primary_metric']] = profile['direction']
+    directions = {metric: METRIC_CONTRACTS[metric]['direction'] for metric in requested}
     axes = list(dict.fromkeys([profile['primary_metric'], *profile['secondary_metrics']]))
-    ranking = list(dict.fromkeys([profile['primary_metric'], *profile['tie_breakers'],
-                                 *profile['secondary_metrics']]))
+    ranking = [profile['primary_metric'], *profile['tie_breakers']]
     for artifact in loaded:
         data = artifact['data']
         for decision in data.get('candidate_decisions', []):

@@ -47,6 +47,8 @@ def test_objective_switch_keeps_applicable_failures_and_excludes_success_no_gain
         'OBSERVED', 'VALIDATED', 'NO_GAIN', 'REJECTED', 'PATCH_INVALID'}
     assert outcomes(project_search_memory(memory, **scope(profile('shorter_cases', 2)))) == {
         'REJECTED', 'PATCH_INVALID'}
+    other_family = {**profile(), 'objective_profile_id': 'different-goal'}
+    assert outcomes(project_search_memory(memory, **scope(other_family))) == {'REJECTED', 'PATCH_INVALID'}
     assert project_search_memory(memory, **scope(fingerprint='b' * 64))['entries'] == []
     assert project_search_memory(memory, **scope(component='retrieval'))['entries'] == []
     assert memory == frozen

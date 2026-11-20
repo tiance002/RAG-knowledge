@@ -104,7 +104,7 @@ def memory_applicable(entry, *, objective_profile=None, compatibility_fingerprin
     """Host filtering only; a local regression never becomes a global prohibition."""
     if objective_profile is None:
         return 'objective_profile' not in entry
-    from .objectives import objective_scope, validate_profile
+    from .objectives import same_objective_target, validate_profile
     current = validate_profile(objective_profile)
     previous = entry.get('objective_profile')
     if (entry.get('component') != component or
@@ -115,7 +115,7 @@ def memory_applicable(entry, *, objective_profile=None, compatibility_fingerprin
     if _confirmed_negative(entry['history']):
         # Interface and candidate failures remain evidence under the same conditions.
         return True
-    return previous is not None and objective_scope(previous) == objective_scope(current)
+    return previous is not None and same_objective_target(previous, current)
 
 
 def validate_memory_archive(memory):

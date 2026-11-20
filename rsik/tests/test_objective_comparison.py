@@ -113,6 +113,34 @@ class ObjectiveComparisonTests(unittest.TestCase):
         self.assertIsNone(rows['unknown']['rank'])
         self.assertEqual(rows['good']['rank'], 1)
 
+    def test_secondary_only_changes_pareto_until_explicitly_used_to_break_ties(self):
+        spec = self.artifact([decision('one-shorter', [20, 100]), decision('two-shorter', [60, 60])])
+        objective = profile(secondary=['shorter_cases'])
+        rows = {row['candidate_id']: row for row in compare_historical(objective, [spec])['candidates']}
+        self.assertEqual({row['rank'] for row in rows.values()}, {1})
+        self.assertEqual(rows['one-shorter']['pareto_status'], 'DOMINATED')
+        self.assertEqual(rows['two-shorter']['pareto_status'], 'FRONTIER')
+        objective['tie_breakers'] = ['shorter_cases']
+        rows = {row['candidate_id']: row for row in compare_historical(objective, [spec])['candidates']}
+        self.assertEqual(rows['two-shorter']['rank'], 1)
+        self.assertEqual(rows['one-shorter']['rank'], 2)
+
+    def test_legacy_alias_profile_is_readable_without_allowing_duplicate_axes(self):
+        import pytest
+        from rsik.objectives import validate_profile
+
+        legacy = profile(secondary=['candidate_chars'])
+        self.assertEqual(validate_profile(legacy), legacy)
+        with pytest.raises(ValueError, match='OBJECTIVE_DUPLICATE_METRIC_ALIAS'):
+            compare_historical(legacy, [])
+
+    def test_unsupported_hard_constraint_cannot_pass_in_historical_comparison(self):
+        objective = profile(constraints=[{'metric_id': 'answer_tokens', 'operator': '<=', 'value': 100}])
+        spec = self.artifact([decision('a', [10])])
+        row = compare_historical(objective, [spec])['candidates'][0]
+        self.assertEqual(row['constraint_status'], 'UNKNOWN')
+        self.assertIsNone(row['rank'])
+
     def test_dominance_and_deterministic_ties(self):
         spec = self.artifact([decision('z', [20]), decision('a', [20]), decision('large', [30])])
         result = compare_historical(profile(), [spec, spec])

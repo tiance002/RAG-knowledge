@@ -156,9 +156,10 @@ def run(config, *, launch=None):
     objective_transition = plan.get('objective_transition')
     memory_scope = {}
     if objective_transition is not None:
-        from .objectives import validate_transition
+        from .objectives import validate_context_selection_objective, validate_transition
         change = validate_transition(objective_transition)
         memory_scope['objective_profile'] = change['current_objective_profile']
+        validate_context_selection_objective(memory_scope['objective_profile'])
     directory=Path(config['directory']);registry=Path(config['query_registry']);fixtures=[Path(p) for p in config['fixtures']]
     budget=Budget(config['budget_ledger'])
     if 'search_start_nano' in config:

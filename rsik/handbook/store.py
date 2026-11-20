@@ -13,7 +13,7 @@ from ..redact import LeakScanner
 from ..observability import observation_for
 from .contracts import conflicting, conditions_match, validate_entry
 from .projection import project
-from .objectives import OBJECTIVE_FIELDS, objective_metadata, objective_matches, scoped_entry
+from .objectives import OBJECTIVE_FIELDS, objective_metadata, objective_matches, objective_reuse_summary, scoped_entry
 
 
 class RetrievalReceipt(list):
@@ -219,6 +219,7 @@ class Handbook:
                 continue
             public = {key: entry[key] for key in ('entry_id', 'section', 'applicable_format', 'conditions',
                       'action', 'explanation', 'falsification', 'compatibility_fingerprint')}
+            public.update(objective_reuse_summary(entry, objective_profile))
             result.append(self.scanner.check(public))
             retained.append(entry)
             observer.emit('MEMORY_RANKED', {**payload, 'rank': len(result), 'selected': len(result) <= limit})

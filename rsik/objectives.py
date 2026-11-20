@@ -93,6 +93,42 @@ def objective_scope(profile):
             'metric_contract_version': profile['required_metric_contracts'][metric]}
 
 
+def same_objective_target(previous, current):
+    return (previous['objective_profile_id'] == current['objective_profile_id']
+            and objective_scope(previous) == objective_scope(current))
+
+
+def canonical_metric(metric):
+    return 'context_chars' if metric == 'candidate_chars' else metric
+
+
+def validate_objective_axes(profile):
+    axes = {profile['primary_metric'], *profile['secondary_metrics'], *profile['tie_breakers']}
+    if len({canonical_metric(metric) for metric in axes}) != len(axes):
+        raise ValueError('OBJECTIVE_DUPLICATE_METRIC_ALIAS')
+    if 'parent_chars' in axes:
+        raise ValueError('OBJECTIVE_REFERENCE_METRIC_AXIS:parent_chars')
+
+
+def context_selection_measures(metric):
+    # This seam does not provide comparable, complete candidate timing receipts.
+    return (METRIC_CONTRACTS[metric]['evaluator_identity'] == 'rsi-context-replay'
+            and metric != 'replay_seconds')
+
+
+def validate_context_selection_objective(profile):
+    if 'context_selection' not in profile['components']:
+        raise ValueError('OBJECTIVE_COMPONENT_NOT_ALLOWED')
+    validate_objective_axes(profile)
+    primary = profile['primary_metric']
+    if not context_selection_measures(primary):
+        raise ValueError('OBJECTIVE_PRIMARY_UNAVAILABLE:' + primary)
+    for constraint in profile['hard_constraints']:
+        metric = constraint['metric_id']
+        if not context_selection_measures(metric):
+            raise ValueError('OBJECTIVE_CONSTRAINT_UNAVAILABLE:' + metric)
+
+
 def profile_change(previous, current, *, reason, source_reference):
     """Create a deterministic transition record from explicit owner configuration."""
     previous = validate_profile(previous) if previous is not None else None
@@ -104,10 +140,17 @@ def profile_change(previous, current, *, reason, source_reference):
         if current != previous and current['version'] <= previous['version']:
             raise ValueError('OBJECTIVE_VERSION_MUST_ADVANCE')
     changed = sorted(field for field in PROFILE_FIELDS if previous is None or previous[field] != current[field])
+    changes = {
+        'goal_family_changed': previous is not None and 'objective_profile_id' in changed,
+        'primary_metric_changed': previous is not None and objective_scope(previous) != objective_scope(current),
+        'constraints_changed': previous is not None and 'hard_constraints' in changed,
+        'secondary_metrics_changed': previous is not None and 'secondary_metrics' in changed,
+        'component_scope_changed': previous is not None and 'components' in changed,
+    }
     return {'schema': 'rsi-objective-change/v1', 'previous_objective_profile': previous,
             'current_objective_profile': current, 'previous_sha256': digest(previous) if previous else None,
             'current_sha256': digest(current), 'change_reason': reason, 'changed_fields': changed,
-            'primary_changed': previous is not None and objective_scope(previous) != objective_scope(current),
+            'primary_changed': changes['primary_metric_changed'], **changes,
             'source_reference': source_reference}
 
 
