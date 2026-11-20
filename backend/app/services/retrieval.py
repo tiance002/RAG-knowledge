@@ -14,10 +14,12 @@ from app.services.llm import is_unknown_provider_error
 
 import time
 import json
+import math
 from typing import List, Dict, Any, Optional, Literal, Tuple
 from datetime import datetime
 
 from sqlmodel import Session, select
+from sqlalchemy import update
 
 from app.models import DocumentChunk, FileDocument, KnowledgeBase, RetrievalLog, generate_uuid, CustomModel
 from app.services.vector_store import VectorStoreService
@@ -26,6 +28,63 @@ from app.services.bm25 import BM25Index, get_bm25_index
 from app.core.config import get_settings
 
 settings = get_settings()
+
+
+def observe_batch_rerank(session: Session, metrics: Dict[str, Any], batch_rerank, **kwargs):
+    """Observe the existing callable without changing its results or exception contract.
+
+    The count describes delivered output after filtering/top-k, not completeness
+    of upstream scoring. Unknown scores can be hidden by the callable's top-k.
+    """
+    started = time.perf_counter()
+    status = "FAILED"
+    count = None
+    try:
+        results = batch_rerank(**kwargs)
+        # batch_rerank retains unscored candidates through threshold filtering.
+        # Thus empty output is known only under its normal positive top-k contract.
+        top_k = kwargs.get("top_k") or settings.RERANK_DEFAULT_TOP_K
+        known_output = isinstance(results, list) and all(
+            isinstance(row, dict) and row.get("rerank_status") == "SCORED"
+            and isinstance(row.get("rerank_score"), (int, float))
+            and math.isfinite(row["rerank_score"])
+            for row in results
+        )
+        if known_output and (results or isinstance(top_k, int) and top_k > 0):
+            status, count = "RETURNED", len(results)
+        else:
+            status = "UNKNOWN"
+        return results
+    except Exception as error:
+        status = "UNKNOWN" if is_unknown_provider_error(error) else "FAILED"
+        raise
+    finally:
+        latency_ms = (time.perf_counter() - started) * 1000
+        log_id = metrics.get("retrieval_log_id")
+        persistence_status = "NOT_RUN"
+        if log_id:
+            try:
+                values = {"rerank_enabled": True, "rerank_latency_ms": latency_ms}
+                if count is not None:
+                    values["rerank_count"] = count
+                updated = session.execute(
+                    update(RetrievalLog).where(RetrievalLog.id == log_id).values(**values)
+                )
+                session.commit()
+                persistence_status = "RETURNED" if updated.rowcount == 1 else "UNKNOWN"
+            except Exception as error:
+                persistence_status = "FAILED"
+                try:
+                    session.rollback()
+                except Exception:
+                    pass
+                print(f"⚠️ [Retrieval] 更新 Rerank 日志失败: {type(error).__name__}")
+        metrics.update(rerank_count=count, rerank_latency_ms=latency_ms,
+                       rerank_status=status, rerank_log_persistence_status=persistence_status)
+        event("retrieval.rerank_terminal", retrieval_log_id=log_id,
+              status=status, execution_status=status, rerank_count=count,
+              rerank_latency_ms=latency_ms, count_scope="delivered_after_filter_topk",
+              persistence={"status": persistence_status})
 
 
 class _HybridNoCandidates(Exception):
@@ -287,16 +346,17 @@ class RetrievalService:
         metrics["final_count"] = len(results)
         metrics["fallback_used"] = fallback_used
         metrics["retrieval_status"] = outcome
-        event('retrieval.metrics', metrics=metrics, search_mode=search_mode, top_k=top_k,
-              score_threshold=score_threshold, vector_weight=vector_weight, bm25_weight=bm25_weight)
-
         # 记录检索日志
         if log_retrieval:
-            self._log_retrieval(
+            retrieval_log_id = self._log_retrieval(
                 session, query, kb_ids, search_mode, top_k, score_threshold,
                 vector_weight, bm25_weight, metrics, results
             )
+            if retrieval_log_id is not None:
+                metrics["retrieval_log_id"] = retrieval_log_id
 
+        event('retrieval.metrics', metrics=metrics, search_mode=search_mode, top_k=top_k,
+              score_threshold=score_threshold, vector_weight=vector_weight, bm25_weight=bm25_weight)
         return results, metrics
 
     @native_operation("retrieval.vector", as_type="retriever")
@@ -650,7 +710,7 @@ class RetrievalService:
         bm25_weight: float,
         metrics: Dict[str, Any],
         results: List[Dict[str, Any]]
-    ) -> None:
+    ) -> Optional[str]:
         """记录检索日志"""
         try:
             # 生成结果摘要（前 3 条）
@@ -687,10 +747,13 @@ class RetrievalService:
             )
 
             session.add(log)
+            log_id = log.id
             session.commit()
+            return log_id
 
         except Exception as e:
             print(f"⚠️ [Retrieval] 记录日志失败: {type(e).__name__}")
+            return None
 
 
 # 单例

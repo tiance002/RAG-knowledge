@@ -17,7 +17,7 @@ from app.schemas import (
     RecallRequest, RecallResult, ApiResponse, RecallTestResponse,
     RetrievalLogResponse, RetrievalLogListResponse
 )
-from app.services.retrieval import get_retrieval_service
+from app.services.retrieval import get_retrieval_service, observe_batch_rerank
 from app.services.llm import is_unknown_provider_error
 from app.services.rerank import RerankService, batch_rerank, expand_context
 import time
@@ -107,7 +107,7 @@ async def recall_test(
                     rerank_model = session.get(CustomModel, data.rerank_model_id)
 
                 # 使用分批 Rerank
-                results = batch_rerank(
+                results = observe_batch_rerank(session, metrics, batch_rerank,
                     query=data.query,
                     candidates=results,
                     rerank_service=rerank_service,
@@ -258,7 +258,7 @@ async def recall_test_multi(
             if data.rerank_model_id:
                 rerank_model = session.get(CustomModel, data.rerank_model_id)
 
-            results = batch_rerank(
+            results = observe_batch_rerank(session, metrics, batch_rerank,
                 query=data.query,
                 candidates=results,
                 rerank_service=rerank_service,

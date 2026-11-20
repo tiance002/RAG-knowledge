@@ -10,7 +10,7 @@ from app.schemas import Message
 from app.services.llm import LLMService, is_unknown_provider_error, should_abort_provider_error, provider_error_payload
 
 from app.services.rerank import RerankService, batch_rerank, expand_context
-from app.services.retrieval import get_retrieval_service
+from app.services.retrieval import get_retrieval_service, observe_batch_rerank
 
 from sqlmodel import Session, select
 from app.core.database import engine
@@ -103,7 +103,7 @@ class ChatService:
 
             rerank_service = RerankService(session)
             original_results = results
-            results = batch_rerank(
+            results = observe_batch_rerank(session, metrics, batch_rerank,
                 query=query,
                 candidates=results,
                 rerank_service=rerank_service,
@@ -111,7 +111,6 @@ class ChatService:
                 top_k=rerank_top_k,
                 score_threshold=rerank_score_threshold
             )
-            metrics["rerank_count"] = len(results)
             if any(r.get('rerank_status') == 'UNKNOWN' for r in results):
                 metrics['retrieval_status'] = 'UNKNOWN'
             elif not results:

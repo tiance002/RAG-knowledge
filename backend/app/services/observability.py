@@ -168,6 +168,7 @@ def sanitize(value, key='', *, final_export=False):
         return value
     controlled = {
         'arm': ('A', 'B'),
+        'count_scope': ('delivered_after_filter_topk',),
         'source_mapping_status': ('VERIFIED', 'UNKNOWN'),
         'token_count_status': ('UNKNOWN',),
         'token_count_method': ('model_tokenizer_not_configured',),
