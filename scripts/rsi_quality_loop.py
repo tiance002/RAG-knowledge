@@ -778,6 +778,175 @@ def require_completed_worker(worker, cases, repeat, evidence_path, *, allow_part
                          f'exit_code={worker.get("exit_code")}; evidence={evidence_path}')
 
 
+def execute_controlled_loop(output_dir, *, product_root, source_fingerprint,
+                            prompt_addendum='Answer concisely using the supplied context.', top_k=1):
+    """Run two frozen baseline siblings against host-owned synthetic offline data.
+
+    This entry has no caller dataset, evaluator, model, or promotion interface.
+    Archives preserve ungraded product observations, not answer-quality scores.
+    """
+    import copy
+    from rsi_quality_execute import execute_controlled_artifact
+
+    out, product = Path(output_dir).resolve(), Path(product_root).resolve()
+    if out.exists() or out.is_relative_to(product) or product.is_relative_to(out):
+        raise ValueError('controlled output must be new and outside product source')
+    if (not isinstance(source_fingerprint, dict) or not source_fingerprint or
+            Path(source_fingerprint.get('root', '')).resolve() != product):
+        raise ValueError('controlled source fingerprint must bind product_root')
+    baseline_artifact = copy.deepcopy(registry.CONTROLLED_BASELINE)
+    prompt_artifact, parameter_artifact = copy.deepcopy(baseline_artifact), copy.deepcopy(baseline_artifact)
+    prompt_artifact['prompt_addendum'] = prompt_addendum
+    parameter_artifact['retrieval']['top_k'] = top_k
+    for artifact in (prompt_artifact, parameter_artifact):
+        registry.validate_artifact(artifact, profile=registry.CONTROLLED_PROFILE)
+        if artifact == baseline_artifact:
+            raise ValueError('controlled candidate is a baseline no-op')
+
+    out.mkdir(parents=True, exist_ok=False)
+    fixture = out / 'fixture'
+    fixture.mkdir()
+    source_path = fixture / 'synthetic-source.txt'
+    contents = ['Synthetic lantern station opens at dawn.',
+                'Synthetic lantern station closes at dusk.',
+                'Synthetic lantern station has a blue gate.']
+    source_path.write_text('\n'.join(contents), encoding='utf-8')
+    source_id = 'synthetic-station'
+    chunks = [{'id': f'synthetic-chunk-{index}', 'source_id': source_id, 'content': content}
+              for index, content in enumerate(contents, 1)]
+    corpus_path = fixture / 'corpus.json'
+    save(corpus_path, {'chunks': chunks})
+    cases = [{'qid': 'synthetic-question', 'question': 'Describe the synthetic lantern station.',
+              'split': 'dev', 'scope': {'chunk_ids': [chunk['id'] for chunk in chunks]}}]
+    inputs_path, cases_path = fixture / 'inputs.json', fixture / 'cases.json'
+    save(cases_path, cases)
+    save(inputs_path, {'dataset_version': 'rsi-f2-host-synthetic/v1', 'cases': cases,
+        'corpus_manifest': registry.frozen_ref(corpus_path),
+        'sources': [{'id': source_id, 'title': 'Synthetic lantern station',
+                     'authorized': True, **registry.frozen_ref(source_path)}],
+        'chunks': [{'id': chunk['id'], 'sha256': sha(chunk['content'].encode())} for chunk in chunks]})
+    evaluation_path = fixture / 'evaluation-offline-contract.json'
+    evaluation = {'schema': 'rsi-f2-offline-evaluation/v1',
+                  'answer_quality': 'NOT_RUN', 'token_usage': 'UNKNOWN'}
+    save(evaluation_path, evaluation)
+    store = out / 'registry'
+    state = {'schema': 'rsi-f2-controlled-loop/v1', 'profile': registry.CONTROLLED_PROFILE,
+             'status': 'STARTED', 'evidence_mode': 'OFFLINE_PROVIDER_STUB',
+             'actual_external_calls': 0, 'evaluation': evaluation,
+             'formal_promotion': 'NOT_RUN', 'candidates': [],
+             'source_fingerprint': source_fingerprint,
+             'inputs': registry.frozen_ref(inputs_path)}
+
+    def archive(directory, manifest, worker, artifact):
+        raw_records = worker.get('records', [])
+        records = normalize_records(raw_records, cases, repeat=1)
+        retrieval = artifact['retrieval']
+        # The formal request schema coerces numeric thresholds and weights to
+        # floats before the retrieval consumer receives them.
+        consumer_config = {key: float(retrieval[key]) for key in
+                           ('score_threshold', 'vector_weight', 'bm25_weight')}
+        consumer_config['top_k'] = int(retrieval['top_k'])
+        consumer_config['search_mode'] = str(retrieval['search_mode'])
+        consumer_hash = sha(canonical(consumer_config))
+        def digest(value):
+            return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+        def valid_record(record):
+            observations = record.get('retrieval_observations')
+            return (record.get('status') == 'RETURNED' and
+                record.get('evidence_mode') == 'OFFLINE_PROVIDER_STUB' and
+                type(record.get('actual_external_calls')) is int and record['actual_external_calls'] == 0 and
+                digest(record.get('final_prompt_messages_sha256')) and digest(record.get('actual_request_sha256')) and
+                record.get('observed_top_k') == retrieval['top_k'] and
+                record.get('effective_config_sha256') == consumer_hash and
+                isinstance(observations, list) and bool(observations) and
+                all(observation.get('effective_config') == consumer_config and
+                    observation.get('effective_config_sha256') == consumer_hash and
+                    observation.get('observed_top_k') == retrieval['top_k'] and
+                    isinstance(observation.get('returned_ids'), list) for observation in observations))
+        # Reject extra, missing, duplicate, failed, or live attempts before deriving.
+        if (worker.get('evidence_mode') != 'OFFLINE_PROVIDER_STUB' or
+                type(worker.get('actual_external_calls')) is not int or worker['actual_external_calls'] != 0 or
+                worker.get('exit_code') != 0 or
+                type(worker.get('provider_stub_calls')) is not int or worker['provider_stub_calls'] < len(records) or
+                worker.get('retrieval_config_sha256') != sha(canonical(retrieval)) or
+                len(raw_records) != len(records) or records != raw_records or
+                any(not valid_record(record) for record in records)):
+            save(directory / 'rejected-worker.json', worker)
+            raise ValueError('controlled worker evidence incomplete, ambiguous, failed, or not offline')
+        save(directory / 'worker.json', {**worker, 'records': records})
+        save(directory / 'manifest.json', manifest)
+        run_id = worker.get('run_id') or uuid.uuid4().hex
+        rows = [{'qid': case['qid'], 'records': [r for r in records if r['qid'] == case['qid']],
+                 'scores': []} for case in cases]
+        results = {'summary': {'run_id': run_id, 'status': 'OBSERVED_UNGRADED',
+                              'evaluation': evaluation}, 'rows': rows}
+        save(directory / 'results.json', results)
+        observations = []
+        for index, row in enumerate(rows):
+            observation = {'run_id': run_id, 'qid': row['qid'], 'category': 'offline_contract_observation',
+                'details': {'answer_quality': 'NOT_RUN', 'token_usage': 'UNKNOWN'},
+                'evidence': [{'path': 'results.json',
+                              'sha256': sha((directory / 'results.json').read_bytes()),
+                              'field': f'rows[{index}]'}]}
+            observation['observation_id'] = 'obs-' + sha(canonical(observation))[:24]
+            observations.append(observation)
+        save(directory / 'feedback.json', {'run_id': run_id, 'observations': observations})
+        return {'run_id': run_id, 'status': 'OBSERVED_UNGRADED',
+                'results': registry.frozen_ref(directory / 'results.json'),
+                'feedback': registry.frozen_ref(directory / 'feedback.json')}, observations
+
+    try:
+        parent_id = registry.register_baseline(store, source_fingerprint, cases_path, evaluation_path,
+            fixed={'inputs': registry.frozen_ref(inputs_path), 'repeat': 1}, profile=registry.CONTROLLED_PROFILE)
+        parent = registry.candidate(store, parent_id)
+        state['parent_id'] = parent_id
+        baseline_dir = out / 'baseline'
+        baseline_dir.mkdir()
+        baseline_manifest = {key: parent[key] for key in
+                             ('profile', 'source_fingerprint', 'source_sha256', 'fixed', 'cases', 'evaluation')}
+        baseline_manifest.update(schema=registry.CONTROLLED_SCHEMA,
+            execution={'evidence_mode': 'OFFLINE_PROVIDER_STUB'},
+            arms={'A': {'candidate_id': parent_id, 'sha256': parent['artifact']}})
+        worker = execute_controlled_artifact(baseline_artifact, inputs_path, baseline_dir / 'execution',
+            product_root=product, source_fingerprint=source_fingerprint, repeat=1)
+        baseline_result, observations = archive(baseline_dir, baseline_manifest, worker, baseline_artifact)
+        state['baseline'] = {**baseline_result, 'candidate_id': parent_id,
+                             'artifact_id': parent['artifact'], 'config': baseline_artifact}
+        for scope, artifact in (('prompt', prompt_artifact), ('parameter', parameter_artifact)):
+            directory = out / scope
+            directory.mkdir()
+            notes = {'observation': 'Host-owned synthetic baseline completed without grading.',
+                'hypothesis': 'The permitted configuration field reaches the existing product path.',
+                'change': 'Change only prompt_addendum.' if scope == 'prompt' else 'Change only retrieval.top_k.',
+                'impact': 'Offline contract evidence only; answer quality is not evaluated.',
+                'falsification': 'Reject missing attempts, live evidence, or a configuration mismatch.'}
+            candidate_id = registry.derive(store, parent_id, scope, artifact, notes, baseline_dir,
+                                            observations[0]['observation_id'])
+            manifest_path = registry.materialize(store, parent_id, candidate_id, directory / 'bundle', execution={
+                'evidence_mode': 'OFFLINE_PROVIDER_STUB', 'repeat': 1,
+                'baseline_run': str(baseline_dir), 'inputs': str(inputs_path)})
+            registry.verify_manifest(manifest_path)
+            manifest = read_json(manifest_path)
+            # Execute the exact bytes validated by the materialized B manifest.
+            executed_artifact = read_json(manifest_path.parent / manifest['arms']['B']['path'])
+            worker = execute_controlled_artifact(executed_artifact, inputs_path, directory / 'execution',
+                product_root=product, source_fingerprint=source_fingerprint, repeat=1)
+            result, _ = archive(directory, manifest, worker, executed_artifact)
+            state['candidates'].append({**result, 'scope': scope, 'parent_id': parent_id,
+                'candidate_id': candidate_id, 'artifact_id': manifest['arms']['B']['sha256'],
+                'config': executed_artifact, 'evaluation': evaluation,
+                'manifest': registry.frozen_ref(manifest_path),
+                'A': {'status': 'REUSED', 'results': baseline_result['results']},
+                'B': {'status': 'OBSERVED_UNGRADED', 'results': result['results']}})
+        state['status'] = 'OFFLINE_CONTRACT_COMPLETE'
+    except Exception as exc:
+        state.update(status='STOPPED', error_type=type(exc).__name__)
+        save(out / 'loop-result.json', state)
+        raise
+    save(out / 'loop-result.json', state)
+    return state
+
+
 def execute_quality_loop(cfg, out, *, preflight=True, approved_model_calls=0, resume_evaluated_baseline=None,
                          reuse_completed_roles=None):
     paths, cases, gold, binding = load_config(cfg)

@@ -186,6 +186,109 @@ def execute_artifact(artifact, inputs_path, output_dir, *, repeat=2, max_model_r
     return result
 
 
+def execute_controlled_artifact(artifact, inputs_path, output_dir, *, product_root,
+                                source_fingerprint, repeat=1):
+    """Execute a typed F2 artifact through real product code with provider denied.
+
+    The only simulated boundary is the exact approved provider POST. Receipts
+    describe compile/wiring observations and must not be scored as model quality.
+    """
+    from rsi_quality_controlled_worker import verify_approved_source, EVIDENCE_MODE
+    registry.validate_artifact(artifact, profile=registry.CONTROLLED_PROFILE)
+    if type(repeat) is not int or not 1 <= repeat <= 10:
+        raise ValueError('controlled repeat must be 1..10')
+    root, out = Path(product_root).resolve(), Path(output_dir).resolve()
+    if out.is_relative_to(root):
+        raise ValueError('Controlled output must be outside the formal checkout')
+    if Path(source_fingerprint['root']).resolve() != root:
+        raise ValueError('Controlled product root differs from bound fingerprint')
+    verify_source(source_fingerprint)
+    approved = verify_approved_source(root)
+    # Keep candidate retrieval out of the legacy worker artifact schema.
+    legacy = {key: artifact[key] for key in ('prompt_addendum', 'memory_addendum', 'workflow')}
+    inputs = read_json(inputs_path)
+    cap = len(inputs['cases']) * repeat * 4
+    job = job_for(legacy, inputs_path, repeat, cap, 'https://api.siliconflow.cn/v1',
+                  retrieval=artifact['retrieval'], authorization_id='f2-offline-stub-only')
+    out.mkdir(parents=True, exist_ok=False)
+    write(out / 'job.json', job)
+    # No secrets, embedding configuration, user Python paths or proxy variables.
+    allowed = {'SYSTEMROOT', 'WINDIR', 'PATH', 'TEMP', 'TMP', 'LOCALAPPDATA',
+               'APPDATA', 'USERPROFILE'}
+    env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    env.update(PYTHONIOENCODING='utf-8', PYTHONDONTWRITEBYTECODE='1',
+               PYTHONNOUSERSITE='1', SILICONFLOW_API_KEY='f2-offline-fake-token')
+    script = Path(__file__).with_name('rsi_quality_controlled_worker.py').resolve()
+    cmd = [sys.executable, '-B', str(script), str(root), str(out / 'job.json'), str(out / 'isolated')]
+    try:
+        with (out / 'command.log').open('xb') as log:
+            process = subprocess.run(cmd, env=env, cwd=out, stdout=log,
+                                     stderr=subprocess.STDOUT, timeout=300)
+    finally:
+        verify_source(source_fingerprint)
+        if verify_approved_source(root) != approved:
+            raise ValueError('Approved product source changed during controlled execution')
+    write(out / 'process.json', {'command': cmd, 'exit_code': process.returncode})
+    product = out / 'isolated/product'
+    report_path = product / 'results.json'
+    receipt_path = out / 'isolated/controlled-receipt.json'
+    if not report_path.is_file() or not receipt_path.is_file():
+        raise RuntimeError('Controlled worker failed; inspect retained command.log')
+    raw, receipt = read_json(report_path), read_json(receipt_path)
+    if len(raw['results']) != len(inputs['cases']) * repeat:
+        raise ValueError('Controlled result denominator differs from planned records')
+    observations = iter(receipt['retrieval_observations'])
+    records = []
+    stub_receipts = {row['actual_request_sha256']: row for row in receipt['provider_stub_calls']}
+    for row in raw['results']:
+        final = row.get('final_request') or {}
+        request_file = final.get('request_file')
+        final_sha, wire_sha = None, None
+        if request_file:
+            request_path = (product / request_file).resolve(strict=True)
+            if not request_path.is_relative_to(product.resolve()):
+                raise ValueError('Final request receipt escapes isolated product output')
+            known_paths = {(product / call['request_file']).resolve()
+                           for call in row.get('provider_calls', [])}
+            if request_path not in known_paths:
+                raise ValueError('Final request receipt is not assigned to this record')
+            request = read_json(request_path)
+            actual = request['actual_request']
+            wire = request['actual_request_utf8'].encode('utf-8')
+            if json.loads(wire) != actual:
+                raise ValueError('Actual request UTF-8 differs from recorded request')
+            final_sha = sha(canonical(actual['messages']))
+            wire_sha = sha(wire)
+            observed = stub_receipts.get(wire_sha)
+            if not observed or observed['messages_sha256'] != final_sha:
+                raise ValueError('Final messages not bound to actual provider-stub request')
+        calls = [next(observations) for _ in row.get('retrieval_calls', [])]
+        if any(call['case_id'] != row['case_id'] for call in calls):
+            raise ValueError('Retrieval receipt case order mismatch')
+        record = {'qid': row['case_id'], 'repeat_id': row['repeat_id'], 'status': row['status'],
+                  'answer': row.get('answer', ''), 'citations': row.get('citations', []),
+                  'done': row.get('done'), 'evidence_mode': EVIDENCE_MODE,
+                  'actual_external_calls': 0, 'input_tokens': None, 'output_tokens': None,
+                  'final_prompt_messages_sha256': final_sha, 'actual_request_sha256': wire_sha,
+                  'observed_top_k': calls[-1]['observed_top_k'] if calls else None,
+                  'effective_config_sha256': calls[-1]['effective_config_sha256'] if calls else None,
+                  'retrieval_observations': calls,
+                  'raw_record': str(product / f"record-{row['ordinal']:04d}.json")}
+        records.append(record)
+    if next(observations, None) is not None:
+        raise ValueError('Unassigned retrieval observations')
+    result = {'status': raw['status'], 'exit_code': process.returncode,
+              'evidence_mode': EVIDENCE_MODE, 'actual_external_calls': 0,
+              'provider_stub_calls': len(receipt['provider_stub_calls']),
+              'provider_calls': 0, 'records': records, 'cost': 'NOT_MEASURED_OFFLINE',
+              'source_record': str(report_path), 'source_sha256': sha(report_path.read_bytes()),
+              'controlled_receipt': str(receipt_path), 'approved_source': approved,
+              'runtime_identity': receipt['runtime_identity'],
+              'retrieval_config_sha256': sha(canonical(artifact['retrieval']))}
+    write(out / 'worker.json', result)
+    return result
+
+
 def run_quality(manifest_path, out):
     checked = registry.verify_manifest(manifest_path)
     manifest = checked['manifest']

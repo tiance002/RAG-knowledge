@@ -14,11 +14,70 @@ CANDIDATE = 'rsi-quality-candidate/v1'
 BASELINE = {'prompt_addendum': '', 'memory_addendum': '',
             'workflow': {'mode': 'chat', 'use_rewrite': False}}
 SCOPES = {'prompt': 'prompt_addendum', 'memory': 'memory_addendum', 'workflow': 'workflow'}
+CONTROLLED_PROFILE = 'rsi-f2-offline/v1'
+CONTROLLED_SCHEMA = 'rsi-quality-experiment/v2'
+CONTROLLED_CANDIDATE = 'rsi-quality-candidate/v2'
+CONTROLLED_BASELINE = {**copy.deepcopy(BASELINE), 'retrieval': {
+    'search_mode': 'fulltext', 'top_k': 10, 'context_window': 0,
+    'rerank_enabled': False, 'score_threshold': 0,
+    'vector_weight': 0.7, 'bm25_weight': 0.3}}
+EVALUATION_CONTRACT_NAME = 'evaluation-offline-contract.json'
+EVALUATION_CONTRACT = {'schema': 'rsi-f2-offline-evaluation/v1',
+                       'answer_quality': 'NOT_RUN', 'token_usage': 'UNKNOWN'}
+OFFLINE_EVIDENCE_MODE = 'OFFLINE_PROVIDER_STUB'
 NOTES = ('observation', 'hypothesis', 'change', 'impact', 'falsification')
 
 
-def validate_artifact(value):
-    if not isinstance(value, dict) or set(value) != set(BASELINE):
+def _profile(value):
+    if value not in (None, CONTROLLED_PROFILE):
+        raise ValueError('unsupported quality profile')
+    return value
+
+
+def _record_profile(value):
+    profile = value.get('profile')
+    _profile(profile)
+    expected = CONTROLLED_CANDIDATE if profile else CANDIDATE
+    if value.get('type') != expected or (profile is None and 'profile' in value):
+        raise ValueError('mixed quality candidate version/profile')
+    if profile:
+        fields = {'type', 'profile', 'parent', 'origin', 'scope', 'artifact',
+                  'source_fingerprint', 'source_sha256', 'fixed', 'cases', 'evaluation'}
+        if value.get('parent') is not None:
+            fields |= {'notes', 'observation_source'}
+        if set(value) != fields:
+            raise ValueError('unsupported controlled candidate fields')
+    return profile
+
+
+def _manifest_profile(value):
+    profile = value.get('profile')
+    _profile(profile)
+    expected = CONTROLLED_SCHEMA if profile else SCHEMA
+    if value.get('schema') != expected or (profile is None and 'profile' in value):
+        raise ValueError('mixed quality manifest version/profile')
+    if profile and value.get('execution', {}).get('evidence_mode') != OFFLINE_EVIDENCE_MODE:
+        raise ValueError('controlled execution must use offline provider stub')
+    return profile
+
+
+def _validate_change(original, artifact, scope, profile):
+    if profile:
+        changed = [key for key in original if original[key] != artifact[key]]
+        valid = (scope == 'prompt' and changed == ['prompt_addendum'])
+        if scope == 'parameter' and changed == ['retrieval']:
+            valid = [key for key in original['retrieval']
+                     if original['retrieval'][key] != artifact['retrieval'][key]] == ['top_k']
+    else:
+        valid = scope in SCOPES and [key for key in original if original[key] != artifact[key]] == [SCOPES[scope]]
+    if not valid:
+        raise ValueError('candidate must change exactly its named scope')
+
+
+def validate_artifact(value, *, profile=None):
+    _profile(profile)
+    baseline = CONTROLLED_BASELINE if profile else BASELINE
+    if not isinstance(value, dict) or set(value) != set(baseline):
         raise ValueError('unsupported quality artifact fields')
     for field in ('prompt_addendum', 'memory_addendum'):
         if not isinstance(value[field], str) or len(value[field]) > 6000:
@@ -27,6 +86,35 @@ def validate_artifact(value):
     if (not isinstance(workflow, dict) or set(workflow) != {'mode', 'use_rewrite'} or
             workflow['mode'] not in ('chat', 'agent') or type(workflow['use_rewrite']) is not bool):
         raise ValueError('unsupported workflow branch')
+    if profile:
+        if value['memory_addendum'] != '' or workflow != BASELINE['workflow']:
+            raise ValueError('controlled memory and workflow are frozen')
+        retrieval = value['retrieval']
+        if not isinstance(retrieval, dict) or set(retrieval) != set(baseline['retrieval']):
+            raise ValueError('unsupported retrieval fields')
+        if type(retrieval['top_k']) is not int or not 1 <= retrieval['top_k'] <= 100:
+            raise ValueError('top_k must be an integer in 1..100')
+        for key, expected in baseline['retrieval'].items():
+            if key != 'top_k' and (type(retrieval[key]) is not type(expected) or retrieval[key] != expected):
+                raise ValueError('controlled retrieval field is frozen: ' + key)
+    return value
+
+
+def _read_evaluation(ref, profile):
+    # Check the allowlisted contract name before opening any evaluation file.
+    if profile and Path(ref['path']).name != EVALUATION_CONTRACT_NAME:
+        raise ValueError('controlled evaluation filename is not allowlisted')
+    if not profile:
+        return read_ref(ref)
+    path = Path(ref['path'])
+    if not path.is_absolute():
+        raise ValueError('frozen input fingerprint mismatch')
+    data = path.read_bytes()
+    if sha(data) != ref['sha256']:
+        raise ValueError('frozen input fingerprint mismatch')
+    value = json.loads(data.decode('utf-8-sig'))
+    if value != EVALUATION_CONTRACT:
+        raise ValueError('invalid offline evaluation contract')
     return value
 
 
@@ -44,29 +132,39 @@ def read_ref(ref):
     return read_json(path)
 
 
-def register_baseline(registry, source_fingerprint, cases_path, evaluation_path, *, fixed=None):
+def register_baseline(registry, source_fingerprint, cases_path, evaluation_path, *, fixed=None, profile=None):
     if not isinstance(source_fingerprint, dict) or not source_fingerprint:
         raise ValueError('source fingerprint must be a nonempty mapping')
-    value = {'type': CANDIDATE, 'parent': None, 'origin': 'baseline', 'scope': 'baseline',
-             'artifact': put(Path(registry), canonical(BASELINE)),
+    _profile(profile)
+    evaluation = frozen_ref(evaluation_path) if not profile else None
+    if profile:
+        if Path(evaluation_path).name != EVALUATION_CONTRACT_NAME:
+            raise ValueError('controlled evaluation filename is not allowlisted')
+        evaluation = frozen_ref(evaluation_path)
+        _read_evaluation(evaluation, profile)
+    value = {'type': CONTROLLED_CANDIDATE if profile else CANDIDATE, 'parent': None, 'origin': 'baseline', 'scope': 'baseline',
+             'artifact': put(Path(registry), canonical(CONTROLLED_BASELINE if profile else BASELINE)),
              'source_fingerprint': source_fingerprint,
              'source_sha256': sha(canonical(source_fingerprint)), 'fixed': fixed or {},
-             'cases': frozen_ref(cases_path), 'evaluation': frozen_ref(evaluation_path)}
+             'cases': frozen_ref(cases_path), 'evaluation': evaluation}
+    if profile:
+        value['profile'] = profile
     return put(Path(registry), canonical(value))
 
 
 def candidate(registry, key):
     registry = Path(registry)
     value = json.loads(get(registry, key))
-    if value.get('type') != CANDIDATE:
-        raise ValueError('not a quality candidate')
-    validate_artifact(json.loads(get(registry, value['artifact'])))
+    profile = _record_profile(value)
+    validate_artifact(json.loads(get(registry, value['artifact'])), profile=profile)
     if sha(canonical(value['source_fingerprint'])) != value['source_sha256']:
         raise ValueError('source fingerprint mismatch')
-    for field in ('cases', 'evaluation'):
-        read_ref(value[field])
+    read_ref(value['cases'])
+    _read_evaluation(value['evaluation'], profile)
     if value['parent']:
-        get(registry, value['parent'])
+        parent_data = get(registry, value['parent'])
+        if profile and _record_profile(json.loads(parent_data)) != profile:
+            raise ValueError('mixed quality lineage profiles')
     return value
 
 
@@ -81,7 +179,8 @@ def _observation(registry, parent_id, parent, from_run, observation_id):
 def _bind_observation(parent_id, parent, archived, observation_id):
     manifest, results, feedback = [json.loads(archived[k].decode('utf-8-sig'))
                                    for k in ('manifest', 'results', 'feedback')]
-    if (manifest.get('schema') != SCHEMA or manifest.get('source_fingerprint') != parent['source_fingerprint'] or
+    profile = _record_profile(parent)
+    if (_manifest_profile(manifest) != profile or manifest.get('source_fingerprint') != parent['source_fingerprint'] or
             manifest.get('fixed') != parent['fixed'] or
             any(manifest.get(k) != parent[k] for k in ('cases', 'evaluation'))):
         raise ValueError('observation frozen provenance differs from parent')
@@ -107,10 +206,10 @@ def _bind_observation(parent_id, parent, archived, observation_id):
 def derive(registry, parent_id, scope, artifact, notes, from_run, observation_id):
     registry = Path(registry)
     parent = candidate(registry, parent_id)
-    artifact = validate_artifact(copy.deepcopy(artifact))
+    profile = _record_profile(parent)
+    artifact = validate_artifact(copy.deepcopy(artifact), profile=profile)
     original = json.loads(get(registry, parent['artifact']))
-    if scope not in SCOPES or [k for k in original if original[k] != artifact[k]] != [SCOPES[scope]]:
-        raise ValueError('child must change exactly its named scope')
+    _validate_change(original, artifact, scope, profile)
     if any(not isinstance(notes.get(k), str) or not notes[k].strip() for k in NOTES):
         raise ValueError('structured rationale required')
     source = _observation(registry, parent_id, parent, from_run, observation_id)
@@ -123,15 +222,25 @@ def derive(registry, parent_id, scope, artifact, notes, from_run, observation_id
 def materialize(registry, parent_id, child_id, out, *, execution=None):
     registry, out = Path(registry), Path(out).resolve()
     parent, child = candidate(registry, parent_id), candidate(registry, child_id)
+    profile = _record_profile(parent)
+    if _record_profile(child) != profile:
+        raise ValueError('mixed quality lineage profiles')
+    execution = copy.deepcopy(execution or {})
+    if profile:
+        execution.setdefault('evidence_mode', OFFLINE_EVIDENCE_MODE)
+        if execution['evidence_mode'] != OFFLINE_EVIDENCE_MODE:
+            raise ValueError('controlled execution must use offline provider stub')
     if child['parent'] != parent_id:
         raise ValueError('child is not derived from parent')
     if any(parent[k] != child[k] for k in ('source_fingerprint', 'source_sha256', 'fixed', 'cases', 'evaluation')):
         raise ValueError('candidate frozen provenance differs')
     out.mkdir(parents=True, exist_ok=False)
-    manifest = {'schema': SCHEMA, 'experiment_id': 'quality-' + child_id[:16],
+    manifest = {'schema': CONTROLLED_SCHEMA if profile else SCHEMA, 'experiment_id': 'quality-' + child_id[:16],
                 'source_fingerprint': parent['source_fingerprint'], 'source_sha256': parent['source_sha256'],
                 'fixed': parent['fixed'], 'cases': parent['cases'], 'evaluation': parent['evaluation'],
                 'execution': execution or {}, 'arms': {}, 'lineage': {}}
+    if profile:
+        manifest['profile'] = profile
     for label, cid, value in (('A', parent_id, parent), ('B', child_id, child)):
         artifact_name, record_name = label + '.json', label + '_candidate.json'
         (out / artifact_name).write_bytes(get(registry, value['artifact']))
@@ -164,12 +273,13 @@ def verify_manifest(manifest_path):
     """Verify immutable materialization before any product execution."""
     manifest_path = Path(manifest_path).resolve()
     base, manifest = manifest_path.parent, read_json(manifest_path)
-    if manifest.get('schema') != SCHEMA or set(manifest['arms']) != {'A', 'B'}:
+    profile = _manifest_profile(manifest)
+    if set(manifest['arms']) != {'A', 'B'}:
         raise ValueError('unsupported quality manifest')
     if sha(canonical(manifest['source_fingerprint'])) != manifest['source_sha256']:
         raise ValueError('manifest source fingerprint mismatch')
-    for field in ('cases', 'evaluation'):
-        read_ref(manifest[field])
+    read_ref(manifest['cases'])
+    _read_evaluation(manifest['evaluation'], profile)
     def local_bytes(name, digest):
         path = (base / name).resolve()
         if not path.is_relative_to(base) or sha(path.read_bytes()) != digest:
@@ -182,8 +292,8 @@ def verify_manifest(manifest_path):
         if arm['candidate_id'] != arm['record_sha256']:
             raise ValueError('candidate identity mismatch')
         record = local(arm['record_path'], arm['record_sha256'])
-        artifact = validate_artifact(local(arm['path'], arm['sha256']))
-        if (record.get('type') != CANDIDATE or record['parent'] != arm['parent_id'] or
+        artifact = validate_artifact(local(arm['path'], arm['sha256']), profile=profile)
+        if (_record_profile(record) != profile or record['parent'] != arm['parent_id'] or
                 record['artifact'] != arm['sha256'] or
                 any(record[k] != manifest[k] for k in ('source_fingerprint', 'source_sha256', 'fixed', 'cases', 'evaluation'))):
             raise ValueError('candidate provenance mismatch')
@@ -192,14 +302,13 @@ def verify_manifest(manifest_path):
     if b['parent'] != manifest['arms']['A']['candidate_id'] or b['origin'] != 'derived':
         raise ValueError('candidate parent mismatch')
     scope = b['scope']
-    if scope not in SCOPES or [k for k in BASELINE if artifacts['A'][k] != artifacts['B'][k]] != [SCOPES[scope]]:
-        raise ValueError('candidate changes outside named scope')
+    _validate_change(artifacts['A'], artifacts['B'], scope, profile)
     lineage = {}
     for cid, name in manifest['lineage'].items():
         rec = local(name, cid)
-        if rec.get('type') != CANDIDATE:
-            raise ValueError('invalid lineage candidate')
-        validate_artifact(local('lineage/' + rec['artifact'], rec['artifact']))
+        if _record_profile(rec) != profile:
+            raise ValueError('mixed lineage profile')
+        validate_artifact(local('lineage/' + rec['artifact'], rec['artifact']), profile=profile)
         for k, digest in rec.get('observation_source', {}).items():
             if k.startswith('archive_'):
                 local('lineage/' + digest, digest)
@@ -218,14 +327,14 @@ def verify_manifest(manifest_path):
         if any(rec[k] != manifest[k] for k in ('source_fingerprint', 'source_sha256', 'fixed', 'cases', 'evaluation')):
             raise ValueError('lineage provenance mismatch')
         if rec['parent'] is None:
-            if artifact != BASELINE or rec['origin'] != 'baseline' or rec['scope'] != 'baseline':
+            if artifact != (CONTROLLED_BASELINE if profile else BASELINE) or rec['origin'] != 'baseline' or rec['scope'] != 'baseline':
                 raise ValueError('invalid root baseline')
         else:
             parent = lineage[rec['parent']]
             original = local('lineage/' + parent['artifact'], parent['artifact'])
-            if (rec['origin'] != 'derived' or rec['scope'] not in SCOPES or
-                    [k for k in BASELINE if original[k] != artifact[k]] != [SCOPES[rec['scope']]]):
-                raise ValueError('invalid ancestor scope')
+            if rec['origin'] != 'derived':
+                raise ValueError('invalid ancestor origin')
+            _validate_change(original, artifact, rec['scope'], profile)
             if any(not isinstance(rec.get('notes', {}).get(k), str) or not rec['notes'][k].strip() for k in NOTES):
                 raise ValueError('missing ancestor rationale')
             source = rec['observation_source']
