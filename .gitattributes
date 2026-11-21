@@ -10,3 +10,4 @@ scripts/rsi_decision.py -text
 # S3.4 receipt and parser identities bind exact file bytes.
 docs/evidence/s34-*.json -text
 scripts/audit_s34_native.py -text
+docs/rsi-f5-audit-20261121/dev200-gold-review.json text eol=lf

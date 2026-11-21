@@ -13,6 +13,7 @@ def test_checked_in_review_binds_all_historically_flagged_cases():
     flagged = {row['qid']: row['ordinal'] for row in eligibility['rows'] if row['split'] == 'BLOCKED'}
     path = docs / 'dev200-gold-review.json'
     pin = sha256(path.read_bytes()).hexdigest()
+    assert pin == 'b413e41b8816a20b9f693c0203d1b9a9ca65373c3fa802b66877476d46aaa27c'
     reviewed = load_gold_review(path, pin, eligibility['nested_manifest_sha256'],
                                 eligibility['historical_population_sha256'], flagged)
     assert len(reviewed) == 12 and min(item['ordinal'] for item in reviewed.values()) > 60
