@@ -29,12 +29,14 @@ class PanelCapacity:
         return max(0, min(arm_limit, *values[:4], 120 - self.judge_queue_waiting))
 
 
-def read_arm_capacity(path, panel_sha256, arm_id, run_root, arm_limit):
+def read_arm_capacity(path, panel_sha256, arm_id, run_root, arm_limit, *, expected_phase=None):
     """Read the controller's latest atomic observation, defaulting to a pause."""
     try:
         observation = json.loads(path.read_bytes())
         observed_ns = observation['observed_unix_ns']
         if (observation['panel_sha256'] != panel_sha256
+                or (expected_phase is not None
+                    and observation.get('diagnostics', {}).get('phase') != expected_phase)
                 or type(observed_ns) is not int
                 or not 0 <= time.time_ns() - observed_ns <= 30_000_000_000):
             return 0
