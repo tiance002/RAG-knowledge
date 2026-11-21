@@ -1,0 +1,21 @@
+{
+  "schema": "F5_DEV200_GOLD_REVIEW_V1",
+  "panel_sha256": "0187ea2746ecffefd64c722839eac0a1a78fe4ec47df2554baab307100c6b3be",
+  "population_sha256": "685910ce8346b081a6722316c6fc10c0659ea211aefc93b90250834f5d4135a3",
+  "canonical_legacy_grade_sha256": "383b800e5911f4cd6ca3d6a71994aecca080b675a027f6237b6eb6a13ead1b85",
+  "policy": "Keep original questions and Gold. Apply these case-specific clarifications prospectively to every compared arm, using only the case's delivered evidence for grounding.",
+  "rows": {
+    "terra-ecs-b4-019": {"ordinal":64,"rule":"Score the two material assignments stated in the polyurethane source. Do not require extra chemistry. Penalize a materially wrong reassignment of chain extenders to soft segments."},
+    "terra-ecs-b5-022": {"ordinal":69,"rule":"Score only the two roles described by the cited material: relative length and downstream water and nutrient contribution. Do not require an independent hydrology claim."},
+    "terra-ecs-b7-005": {"ordinal":72,"rule":"Score the morphology comparison as attributed to the source that discusses it. If delivered evidence also claims that prokaryotes have no intracellular chromosomes, a fully correct answer distinguishes the two source claims and their incompatibility. If only one side is delivered, do not require mention of an unseen source; a lone no-chromosome claim does not establish the requested morphology comparison. Penalize unsupported generalizations and internal contradictions."},
+    "terra-ecs-b8-002": {"ordinal":74,"rule":"Score the central/northern and southern climate labels in the source that uses Chiayi as the boundary. If delivered sources use different boundary wording, accept a correctly attributed account and do not credit an assertion that the boundaries agree."},
+    "terra-ecs-b1-009": {"ordinal":77,"rule":"Score the meaning of the term and the presence of dance in traditional performance. Instrument details are not required. Penalize inaccurate additions that conflate instruments or unrelated forms."},
+    "terra-ecs-b1-027": {"ordinal":81,"rule":"Score microwave reflection by a moving metal reflector and the rotating-like field. Rotor placement is not required. If discussing location when both descriptions are delivered, distinguish the inconsistent descriptions instead of asserting one placement as a settled fact."},
+    "terra-ecs-b7-001": {"ordinal":100,"rule":"Evaluate what the supplied study account says about the mathematics course and choice of subjects. Do not require independent biographical confirmation. Penalize unsupported additions about other schools, tutors or degrees."},
+    "terra-ecs-b7-007": {"ordinal":101,"rule":"Evaluate the stated legend and the meaning of adding white. Independent historical verification and the origins of the other colors are outside the requested answer."},
+    "qst_0335": {"ordinal":151,"rule":"Score delivery of the redacted SAML evidence bundle, the examples of NameID formats and the requested attribute examples. Signature integrity is out of scope. Do not require it or treat a source's assertion as independent verification."},
+    "qst_0928": {"ordinal":170,"rule":"Score the explicit date, time and UTC designation in the payment reminder. A conflicting weekday is not required, and should not be asserted without noting the conflict if it is mentioned."},
+    "qst_0920": {"ordinal":174,"rule":"Score the two explicit access dates. A duration is not required. If it is supplied with inconsistent source wording, distinguish the exact range from the claimed duration."},
+    "qst_0799": {"ordinal":188,"rule":"Score the incident's actual replica and ephemeral-port changes separately from RCA artifact recommendations in the specified playbook. Do not attribute generic or unrelated sysctl tuning to this incident. Award credit only for details attributable to the delivered incident or playbook evidence as appropriate."}
+  }
+}
