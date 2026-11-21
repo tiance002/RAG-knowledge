@@ -29,7 +29,8 @@ def decide(rows=None, phase='DEV60', **changes):
                             objective=objective(**changes))
 
 
-@pytest.mark.parametrize('size,required,decision', [(60, 54, 'ADVANCE'), (200, 190, 'ADMITTED')])
+@pytest.mark.parametrize('size,required,decision', [(20, 18, 'ADVANCE'),
+    (60, 54, 'ADVANCE'), (200, 190, 'ADMITTED')])
 def test_valid_pair_threshold_exact_boundary(size, required, decision):
     rows = panel(size)
     for row in rows[required:]:

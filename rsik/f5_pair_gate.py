@@ -87,18 +87,19 @@ def _effect(rows, metric, direction):
 def adjudicate_pairs(*, phase, rows, objective):
     """Evaluate trusted paired rows against an explicit predeclared objective.
 
-    DEV60 requires 54/60 valid grade pairs; DEV200 requires 190/200. Every
+    DEV20 requires 18/20 valid grade pairs, DEV60 requires 54/60 and DEV200
+    requires 190/200. Only DEV200 can admit a parent. Every
     explicitly declared critical stratum requires ten valid pairs. Metrics must
     be measured on *all* valid grade pairs, including protected metrics. An
     insufficient panel/measurement is INCONCLUSIVE, while an observed objective
     or protection failure is REJECTED. Schema errors raise ValueError.
     """
-    if type(phase) is int and phase in (60, 200):
+    if type(phase) is int and phase in (20, 60, 200):
         phase = f'DEV{phase}'
-    if not isinstance(phase, str) or phase not in ('DEV60', 'DEV200'):
-        raise ValueError('phase must be DEV60 or DEV200')
-    expected = 60 if phase == 'DEV60' else 200
-    required = 54 if phase == 'DEV60' else 190
+    requirements = {'DEV20': (20, 18), 'DEV60': (60, 54), 'DEV200': (200, 190)}
+    if not isinstance(phase, str) or phase not in requirements:
+        raise ValueError('phase must be DEV20, DEV60 or DEV200')
+    expected, required = requirements[phase]
     if not isinstance(objective, Mapping):
         raise ValueError('objective must be a mapping')
     required_fields = {'metric', 'direction', 'minimum_effect',
@@ -196,7 +197,7 @@ def adjudicate_pairs(*, phase, rows, objective):
     if losses > wins and not objective['accept_quality_tradeoff']:
         failures.append('QUALITY_TRADEOFF_NOT_ACCEPTED')
     decision = ('INCONCLUSIVE' if incomplete else 'REJECTED' if failures else
-                'ADVANCE' if phase == 'DEV60' else 'ADMITTED')
+                'ADMITTED' if phase == 'DEV200' else 'ADVANCE')
     quality_effects = {}
     for quality_metric in sorted(_GRADE_METRICS):
         effect = _effect(valid, quality_metric, 'maximize')
