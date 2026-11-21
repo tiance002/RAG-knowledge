@@ -1,0 +1,829 @@
+{
+  "groups": {
+    "BASELINE": {
+      "denominator": 20,
+      "observed_case_counts": {
+        "Answer Evaluation/final_known_grade": 19,
+        "Answer Evaluation/final_unknown_grade": 1,
+        "BM25 Retrieval/count": 20,
+        "BM25 Retrieval/latency_ms": 20,
+        "BM25 Retrieval/stage_candidate_ids": 0,
+        "Citation/Evidence/all_source_mapping_VERIFIED": 20,
+        "Citation/Evidence/any_numeric_bm25_score": 16,
+        "Citation/Evidence/any_numeric_rerank_score": 19,
+        "Citation/Evidence/any_numeric_score": 19,
+        "Citation/Evidence/any_numeric_vector_score": 19,
+        "Citation/Evidence/delivered_ids_and_score_fields": 20,
+        "Citation/Evidence/source_mapping_status": 20,
+        "ContextBuilder/crop_omit_fields": 20,
+        "ContextBuilder/final_delivered_bodies": 20,
+        "ContextBuilder/own_latency_ms": 0,
+        "ContextBuilder/request_budget": 20,
+        "Final Prompt/assembled_prompt_body": 0,
+        "Final Prompt/prompt_consumer_sha256": 20,
+        "Final Prompt/provider_request_sha256": 20,
+        "Fusion/count": 20,
+        "Fusion/method": 20,
+        "Fusion/own_latency_ms": 0,
+        "Fusion/stage_candidate_ids": 0,
+        "Generation/answer_sse_chunks": 20,
+        "Generation/done_event": 20,
+        "Generation/provider_finish_reason": 0,
+        "Parent/Neighbor Expansion/delivered_lineage_fields": 20,
+        "Parent/Neighbor Expansion/expanded_flag": 20,
+        "Parent/Neighbor Expansion/own_latency_ms": 0,
+        "Query Processing/original_request_payload_sha256": 20,
+        "Query Processing/retriever_query_and_original_query": 20,
+        "Query Processing/rewrite_trace_or_timing": 0,
+        "Rerank/count": 20,
+        "Rerank/final_citation_scores": 0,
+        "Rerank/own_latency_ms": 0,
+        "TTFT/application_first_answer_sse_ms": 0,
+        "TTFT/client_network_ttft_ms": 0,
+        "Vector Retrieval/count": 20,
+        "Vector Retrieval/latency_ms": 20,
+        "Vector Retrieval/stage_candidate_ids": 0,
+        "all_stages/per_fact_disposition": 0,
+        "retrieval/exact_retrieval_uuid": 0,
+        "retrieval/ordered_combined_returned_ids": 20,
+        "stable_identity/arm_id_alias_for_candidate": 20,
+        "stable_identity/case_id_alias_for_qid": 20,
+        "stable_identity/exact_attempt_id": 20,
+        "stable_identity/exact_candidate_id": 0,
+        "stable_identity/exact_experiment_id": 0,
+        "stable_identity/exact_parent_id": 0,
+        "stable_identity/exact_qid": 0,
+        "stable_identity/exact_repeat_id": 0,
+        "stable_identity/exact_request_id": 0,
+        "stable_identity/exact_run_id": 0,
+        "stable_identity/exact_stage": 0
+      },
+      "per_case": [
+        {
+          "case_receipt_sha256": "b1c966b7de9ed8d8e4096689ef2d3af0cbde20ac2065c876d915f11922e9409d",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 1,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "624895ca05460192f6357010ee3da3b7baa42f4987ec97e189749d9dc713a875",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 2,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "7c27b49b92c59b77b1aa5c24a673807c3780a5a4e8c1a9837c3da2d016a90c72",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 3,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "34c0f6a383ad3f7f0c250d0650153192dd35494281171bdad7b158745541d951",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 4,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "48d60f467d1a9dc1eafb30efa102895b652087358627cc47fa063367773b44c2",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 5,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "9338568bc761ed2de05673807b4d05646110ee632b2e91d196f5c38f2b11169c",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 6,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "28f7601b5770f76d6836c4aecd23d3a01c425b5af82d88a3fe32325f79bebd98",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 7,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "59e42d5fd8a1cb2dbdeee808dcfc6fdcc1106323b7c43fd8dc2e9864f2e807fa",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 8,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "356dbad02f6566e0007fa294aa32107a75c560afdcbae25d4f39e3f690c266f7",
+          "final_delivered_citation_count": 20,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 9,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "5e598dc35bc2ab2a562604f52cacccf1a1fb7c920944a05e61ce19c5b2dca6c3",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 10,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "f68cfb75e094a8bc997ba44172d6921a3325f86e10e8f5f2beba1afd22e135d5",
+          "final_delivered_citation_count": 21,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 11,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "dfb55b6012767dc4e66567801d33168d0207485d2aa5d22e3c6ba25a2931b141",
+          "final_delivered_citation_count": 7,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 12,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "9c79061eb40fe0530ef88f4c6b853007719d45b73b751316d27d64f6cc0595cd",
+          "final_delivered_citation_count": 4,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 13,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "bbb0540b0e9203b5be545ec996b48ba238620abb01a030de19dbd1dab2dd7a53",
+          "final_delivered_citation_count": 9,
+          "ordered_combined_returned_id_count": 49,
+          "ordinal": 14,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "a591d7f713b89f91de1bbfc3f4c5645392ed86e15bf5eedde7173d1b6b097f73",
+          "final_delivered_citation_count": 10,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 15,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "c4e43a42b09ed73895df417185659fc15628529d572c3f642417988e4b80264a",
+          "final_delivered_citation_count": 12,
+          "ordered_combined_returned_id_count": 49,
+          "ordinal": 16,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "621c8e8c039c3f0592fc2de28a109732f03ebee3fdc71fc5c9059f621cfdf35e",
+          "final_delivered_citation_count": 13,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 17,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "6838526ae4cb379959db3cfb9011c0ba6d7263866382260d73261f6229412aeb",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 18,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "6491e752e8467053dd7995f6dc56df598880205d0cb0d2859d7ca7118dde8f4f",
+          "final_delivered_citation_count": 14,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 19,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "669bcf590fdbf53f3d70762fceeea2183aa3787d75811bebbe48886dc61d81f5",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 20,
+          "provider_observation_count": 13
+        }
+      ]
+    },
+    "CODE": {
+      "denominator": 20,
+      "observed_case_counts": {
+        "Answer Evaluation/final_known_grade": 19,
+        "Answer Evaluation/final_unknown_grade": 1,
+        "BM25 Retrieval/count": 20,
+        "BM25 Retrieval/latency_ms": 20,
+        "BM25 Retrieval/stage_candidate_ids": 0,
+        "Citation/Evidence/all_source_mapping_VERIFIED": 20,
+        "Citation/Evidence/any_numeric_bm25_score": 17,
+        "Citation/Evidence/any_numeric_rerank_score": 19,
+        "Citation/Evidence/any_numeric_score": 19,
+        "Citation/Evidence/any_numeric_vector_score": 19,
+        "Citation/Evidence/delivered_ids_and_score_fields": 20,
+        "Citation/Evidence/source_mapping_status": 20,
+        "ContextBuilder/crop_omit_fields": 20,
+        "ContextBuilder/final_delivered_bodies": 20,
+        "ContextBuilder/own_latency_ms": 0,
+        "ContextBuilder/request_budget": 20,
+        "Final Prompt/assembled_prompt_body": 0,
+        "Final Prompt/prompt_consumer_sha256": 20,
+        "Final Prompt/provider_request_sha256": 20,
+        "Fusion/count": 20,
+        "Fusion/method": 20,
+        "Fusion/own_latency_ms": 0,
+        "Fusion/stage_candidate_ids": 0,
+        "Generation/answer_sse_chunks": 20,
+        "Generation/done_event": 20,
+        "Generation/provider_finish_reason": 0,
+        "Parent/Neighbor Expansion/delivered_lineage_fields": 20,
+        "Parent/Neighbor Expansion/expanded_flag": 20,
+        "Parent/Neighbor Expansion/own_latency_ms": 0,
+        "Query Processing/original_request_payload_sha256": 20,
+        "Query Processing/retriever_query_and_original_query": 20,
+        "Query Processing/rewrite_trace_or_timing": 0,
+        "Rerank/count": 20,
+        "Rerank/final_citation_scores": 0,
+        "Rerank/own_latency_ms": 0,
+        "TTFT/application_first_answer_sse_ms": 0,
+        "TTFT/client_network_ttft_ms": 0,
+        "Vector Retrieval/count": 20,
+        "Vector Retrieval/latency_ms": 20,
+        "Vector Retrieval/stage_candidate_ids": 0,
+        "all_stages/per_fact_disposition": 0,
+        "retrieval/exact_retrieval_uuid": 0,
+        "retrieval/ordered_combined_returned_ids": 20,
+        "stable_identity/arm_id_alias_for_candidate": 20,
+        "stable_identity/case_id_alias_for_qid": 20,
+        "stable_identity/exact_attempt_id": 20,
+        "stable_identity/exact_candidate_id": 20,
+        "stable_identity/exact_experiment_id": 0,
+        "stable_identity/exact_parent_id": 20,
+        "stable_identity/exact_qid": 0,
+        "stable_identity/exact_repeat_id": 0,
+        "stable_identity/exact_request_id": 0,
+        "stable_identity/exact_run_id": 0,
+        "stable_identity/exact_stage": 0
+      },
+      "per_case": [
+        {
+          "case_receipt_sha256": "2157981562e0b2a1f451323f41f075c3aebc08b6fd2cd3a8f1233237b1fbf4cb",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 1,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "a0532eb8e859ea69aee92c8cd5256c7365a92ad48c9fe50347233705c8fcfc49",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 2,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "ba9a8b3f798262d917bf236d0c646c467c202bceee6acca4776d7e60acb58ae9",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 3,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "edff66dc3e8fa51463c83b4e2902ad16a4a35d73cd71c1fdd66a726c2bae3884",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 4,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "66eee77e3ae17b0b11e451a4152a25dbbd7be0a045c5106df4490539b0e17041",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 5,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "f5086377fd2976dfb5c6fa70a52076095ea1cbf04f009ba5f8150b37d001bf0d",
+          "final_delivered_citation_count": 15,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 6,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "762a81635166ef51a5aa6e9be38dde31cd4e67c360f8a3ba9d8421e0ade5575d",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 7,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "21994dd47ccb3b2a07d43640782a85717bacda5f92707a2c93033ab4a4c4e4ac",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 8,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "8ea1ada72f04f05d45292fc2f7d6ebc495c9aa538c8c6d897c51d1bfc211c0eb",
+          "final_delivered_citation_count": 20,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 9,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "f518d9570cc6b818b44f90bb709d3757b2148f8ebe9e5dd8dc67dfa85d93f100",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 10,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "a2df8150987392b4343da3a419a1d61f9a42d135e4c57b085ba4abcd448fc0c3",
+          "final_delivered_citation_count": 20,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 11,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "b7a1e78214e0d2c675a464fce1351e1f620d2ec505edc527e4e5ffdd467438d9",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 12,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "7128ef6ba3f8ab134240af85e42502420ab2cf8a0dd3510bd4dfdea6c0a158f6",
+          "final_delivered_citation_count": 4,
+          "ordered_combined_returned_id_count": 49,
+          "ordinal": 13,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "919dc7d074e6f0097385a3a6ad0375fbdbe3fe5493fa7178d9a10d3a48591797",
+          "final_delivered_citation_count": 10,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 14,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "32d46be35f38d9af0f4b2a79992fcdc92af6fecfc7a12eb0a095ef3ea4a70fd7",
+          "final_delivered_citation_count": 10,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 15,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "84556dad164032ba7e20a4f8547d9549eaebd892117dea43afbbcc4564059033",
+          "final_delivered_citation_count": 12,
+          "ordered_combined_returned_id_count": 49,
+          "ordinal": 16,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "519fc3d487413d8f4a8f3610e2cf2f23828891ecb7a2d201975527adb2308db6",
+          "final_delivered_citation_count": 13,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 17,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "c2b4ac80ee10dda480b06db80749b23927c5ae92f30b10110d0c8c5d74deb1f8",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 18,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "31135ad23d34c19933a79bae39065669c0003d511ae09351c0c44c4e0d604177",
+          "final_delivered_citation_count": 21,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 19,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "688daba6f8cd3e0bbcbf4c35b181361ee0ccce9c6db5cb485699ef5d0abd9d60",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 20,
+          "provider_observation_count": 13
+        }
+      ]
+    },
+    "PROMPT": {
+      "denominator": 20,
+      "observed_case_counts": {
+        "Answer Evaluation/final_known_grade": 19,
+        "Answer Evaluation/final_unknown_grade": 1,
+        "BM25 Retrieval/count": 20,
+        "BM25 Retrieval/latency_ms": 20,
+        "BM25 Retrieval/stage_candidate_ids": 0,
+        "Citation/Evidence/all_source_mapping_VERIFIED": 20,
+        "Citation/Evidence/any_numeric_bm25_score": 16,
+        "Citation/Evidence/any_numeric_rerank_score": 19,
+        "Citation/Evidence/any_numeric_score": 19,
+        "Citation/Evidence/any_numeric_vector_score": 19,
+        "Citation/Evidence/delivered_ids_and_score_fields": 20,
+        "Citation/Evidence/source_mapping_status": 20,
+        "ContextBuilder/crop_omit_fields": 20,
+        "ContextBuilder/final_delivered_bodies": 20,
+        "ContextBuilder/own_latency_ms": 0,
+        "ContextBuilder/request_budget": 20,
+        "Final Prompt/assembled_prompt_body": 0,
+        "Final Prompt/prompt_consumer_sha256": 20,
+        "Final Prompt/provider_request_sha256": 20,
+        "Fusion/count": 20,
+        "Fusion/method": 20,
+        "Fusion/own_latency_ms": 0,
+        "Fusion/stage_candidate_ids": 0,
+        "Generation/answer_sse_chunks": 20,
+        "Generation/done_event": 20,
+        "Generation/provider_finish_reason": 0,
+        "Parent/Neighbor Expansion/delivered_lineage_fields": 20,
+        "Parent/Neighbor Expansion/expanded_flag": 20,
+        "Parent/Neighbor Expansion/own_latency_ms": 0,
+        "Query Processing/original_request_payload_sha256": 20,
+        "Query Processing/retriever_query_and_original_query": 20,
+        "Query Processing/rewrite_trace_or_timing": 0,
+        "Rerank/count": 20,
+        "Rerank/final_citation_scores": 0,
+        "Rerank/own_latency_ms": 0,
+        "TTFT/application_first_answer_sse_ms": 0,
+        "TTFT/client_network_ttft_ms": 0,
+        "Vector Retrieval/count": 20,
+        "Vector Retrieval/latency_ms": 20,
+        "Vector Retrieval/stage_candidate_ids": 0,
+        "all_stages/per_fact_disposition": 0,
+        "retrieval/exact_retrieval_uuid": 0,
+        "retrieval/ordered_combined_returned_ids": 20,
+        "stable_identity/arm_id_alias_for_candidate": 20,
+        "stable_identity/case_id_alias_for_qid": 20,
+        "stable_identity/exact_attempt_id": 20,
+        "stable_identity/exact_candidate_id": 20,
+        "stable_identity/exact_experiment_id": 0,
+        "stable_identity/exact_parent_id": 20,
+        "stable_identity/exact_qid": 0,
+        "stable_identity/exact_repeat_id": 0,
+        "stable_identity/exact_request_id": 0,
+        "stable_identity/exact_run_id": 0,
+        "stable_identity/exact_stage": 0
+      },
+      "per_case": [
+        {
+          "case_receipt_sha256": "0ba533aee0a22233bb1e8a5bc479dd2f83c3eca8cb17cf45418f399fa4da17d2",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 1,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "11f3563905df8ffa08518020acb6373f85011bcfa155c2bdbedf04ad204f3515",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 2,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "fdd906e5ec51234e6d78bfc3c6ef6db8ba19b6d1f8bfbfbec76784cbe26d2850",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 3,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "bdea96de67f8b66cbe23bab4e2f8d201f57399599e042a667b93b587be717bc2",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 4,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "ca715f193646dbdef8bd2f69223e89b104bc602c2610ad1a5b5ef332c4420162",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 5,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "d7529689aad84116b3b02f5c2587a02b3de67642797bbb8869e265e3d1e8c6fe",
+          "final_delivered_citation_count": 17,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 6,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "33beae28936d86893e0db299539e483c02833927cdff152d4b743d2644d9250e",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 7,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "483e34a1e215d7a6a64c5d6a5ff7f16869af7312aab23074e1a9325a620f04c1",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 8,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "c3fcea5fd3aa2254852ff15300e07d61ad690316d7edbc03650ab8b9b256da88",
+          "final_delivered_citation_count": 20,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 9,
+          "provider_observation_count": 14
+        },
+        {
+          "case_receipt_sha256": "ca77ce2002246f791aadd8656ade1e20eafc1e6cd3a3098f4dd7f5ba99bf917b",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 10,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "e59511b14114390e265a27260b155689b70016e98a44b5ee524100dbf937e79f",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 49,
+          "ordinal": 11,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "27b31700ddc87fbd422ae7f9ad04a6359f495a8a5ae4e37221c5f843fba72a55",
+          "final_delivered_citation_count": 11,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 12,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "aa4a081035802bcb2407f2d3e09eb10eed6e737c03d7651707295b8c86d1c95d",
+          "final_delivered_citation_count": 4,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 13,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "e4233cd03e50ce24b3aacab2ab15967c7d269c4013ba1b81220ff39903ee41bc",
+          "final_delivered_citation_count": 9,
+          "ordered_combined_returned_id_count": 49,
+          "ordinal": 14,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "13ea8668967d6b7f2e8a8ca7f73365a58ae0e6318fa5c53f3f056defedcc4ebc",
+          "final_delivered_citation_count": 10,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 15,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "dc38e0c00e7cd9c61d1029824a38993571ca4acfbeff73463a68d96569484f23",
+          "final_delivered_citation_count": 12,
+          "ordered_combined_returned_id_count": 49,
+          "ordinal": 16,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "9f442624d694b3cdad60e905c549270e58526557f049a6eff5bd776d7a539aff",
+          "final_delivered_citation_count": 13,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 17,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "fc738b5e8076b3373be622306042e466f1e6b1b56cc5356efb811723b32e1c3f",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 18,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "3a6d70344b2db02a14f1bb2947b26856fe08df7902695882e5a0f8a681b29ae5",
+          "final_delivered_citation_count": 14,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 19,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "9e608e9b154a766496018178aa7ac9d490ad4ce72c56536926784bb33975d286",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 50,
+          "ordinal": 20,
+          "provider_observation_count": 13
+        }
+      ]
+    },
+    "TOP_K": {
+      "denominator": 20,
+      "observed_case_counts": {
+        "Answer Evaluation/final_known_grade": 20,
+        "Answer Evaluation/final_unknown_grade": 0,
+        "BM25 Retrieval/count": 20,
+        "BM25 Retrieval/latency_ms": 20,
+        "BM25 Retrieval/stage_candidate_ids": 0,
+        "Citation/Evidence/all_source_mapping_VERIFIED": 20,
+        "Citation/Evidence/any_numeric_bm25_score": 17,
+        "Citation/Evidence/any_numeric_rerank_score": 19,
+        "Citation/Evidence/any_numeric_score": 19,
+        "Citation/Evidence/any_numeric_vector_score": 19,
+        "Citation/Evidence/delivered_ids_and_score_fields": 20,
+        "Citation/Evidence/source_mapping_status": 20,
+        "ContextBuilder/crop_omit_fields": 20,
+        "ContextBuilder/final_delivered_bodies": 20,
+        "ContextBuilder/own_latency_ms": 0,
+        "ContextBuilder/request_budget": 20,
+        "Final Prompt/assembled_prompt_body": 0,
+        "Final Prompt/prompt_consumer_sha256": 20,
+        "Final Prompt/provider_request_sha256": 20,
+        "Fusion/count": 20,
+        "Fusion/method": 20,
+        "Fusion/own_latency_ms": 0,
+        "Fusion/stage_candidate_ids": 0,
+        "Generation/answer_sse_chunks": 20,
+        "Generation/done_event": 20,
+        "Generation/provider_finish_reason": 0,
+        "Parent/Neighbor Expansion/delivered_lineage_fields": 20,
+        "Parent/Neighbor Expansion/expanded_flag": 20,
+        "Parent/Neighbor Expansion/own_latency_ms": 0,
+        "Query Processing/original_request_payload_sha256": 20,
+        "Query Processing/retriever_query_and_original_query": 20,
+        "Query Processing/rewrite_trace_or_timing": 0,
+        "Rerank/count": 20,
+        "Rerank/final_citation_scores": 0,
+        "Rerank/own_latency_ms": 0,
+        "TTFT/application_first_answer_sse_ms": 0,
+        "TTFT/client_network_ttft_ms": 0,
+        "Vector Retrieval/count": 20,
+        "Vector Retrieval/latency_ms": 20,
+        "Vector Retrieval/stage_candidate_ids": 0,
+        "all_stages/per_fact_disposition": 0,
+        "retrieval/exact_retrieval_uuid": 0,
+        "retrieval/ordered_combined_returned_ids": 20,
+        "stable_identity/arm_id_alias_for_candidate": 20,
+        "stable_identity/case_id_alias_for_qid": 20,
+        "stable_identity/exact_attempt_id": 20,
+        "stable_identity/exact_candidate_id": 20,
+        "stable_identity/exact_experiment_id": 0,
+        "stable_identity/exact_parent_id": 20,
+        "stable_identity/exact_qid": 0,
+        "stable_identity/exact_repeat_id": 0,
+        "stable_identity/exact_request_id": 0,
+        "stable_identity/exact_run_id": 0,
+        "stable_identity/exact_stage": 0
+      },
+      "per_case": [
+        {
+          "case_receipt_sha256": "66a3cae6c614093ffb1cd44fec6f84093fc15c6859e20ee56173d1e0e5197028",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 1,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "6dcbab9c0389ffa108d2325862fca17d8f3e78c5fcf2658a2a36c3c2b426b730",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 2,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "1b88e16f6293e973299eed400e6db9a61cbb4ec7cfc97b2e96ca67a8d04c2462",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 3,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "689497912a45daaf6761b8e572fd6d08208e441fe53d5f3e936ed8c030e0a972",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 4,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "808bcb4ea8c7a1a0b363dc68003005882711be15a8ebd0d4f38114041f17b16c",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 5,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "c6b0c514f36517d44d8bae2b9bb6cdf6514e45c1adb17801e24e3e923016fddb",
+          "final_delivered_citation_count": 15,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 6,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "66a0be2b25989f50b83ab6674803cf3a3da8e180e33c7f505b96dc9747040bec",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 7,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "db5253c95bff1c42e5402a32a831bbbae70efae1ce7bb0ec194cfc4fcd701784",
+          "final_delivered_citation_count": 18,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 8,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "060b4474533e4722af524e8e4156f886eb9acf0adc8faa5cd95b80d4df816c84",
+          "final_delivered_citation_count": 20,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 9,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "ac98f88a35fe4afd231247726466f9cfe740c8ed732326965fdd1c4e2a446cb7",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 10,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "1073845a3a8ceb27f0f6e41ec2bef638e6bd2841dd25d3dab6f9d9a470944f36",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 11,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "caa9b16efa6ccbab804acaa4054bf686ca13a6ceaa25ae29d26e81f2949d4064",
+          "final_delivered_citation_count": 16,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 12,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "61ebbd4922d06d29489a38811b13385038798bb1370a8efedf552066fc63d12d",
+          "final_delivered_citation_count": 5,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 13,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "6d6118ba4e5acb001bc2bdf151787bb45b46d0cedba4c69c81426ac834aa080c",
+          "final_delivered_citation_count": 9,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 14,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "7fe4294a09be3c25c448318339a4eb1931423729e929dd3d7486a4b5fb7bdc84",
+          "final_delivered_citation_count": 10,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 15,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "1b93281960726abc15e9799369456fb4affef5fdade8b546fb4eb3f3a8c0ec1d",
+          "final_delivered_citation_count": 12,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 16,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "9d46064d13042adb1ba0e270050f72de111f62c091706d19c01a3848e9abbb5c",
+          "final_delivered_citation_count": 13,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 17,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "5c0939cf393ed754887c1b39affb4fdb02156552ebc3692020d60ad7b5d81a07",
+          "final_delivered_citation_count": 20,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 18,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "6770ff95d55ef41a6f954ed5f8e98b3607eb54ce049ce71c779220108a8b06c0",
+          "final_delivered_citation_count": 20,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 19,
+          "provider_observation_count": 13
+        },
+        {
+          "case_receipt_sha256": "3c2be38eba8d8a9ff1f5f6572d23815b7a1d15ce670bc3636248197b3d420f4e",
+          "final_delivered_citation_count": 19,
+          "ordered_combined_returned_id_count": 20,
+          "ordinal": 20,
+          "provider_observation_count": 13
+        }
+      ]
+    }
+  },
+  "interpretation": [
+    "A field existing is coverage, not proof of stage correctness.",
+    "Final delivered citation scores are not independent vector/BM25/fusion/rerank candidate snapshots.",
+    "Ordered combined retriever returned_ids do not identify exact retrieval UUID or justify joins by query text.",
+    "No per-fact IDs and before/after evidence means disposition UNKNOWN for every stage.",
+    "Stable identity counts use endpoint/observations/candidate_guard only; citation source parent_id is excluded.",
+    "Wire IDs identify provider sends, not experiment/run/repeat/request or retrieval UUID.",
+    "Finish generation_status in SSE done is not provider finish_reason."
+  ],
+  "model_calls_added": 0,
+  "scope": "SHA-bound original20 each of four arms, read-only; no current addon included",
+  "dev60_first_new_case": {
+    "ordinal": 21,
+    "state": "QA_PARTIAL",
+    "raw_sha256": "64b5cac6eae375273a76ad992677c2040dd48dcaba7edb7fcad908948d6fd0b3",
+    "asgi_first_answer": "OBSERVED_FALLBACK_ONLY",
+    "client_ttft": "UNKNOWN",
+    "retrieval_deadline_seconds": 30,
+    "reason": "RETRIEVAL_DEADLINE_EXHAUSTED",
+    "generation": "NOT_RUN"
+  }
+}

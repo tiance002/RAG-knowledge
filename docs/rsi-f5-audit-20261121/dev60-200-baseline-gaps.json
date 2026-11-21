@@ -1,0 +1,1814 @@
+{
+  "original_30s_compatible": {
+    "DEV60_missing": 40,
+    "DEV200_missing": 180
+  },
+  "strict_new_20s": {
+    "DEV60_missing": 60,
+    "DEV200_missing": 200
+  },
+  "archive_scope": "Original 20 baseline QA and per-row grades remain reusable in the 30-second cohort",
+  "old_generation_and_route_replay_scope": "Reuse evidence, diagnostic grades, answer Token/latency at the recorded scope",
+  "rows": [
+    {
+      "qid": "terra-ecs-b1-002",
+      "ordinal": 1,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-006",
+      "ordinal": 2,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-008",
+      "ordinal": 3,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-011",
+      "ordinal": 4,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-015",
+      "ordinal": 5,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-024",
+      "ordinal": 6,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b11-008",
+      "ordinal": 7,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b12-010",
+      "ordinal": 8,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-004",
+      "ordinal": 9,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-023",
+      "ordinal": 10,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0001",
+      "ordinal": 11,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0005",
+      "ordinal": 12,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0007",
+      "ordinal": 13,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0017",
+      "ordinal": 14,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0025",
+      "ordinal": 15,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0032",
+      "ordinal": 16,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0036",
+      "ordinal": 17,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0039",
+      "ordinal": 18,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0044",
+      "ordinal": 19,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0142",
+      "ordinal": 20,
+      "first_stage": 20,
+      "same_chain_30s_status": "REUSE",
+      "locked_20s_status": "MISSING",
+      "reason": "ARCHIVED_AT_30S_DEADLINE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0045",
+      "ordinal": 21,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "ONLY_DEGRADED_30S_ATTEMPT_NOT_COMPARABLE",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0049",
+      "ordinal": 22,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0054",
+      "ordinal": 23,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0055",
+      "ordinal": 24,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0061",
+      "ordinal": 25,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0074",
+      "ordinal": 26,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0090",
+      "ordinal": 27,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0092",
+      "ordinal": 28,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0094",
+      "ordinal": 29,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0098",
+      "ordinal": 30,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-006",
+      "ordinal": 31,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-009",
+      "ordinal": 32,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-024",
+      "ordinal": 33,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-026",
+      "ordinal": 34,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-028",
+      "ordinal": 35,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-030",
+      "ordinal": 36,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-038",
+      "ordinal": 37,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-001",
+      "ordinal": 38,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-008",
+      "ordinal": 39,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-032",
+      "ordinal": 40,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0058",
+      "ordinal": 41,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0121",
+      "ordinal": 42,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0141",
+      "ordinal": 43,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0161",
+      "ordinal": 44,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0192",
+      "ordinal": 45,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0224",
+      "ordinal": 46,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0234",
+      "ordinal": 47,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0352",
+      "ordinal": 48,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0453",
+      "ordinal": 49,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0538",
+      "ordinal": 50,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-032",
+      "ordinal": 51,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-003",
+      "ordinal": 52,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-011",
+      "ordinal": 53,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-028",
+      "ordinal": 54,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-008",
+      "ordinal": 55,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-012",
+      "ordinal": 56,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-022",
+      "ordinal": 57,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b12-009",
+      "ordinal": 58,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-029",
+      "ordinal": 59,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-006",
+      "ordinal": 60,
+      "first_stage": 60,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-001",
+      "ordinal": 61,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-002",
+      "ordinal": 62,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-003",
+      "ordinal": 63,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-019",
+      "ordinal": 64,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-021",
+      "ordinal": 65,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-009",
+      "ordinal": 66,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-016",
+      "ordinal": 67,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-018",
+      "ordinal": 68,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-022",
+      "ordinal": 69,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-001",
+      "ordinal": 70,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-008",
+      "ordinal": 71,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-005",
+      "ordinal": 72,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-015",
+      "ordinal": 73,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b8-002",
+      "ordinal": 74,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b9-018",
+      "ordinal": 75,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-image1-003",
+      "ordinal": 76,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-009",
+      "ordinal": 77,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-010",
+      "ordinal": 78,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-017",
+      "ordinal": 79,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-023",
+      "ordinal": 80,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-027",
+      "ordinal": 81,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b1-030",
+      "ordinal": 82,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b10-002",
+      "ordinal": 83,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b10-005",
+      "ordinal": 84,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b10-012",
+      "ordinal": 85,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-004",
+      "ordinal": 86,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-008",
+      "ordinal": 87,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-011",
+      "ordinal": 88,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-016",
+      "ordinal": 89,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-034",
+      "ordinal": 90,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-010",
+      "ordinal": 91,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-018",
+      "ordinal": 92,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-021",
+      "ordinal": 93,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-028",
+      "ordinal": 94,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-005",
+      "ordinal": 95,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-018",
+      "ordinal": 96,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-002",
+      "ordinal": 97,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-004",
+      "ordinal": 98,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-011",
+      "ordinal": 99,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-001",
+      "ordinal": 100,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-007",
+      "ordinal": 101,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-019",
+      "ordinal": 102,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-021",
+      "ordinal": 103,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b8-001",
+      "ordinal": 104,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b8-010",
+      "ordinal": 105,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b8-021",
+      "ordinal": 106,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b9-005",
+      "ordinal": 107,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-image1-002",
+      "ordinal": 108,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-033",
+      "ordinal": 109,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-035",
+      "ordinal": 110,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b3-036",
+      "ordinal": 111,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-030",
+      "ordinal": 112,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-031",
+      "ordinal": 113,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-024",
+      "ordinal": 114,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-024",
+      "ordinal": 115,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-025",
+      "ordinal": 116,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-026",
+      "ordinal": 117,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-025",
+      "ordinal": 118,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b9-021",
+      "ordinal": 119,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b2-018",
+      "ordinal": 120,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b7-013",
+      "ordinal": 121,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b8-003",
+      "ordinal": 122,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b4-022",
+      "ordinal": 123,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-006",
+      "ordinal": 124,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-013",
+      "ordinal": 125,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-006",
+      "ordinal": 126,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-018",
+      "ordinal": 127,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b5-004",
+      "ordinal": 128,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b6-016",
+      "ordinal": 129,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "terra-ecs-b8-012",
+      "ordinal": 130,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0111",
+      "ordinal": 131,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0113",
+      "ordinal": 132,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0124",
+      "ordinal": 133,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0125",
+      "ordinal": 134,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0132",
+      "ordinal": 135,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0149",
+      "ordinal": 136,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0155",
+      "ordinal": 137,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0156",
+      "ordinal": 138,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0180",
+      "ordinal": 139,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0181",
+      "ordinal": 140,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0193",
+      "ordinal": 141,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0195",
+      "ordinal": 142,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0203",
+      "ordinal": 143,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0208",
+      "ordinal": 144,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0215",
+      "ordinal": 145,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0238",
+      "ordinal": 146,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0239",
+      "ordinal": 147,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0539",
+      "ordinal": 148,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0351",
+      "ordinal": 149,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0424",
+      "ordinal": 150,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0335",
+      "ordinal": 151,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0386",
+      "ordinal": 152,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0368",
+      "ordinal": 153,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0525",
+      "ordinal": 154,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0567",
+      "ordinal": 155,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0380",
+      "ordinal": 156,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0349",
+      "ordinal": 157,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0395",
+      "ordinal": 158,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0617",
+      "ordinal": 159,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0377",
+      "ordinal": 160,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0444",
+      "ordinal": 161,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0616",
+      "ordinal": 162,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0339",
+      "ordinal": 163,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0382",
+      "ordinal": 164,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0471",
+      "ordinal": 165,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0653",
+      "ordinal": 166,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0496",
+      "ordinal": 167,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0636",
+      "ordinal": 168,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0680",
+      "ordinal": 169,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0928",
+      "ordinal": 170,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0907",
+      "ordinal": 171,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0932",
+      "ordinal": 172,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0909",
+      "ordinal": 173,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0920",
+      "ordinal": 174,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0913",
+      "ordinal": 175,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0935",
+      "ordinal": 176,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0937",
+      "ordinal": 177,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0921",
+      "ordinal": 178,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0917",
+      "ordinal": 179,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0835",
+      "ordinal": 180,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0862",
+      "ordinal": 181,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0860",
+      "ordinal": 182,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0856",
+      "ordinal": 183,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0848",
+      "ordinal": 184,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0885",
+      "ordinal": 185,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0775",
+      "ordinal": 186,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0755",
+      "ordinal": 187,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0799",
+      "ordinal": 188,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0788",
+      "ordinal": 189,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0815",
+      "ordinal": 190,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0831",
+      "ordinal": 191,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0240",
+      "ordinal": 192,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0289",
+      "ordinal": 193,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0264",
+      "ordinal": 194,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0236",
+      "ordinal": 195,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0209",
+      "ordinal": 196,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0274",
+      "ordinal": 197,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "mtrag:d99477ecf6d1d33e72be6d84813811e3<::>1",
+      "ordinal": 198,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "mtrag:679d6cbfe6731c55cdb13c7acfb0c628<::>1",
+      "ordinal": 199,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    },
+    {
+      "qid": "qst_0977",
+      "ordinal": 200,
+      "first_stage": 200,
+      "same_chain_30s_status": "MISSING",
+      "locked_20s_status": "MISSING",
+      "reason": "HISTORICAL_FROZEN_CONTEXT_OR_ROUTE_ONLY",
+      "historical_context_and_replay_reusable": true
+    }
+  ]
+}

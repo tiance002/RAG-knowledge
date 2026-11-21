@@ -1,0 +1,124 @@
+{
+  "state": "BLOCKED_DISK",
+  "resource_observation": {
+    "ecs_vcpu": 2,
+    "available_memory_sample_kib": 1100108,
+    "peak_single_arm_pss_sample_kib": 539293,
+    "peak_single_arm_private_dirty_sample_kib": 536040,
+    "disk_total_bytes": 41882943488,
+    "disk_available_bytes": 1464733696,
+    "disk_free_ratio": 0.03497208109118847,
+    "minimum_free_bytes_before_new_artifacts": 8376588698,
+    "minimum_additional_free_bytes_before_new_artifacts": 6911855002,
+    "new_qa_dispatch_slots": 0
+  },
+  "actual_prior_qa": {
+    "eligible_rows": 80,
+    "input_tokens_known": 692081,
+    "output_tokens_known": 19902,
+    "requests_unknown_usage": 104
+  },
+  "qa_ledger_all_attempts": {
+    "provider_requests": 1109,
+    "statuses": {
+      "ok": 999,
+      "unknown": 110
+    },
+    "observations_by_model_including_attempts": {
+      "BAAI/bge-m3": {
+        "calls": 833,
+        "input": 20034,
+        "output": 0,
+        "pending": 0,
+        "unknown": 0
+      },
+      "BAAI/bge-reranker-v2-m3": {
+        "calls": 110,
+        "input": 0,
+        "output": 0,
+        "pending": 0,
+        "unknown": 110
+      },
+      "Qwen/Qwen3.5-4B": {
+        "calls": 158,
+        "input": 661541,
+        "output": 17938,
+        "pending": 0,
+        "unknown": 0
+      },
+      "zai-org/GLM-5.3-Flash": {
+        "calls": 8,
+        "input": 31137,
+        "output": 2349,
+        "pending": 0,
+        "unknown": 0
+      }
+    }
+  },
+  "dev60_partial_baseline": {
+    "ordinal": 21,
+    "provider_requests_in_case": 12,
+    "routes": 0,
+    "raw_sha256": "64b5cac6eae375273a76ad992677c2040dd48dcaba7edb7fcad908948d6fd0b3",
+    "end_to_end_seconds": 83.70593374129385,
+    "effective_retrieval_seconds": 30.0
+  },
+  "actual_judge_and_proposer_ledger": {
+    "requests": 120,
+    "input_tokens_known": 1846342,
+    "output_tokens_known": 675158,
+    "pending": 0,
+    "unknown_usage": 0,
+    "charge_usd": "1.5983290",
+    "cap_usd": "8",
+    "remaining_usd": "6.4016710"
+  },
+  "estimates_by_batch": {
+    "dev60_add_40_four_arms": {
+      "qa_slots": 160,
+      "qa_known_input_estimate": 1384162,
+      "qa_known_output_estimate": 39804,
+      "qa_missing_usage_request_estimate": 208,
+      "judge_input_planning_estimate": 3692684,
+      "judge_output_planning_estimate": 1350316,
+      "judge_charge_usd_planning_estimate": "3.197"
+    },
+    "uniform_20s_all_60_four_arms": {
+      "qa_slots": 240,
+      "qa_known_input_estimate": 2076243,
+      "qa_known_output_estimate": 59706,
+      "qa_missing_usage_request_estimate": 312,
+      "judge_input_planning_estimate": 5539026,
+      "judge_output_planning_estimate": 2025474,
+      "judge_charge_usd_planning_estimate": "4.795"
+    },
+    "dev200_add_140_baseline_one_candidate": {
+      "qa_slots": 280,
+      "qa_known_input_estimate": 2422284,
+      "qa_known_output_estimate": 69657,
+      "qa_missing_usage_request_estimate": 364,
+      "judge_input_planning_estimate": 6462197,
+      "judge_output_planning_estimate": 2363053,
+      "judge_charge_usd_planning_estimate": "5.594"
+    },
+    "dev200_add_140_baseline_three_candidates": {
+      "qa_slots": 560,
+      "qa_known_input_estimate": 4844567,
+      "qa_known_output_estimate": 139314,
+      "qa_missing_usage_request_estimate": 728,
+      "judge_input_planning_estimate": 12924394,
+      "judge_output_planning_estimate": 4726106,
+      "judge_charge_usd_planning_estimate": "11.188"
+    }
+  },
+  "retrieval_deadline": {
+    "archived_seconds": 30,
+    "future_isolated_seconds": 20,
+    "environment": "RAG_RETRIEVAL_DEADLINE_SECONDS",
+    "offline_configuration_verified": true,
+    "implementation_sha256": "5e81f1e940daaafae279e0101891716c7106f747cb17c76a1c9376bcfee1d723",
+    "enabled_in_live": false
+  },
+  "f5_a_b_paid_model_calls_added": 0,
+  "estimation_note": "QA is scaled from the 80 completed archive rows, unknown usage is counted separately. Judge forecast uses the shared ledger including unsuccessful and proposer sends, divided by 80 historical QA cases; use live reservation and never spend past the hard cap."
+}

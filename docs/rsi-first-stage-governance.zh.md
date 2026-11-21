@@ -34,3 +34,9 @@ PR 写明问题与来源、组件及文件/函数、前后行为、Candidate ID 
 | F5 | 三类候选完成受控验证，至少一个代表性的受限业务代码修复基于正确正式版本形成可复现、可回滚的审查 PR。 |
 
 与原阶段约束的处理：隔离、真实调用审批、数据资格、阶段提交与全量回归继续生效；原文的模拟 Promotion 仍只用于离线验证；产生代码正式交付时直接走 Git PR，由用户合并，执行完验证或合并均不会触发部署。
+
+## 开发阶段与运行时边界
+
+Codex 负责在第一阶段逐个建设和验收组件的修改接缝。依照单元、集成、全链路、隔离与恢复证据，Codex 可以直接推进满足条件的普通 RAG 组件。证据缺失时先补工程能力。第一阶段范围覆盖 Context Selection、Query Processing、Vector Retrieval、BM25、Hybrid/Fusion、Rerank、Parent/Neighbor Expansion、ContextBuilder 与 Grounded Generation 的证据和答案逻辑。模型路由与 Agent Workflow 作为固定实验条件。
+
+RSI 运行时使用 Codex 已建设的范围，自行诊断、应用受限 Patch、测试、评测、裁决、记录经验并创建 Git PR。它使用已有 Provider 接口完成这些步骤。当前接缝及更大数据规模的实测资格见 [F5-A/B 审查](rsi-f5-audit-20261121/README.zh.md)。
