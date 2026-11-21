@@ -289,10 +289,91 @@ def prepare_grounded_request(llm, messages, citations, *, spreadsheet_context=No
     from app.services.cheap_grounding import enabled
     if enabled():
         prepared = _resolve_cheap_grounding(prepared, llm, model_id, retrieval_status)
+    if spreadsheet_context is None:
+        prepared = _compact_duplicate_source_bodies(prepared)
     event('context.request_budget', **prepared.summary)
     from app.services.conversation_context import register_request_sources
     register_request_sources(prepared.citations)
     return prepared
+
+
+def _compact_duplicate_source_bodies(prepared):
+    """Share exact bodies only in the initial prompt, preserving source headers.
+
+    Packing and routing have already finished. Any ambiguous source identity or
+    span leaves the entire prepared request untouched, including its receipt.
+    Logical evidence sizes continue to describe the unchanged citation objects.
+    """
+    from dataclasses import replace
+    from app.services.cheap_grounding import provider_body_chars
+
+    messages = prepared.messages
+    if (len(prepared.citations) < 2 or not messages
+            or messages[0].get('role') != 'system'
+            or not isinstance(messages[0].get('content'), str)):
+        return prepared
+    text = messages[0]['content']
+    spans = []
+    aliases = set()
+    first_bodies = {}
+    replacements = []
+    alias_map = []
+    for index, citation in enumerate(prepared.citations, 1):
+        alias = str(citation.get('source_alias') or index)
+        body = citation.get('content')
+        if (not isinstance(body, str) or not body or alias in aliases
+                or any(character in alias for character in '\r\n[]')):
+            return prepared
+        aliases.add(alias)
+        # The ordinary builder and the cheap contract both retain this exact
+        # original header; aliases need not be numeric or equal to rank.
+        header = f"[{alias}] 来源：{citation.get('fileName', '未知')} {citation.get('location', '')}\n"
+        block = header + body
+        start = text.find(block)
+        if start < 0 or text.count(block) != 1 or text.count(header) != 1:
+            return prepared
+        end = start + len(block)
+        if any(start < previous_end and end > previous_start
+               for previous_start, previous_end in spans):
+            return prepared
+        spans.append((start, end))
+        if body in first_bodies:
+            first_alias = first_bodies[body]
+            reference = f'正文与来源 [{first_alias}] 完全相同；本来源的上述标签与出处仍独立保留。'
+            replacements.append((start + len(header), end, reference))
+            alias_map.append({'source_alias': alias, 'same_body_as': first_alias})
+        else:
+            first_bodies[body] = alias
+    if not replacements:
+        return prepared
+    compacted = text
+    for start, end, reference in sorted(replacements, reverse=True):
+        compacted = compacted[:start] + reference + compacted[end:]
+    candidate = [dict(messages[0], content=compacted)] + messages[1:]
+    previous_chars = request_chars(messages)
+    measured_chars = request_chars(candidate)
+    if measured_chars >= previous_chars:
+        return prepared
+    saved_chars = previous_chars - measured_chars
+    summary = {**prepared.summary,
+        'request_chars': measured_chars,
+        'evidence_with_labels_chars': prepared.summary['evidence_with_labels_chars'] - saved_chars,
+        'logical_evidence_body_chars': prepared.summary['evidence_body_chars'],
+        'duplicate_body_compaction': {'version': 'exact-source-body-v1',
+            'original_request_chars': previous_chars, 'saved_request_chars': saved_chars,
+            'source_alias_map': alias_map},
+        'original_budget': prepared.summary.get('original_budget', prepared.summary)}
+    if 'provider_argument_chars' in summary:
+        # Both serializers use default json framing. Provider fields are fixed;
+        # the exact change in the messages value is independent of those fields.
+        provider_delta = (provider_body_chars(candidate, {})
+                          - provider_body_chars(messages, {}))
+        if provider_delta != -saved_chars:
+            return prepared
+        summary['provider_argument_chars'] += provider_delta
+    return replace(prepared, messages=candidate, summary=summary,
+        original_messages=(prepared.original_messages
+                           if prepared.original_messages is not None else messages))
 
 
 def _resolve_cheap_grounding(prepared, llm, model_id, retrieval_status):
