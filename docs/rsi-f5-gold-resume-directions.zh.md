@@ -35,3 +35,5 @@
 | f5-gold-resume-directions.junit.xml | c4dc4d629eea48fcb34e3171afd3221c4f78d25ae8b32d0f6c008f79fd9fe484 |
 | f5-gold-resume-directions.log | 53d9a77609bae38c1d82832a4a434a761698a7d21787584a21423ba872a535ab |
 | f5-gold-resume-directions.exit.txt | 13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354 |
+
+Windows 和 Linux 统一使用 LF。新版判分补充固定 SHA-256 为 b413e41b8816a20b9f693c0203d1b9a9ca65373c3fa802b66877476d46aaa27c。初次工作区绑定回执保留当时字节记录，两个版本的 JSON 内容相同。固定哈希断言加入后 90 项再次全绿，JUnit 为 f5-gold-resume-directions-pinned.junit.xml，SHA-256 为 cce8551d9cf23d484e4033325be8dacf0ee7a8736545166065b882636fd7f0da。
